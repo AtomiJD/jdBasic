@@ -1,0 +1,80 @@
+' LEFT$, RIGHT$ and MID$ handed a number take the text STR$ gives it.
+'
+'   jdbasic tests/slice_number_test.jdb
+'   jdbasic -c tests/slice_number_test.jdb
+'
+' Literals, typed and untyped variables, expressions, parameters, function
+' results and array cells, whole and fractional, negative and large.
+
+OPTION "EXPLICIT"
+
+DIM pass AS INTEGER = 0
+DIM fail AS INTEGER = 0
+
+SUB Check(what$, got$, want$)
+    IF got$ = want$ THEN
+        pass = pass + 1
+    ELSE
+        fail = fail + 1
+        PRINT "FAIL "; what$; ": got '"; got$; "', want '"; want$; "'"
+    ENDIF
+ENDSUB
+
+FUNC Half(x) AS DOUBLE
+    RETURN x / 2
+ENDFUNC
+
+FUNC FirstTwo$(v) AS STRING
+    RETURN LEFT$(v, 2)
+ENDFUNC
+
+' ---- literals ----
+Check("LEFT$ of an integer literal", LEFT$(12345, 2), "12")
+Check("RIGHT$ of an integer literal", RIGHT$(12345, 2), "45")
+Check("MID$ of an integer literal", MID$(12345, 1, 2), "23")
+Check("MID$ of an integer literal to the end", MID$(12345, 3), "45")
+Check("LEFT$ of a float literal", LEFT$(3.75, 3), "3.7")
+Check("RIGHT$ of a negative literal", RIGHT$(-42, 2), "42")
+Check("LEFT$ of a negative literal", LEFT$(-42, 1), "-")
+
+' ---- variables ----
+DIM n AS INTEGER = 12345
+DIM f AS DOUBLE = 2.5
+DIM u = 678
+DIM big AS INTEGER = 1152921504606846977
+Check("LEFT$ of an INTEGER variable", LEFT$(n, 2), "12")
+Check("RIGHT$ of an INTEGER variable", RIGHT$(n, 3), "345")
+Check("MID$ of an INTEGER variable", MID$(n, 2, 2), "34")
+Check("LEFT$ of a DOUBLE variable", LEFT$(f, 3), "2.5")
+Check("RIGHT$ of a DOUBLE variable", RIGHT$(f, 1), "5")
+Check("MID$ of an untyped variable", MID$(u, 1), "78")
+Check("RIGHT$ of a large integer keeps every digit", RIGHT$(big, 4), RIGHT$(STR$(big), 4))
+Check("LEFT$ of a whole number past its length", LEFT$(n, 99), "12345")
+
+' ---- expressions, parameters, results, cells ----
+Check("LEFT$ of an integer expression", LEFT$(n * 2, 3), "246")
+Check("RIGHT$ of a division", RIGHT$(7 / 2, 2), RIGHT$(STR$(7 / 2), 2))
+Check("LEFT$ of a function result", LEFT$(Half(9), 3), LEFT$(STR$(Half(9)), 3))
+Check("LEFT$ of an untyped parameter holding a number", FirstTwo$(9876), "98")
+Check("LEFT$ of an untyped parameter holding text", FirstTwo$("abc"), "ab")
+DIM cells = [111, 222.5, 333]
+Check("LEFT$ of a numeric array cell", LEFT$(cells[1], 4), "222.")
+Check("RIGHT$ of an integer array cell", RIGHT$(cells[2], 1), "3")
+
+' ---- the character-counting twins ----
+Check("LEFTW$ of an integer literal", LEFTW$(12345, 2), "12")
+Check("RIGHTW$ of a DOUBLE variable", RIGHTW$(f, 2), ".5")
+Check("MIDW$ of an INTEGER variable", MIDW$(n, 1, 2), "23")
+Check("LENW of an INTEGER variable", STR$(LENW(n)), "5")
+Check("INSTRW in a number", STR$(INSTRW(n, 3)), "2")
+Check("INSTRW from a position in a number", STR$(INSTRW(1, 12345, 3)), "2")
+
+' ---- equal to slicing STR$ ----
+DIM k AS INTEGER
+FOR k = 0 TO 5
+    Check("LEFT$ " + STR$(k) + " as STR$", LEFT$(n, k), LEFT$(STR$(n), k))
+    Check("RIGHT$ " + STR$(k) + " as STR$", RIGHT$(f, k), RIGHT$(STR$(f), k))
+NEXT k
+
+PRINT pass; " passed, "; fail; " failed"
+IF fail > 0 THEN END 1

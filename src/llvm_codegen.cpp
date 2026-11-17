@@ -16085,24 +16085,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             out.owned = true;
             return out;
         }
-        if (av.tag == JD_TAG_I64) {
-            // A whole number keeps every digit; through the double the
-            // numeric STR$ takes it would round above 2^53.
-            auto& fn = runtime_funcs["__int_to_str"];
-            LLVMValueRef args[] = { av.val };
-            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "si"), JD_TAG_STR };
-        }
-        if (av.tag == JD_TAG_BOOL) {
-            auto& fn = runtime_funcs["__str_bool"];
-            LLVMValueRef args[] = { av.val };
-            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "sb"), JD_TAG_STR };
-        }
-        if (av.tag == JD_TAG_DATE) {
-            // Epoch seconds, so the number path would give the count.
-            auto& fd = runtime_funcs["__format_date_num"];
-            LLVMValueRef fargs[] = { av.val, LLVMConstNull(i8_ptr_type),
-                LLVMConstReal(f64_type, std::numeric_limits<double>::quiet_NaN()) };
-            return { LLVMBuildCall2(builder, fd.fn_type, fd.fn, fargs, 3, "sdate"), JD_TAG_STR };
+        if (av.tag == JD_TAG_I64 || av.tag == JD_TAG_BOOL || av.tag == JD_TAG_DATE ||
+            av.tag == JD_TAG_F64) {
+            TypedValue out = scalar_text(av);
+            out.owned = false;
+            return out;
         }
         if (av.tag == JD_TAG_STR) {
             auto& fn = runtime_funcs["__str_str"];
@@ -18166,6 +18153,17 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                                                  i8_ptr_type, "map_arg");
             arg_cache[0].tag = JD_TAG_NATIVE_MAP;
         }
+        // These builtins take a number, truth value or date in a text
+        // argument as the text STR$ gives it, as the interpreter does. The
+        // value is how many leading arguments are texts.
+        static const std::unordered_map<std::string, size_t> reads_as_text = {
+            {"LEFT$", 1}, {"RIGHT$", 1}, {"MID$", 1},
+            {"LEFTW$", 1}, {"RIGHTW$", 1}, {"MIDW$", 1}, {"LENW", 1}, {"INSTRW", 2} };
+        auto rat = reads_as_text.find(upper);
+        // INSTRW of three arguments takes the position first.
+        if (rat != reads_as_text.end() && !(upper == "INSTRW" && arg_cache.size() != 2))
+            for (size_t i = 0; i < rat->second && i < arg_cache.size(); i++)
+                arg_cache[i] = scalar_text(arg_cache[i]);
     }
 
     // A string array built for this call alone, which the call only reads
@@ -18948,7 +18946,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             if (numeric_param && t == JD_TAG_ARR) kind = "an array";
             else if (numeric_param && literal_string) kind = "a string";
             else if (numeric_param && t == JD_TAG_NATIVE_MAP) kind = "a map";
-            else if (param_types[i] == i8_ptr_type && literal_number) kind = "a number";
+            else if (param_types[i] == i8_ptr_type && literal_number && t != JD_TAG_STR) kind = "a number";
             if (kind) {
                 report_error(m_current_stmt_file, expr.line,
                     upper + ": argument " + std::to_string(i + 1) + " is " + kind + ", " +
@@ -21288,6 +21286,37 @@ bool LLVMCodegen::expr_yields_fresh_string(const Expr& e) const {
     if (user_functions.count(upper) || user_functions.count(e.func_name)) return false;
     return builtin_fresh_string(upper);
 }
+
+LLVMCodegen::TypedValue LLVMCodegen::scalar_text(const TypedValue& av) {
+    LLVMValueRef s = nullptr;
+    if (av.tag == JD_TAG_I64) {
+        // A whole number keeps every digit; through the double the
+        // numeric STR$ takes it would round above 2^53.
+        auto& fn = runtime_funcs["__int_to_str"];
+        LLVMValueRef args[] = { av.val };
+        s = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "si");
+    } else if (av.tag == JD_TAG_BOOL) {
+        auto& fn = runtime_funcs["__str_bool"];
+        LLVMValueRef args[] = { av.val };
+        s = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "sb");
+    } else if (av.tag == JD_TAG_DATE) {
+        // Epoch seconds, so the number path would give the count.
+        auto& fd = runtime_funcs["__format_date_num"];
+        LLVMValueRef fargs[] = { av.val, LLVMConstNull(i8_ptr_type),
+            LLVMConstReal(f64_type, std::numeric_limits<double>::quiet_NaN()) };
+        s = LLVMBuildCall2(builder, fd.fn_type, fd.fn, fargs, 3, "sdate");
+    } else if (av.tag == JD_TAG_F64) {
+        auto& fn = runtime_funcs["STR$"];
+        LLVMValueRef args[] = { av.val };
+        s = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "snum");
+    } else {
+        return av;
+    }
+    TypedValue out{ s, JD_TAG_STR };
+    out.owned = true;
+    return out;
+}
+
 LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
     // Runtime-tagged value (tag 7): branch on runtime tag to pick the
     // right conversion. Three cases matter:
