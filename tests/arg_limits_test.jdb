@@ -52,8 +52,9 @@ why$ = CompileError$("FUNC Wide256(" + Params$(256) + ")" + CHR$(10) + "RETURN 0
 Check("a FUNC of 256 parameters is refused", INSTR(why$, "255 parameters") >= 0)
 
 DIM wide_out = 0
-why$ = CompileError$("FUNC Wide255(" + Params$(255) + ")" + CHR$(10) + "RETURN p255 + p1" + CHR$(10) + "ENDFUNC" + CHR$(10) + "JDB.GLOBAL_SET(" + CHR$(34) + "wide_out" + CHR$(34) + ", Wide255(1000))")
+why$ = CompileError$("FUNC Wide255(" + Params$(255) + ")" + CHR$(10) + "RETURN p255 + p1" + CHR$(10) + "ENDFUNC")
 Check("a FUNC of 255 parameters compiles", why$ = "")
+IF why$ = "" THEN wide_out = EVAL("Wide255(1000)")
 Check("254 parameters filled from their defaults", wide_out = 1255)
 
 why$ = CompileError$("DIM wide_fn = LAMBDA " + JOIN(SELECT(LAMBDA k -> "q" + STR$(k), IOTA(256)), ", ") + " -> q1")

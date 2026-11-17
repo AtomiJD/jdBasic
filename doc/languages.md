@@ -1418,6 +1418,8 @@ ENDTRY
 
 > **Scope binding is per compilation unit.** Every dynamically compiled chunk (an `EXECUTE` string, a REPL line, an MCP `jdb_eval` call) is its own unit. Top-level code in a later unit sees all existing globals, but a `FUNC` or `LAMBDA` body resolves its free variables against the unit in which the function was **defined**: a function defined in a later unit cannot read a global created in an earlier one (the read yields `NONE`). Pass data as parameters, or define the function and its module state in the same unit. `LOADWS` replays the whole workspace source as a single unit, so restored functions and restored globals share one scope again.
 
+> **In a compiled program** (`jdBasic -c`) `EXECUTE` and `EVAL` run in a VM of their own beside the compiled code. The strings compile and run, their `PRINT` output appears, and the globals they create live on for later `EXECUTE` and `EVAL` calls. The compiled program's own variables are not part of that VM: a string cannot read them (`EVAL("x")` gives `NONE`) and cannot write them (`EXECUTE "x = 99"`, or `JDB.GLOBAL_SET` inside the string, leaves the program's `x` unchanged). Hand values in as text built into the string, and get a result back through `EVAL`. Code that depends on sharing variables checks `OS.FEATURE("INTERPRETER")` first.
+
 ### Development & Debugging
 
 * **`COMPILE`**: Compiles the source code currently in memory into p-code.
