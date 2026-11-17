@@ -85,17 +85,17 @@ void VM::register_string_builtins() {
         return Value::make_string(jdb_text::chr(args[0].to_int()));
     });
     register_native("ASC", 1, 1, [](const std::vector<Value>& args) -> Value {
-        return Value::make_i64(jdb_text::asc(args[0].as_string()->data));
+        return Value::make_i64(jdb_text::asc(TextArg(args[0]).get()));
     });
     register_native("UCASE", 1, 1, [](const std::vector<Value>& args) -> Value {
-        return Value::make_string(jdb_text::upper(args[0].as_string()->data));
+        return Value::make_string(jdb_text::upper(TextArg(args[0]).get()));
     });
     register_native("LCASE", 1, 1, [](const std::vector<Value>& args) -> Value {
-        return Value::make_string(jdb_text::lower(args[0].as_string()->data));
+        return Value::make_string(jdb_text::lower(TextArg(args[0]).get()));
     });
 
     register_native("LCASE$", [](const std::vector<Value>& args) -> Value {
-        return Value::make_string(jdb_text::lower(args[0].as_string()->data));
+        return Value::make_string(jdb_text::lower(TextArg(args[0]).get()));
     });
 
     // ── String functions ($ aliases + new ones) ──────────────
@@ -115,17 +115,17 @@ void VM::register_string_builtins() {
         return Value::make_string(jdb_text::mid(TextArg(args[0]).get(), args[1].to_int(), len));
     });
     register_native("UCASE$", [](const std::vector<Value>& args) -> Value {
-        return Value::make_string(jdb_text::upper(args[0].as_string()->data));
+        return Value::make_string(jdb_text::upper(TextArg(args[0]).get()));
     });
     // UPPER$ / LOWER$ - aliases the native compiler already exports
     // through its arr_apply table (jdb_upper / jdb_lower). Registered
     // in the VM so interpreter mode mirrors native and the shared
     // test suite (tests/native_test.jdb) doesn't fail on either side.
     register_native("UPPER$", [](const std::vector<Value>& args) -> Value {
-        return Value::make_string(jdb_text::upper(args[0].as_string()->data));
+        return Value::make_string(jdb_text::upper(TextArg(args[0]).get()));
     });
     register_native("LOWER$", [](const std::vector<Value>& args) -> Value {
-        return Value::make_string(jdb_text::lower(args[0].as_string()->data));
+        return Value::make_string(jdb_text::lower(TextArg(args[0]).get()));
     });
     register_native("STR$", [](const std::vector<Value>& args) -> Value {
         return Value::make_string(args[0].to_string());
@@ -136,8 +136,7 @@ void VM::register_string_builtins() {
     register_native("INSTR$", [](const std::vector<Value>& args) -> Value {
         // Same as INSTR
         int64_t start = 0;
-        const std::string* haystack;
-        const std::string* needle;
+        size_t at = 0;
         if (args.size() >= 3) {
             // The position comes first. The other dialect's order puts the
             // text first and the position last, and reading a string as a
@@ -146,27 +145,23 @@ void VM::register_string_builtins() {
                 throw jdError(ErrCode::WRONG_ARG_TYPE,
                     "INSTR$: the position comes first - INSTR$(start, haystack, needle)");
             start = args[0].to_int();
-            haystack = &args[1].as_string()->data;
-            needle = &args[2].as_string()->data;
-        } else {
-            haystack = &args[0].as_string()->data;
-            needle = &args[1].as_string()->data;
+            at = 1;
         }
-        return Value::make_i64(jdb_text::find(*haystack, *needle, start));
+        TextArg haystack(args[at]), needle(args[at + 1]);
+        return Value::make_i64(jdb_text::find(haystack.get(), needle.get(), start));
     });
 
     register_native("TRIM$", [](const std::vector<Value>& args) -> Value {
-        return Value::make_string(jdb_text::trim(args[0].as_string()->data));
+        return Value::make_string(jdb_text::trim(TextArg(args[0]).get()));
     });
     register_native("TRIM", [](const std::vector<Value>& args) -> Value {
-        return Value::make_string(jdb_text::trim(args[0].as_string()->data));
+        return Value::make_string(jdb_text::trim(TextArg(args[0]).get()));
     });
 
     // INSTR
     register_native("INSTR", [](const std::vector<Value>& args) -> Value {
         int64_t start = 0;
-        const std::string* haystack;
-        const std::string* needle;
+        size_t at = 0;
         if (args.size() >= 3) {
             // The position comes first. The other dialect's order puts the
             // text first and the position last, and reading a string as a
@@ -175,13 +170,10 @@ void VM::register_string_builtins() {
                 throw jdError(ErrCode::WRONG_ARG_TYPE,
                     "INSTR: the position comes first - INSTR(start, haystack, needle)");
             start = args[0].to_int();
-            haystack = &args[1].as_string()->data;
-            needle = &args[2].as_string()->data;
-        } else {
-            haystack = &args[0].as_string()->data;
-            needle = &args[1].as_string()->data;
+            at = 1;
         }
-        return Value::make_i64(jdb_text::find(*haystack, *needle, start));
+        TextArg haystack(args[at]), needle(args[at + 1]);
+        return Value::make_i64(jdb_text::find(haystack.get(), needle.get(), start));
     });
 
     // The twins that count UTF-8 characters instead of bytes.
@@ -243,9 +235,8 @@ void VM::register_string_builtins() {
 
     // REPLACE$: every occurrence replaced, in a text or in every string of an array.
     register_native("REPLACE$", 3, 3, [](const std::vector<Value>& args) -> Value {
-        View find_text(args[1].as_string()->data), rep(args[2].as_string()->data);
-        if (args[0].type == ValueType::STRING)
-            return Value::make_string(jdb_text::replace_all(args[0].as_string()->data, find_text, rep));
+        TextArg find_arg(args[1]), rep_arg(args[2]);
+        View find_text(find_arg.get()), rep(rep_arg.get());
         if (args[0].type == ValueType::ARRAY) {
             Value r = Value::make_array();
             for (auto& e : args[0].as_array()->elements) {
@@ -257,6 +248,8 @@ void VM::register_string_builtins() {
             }
             return r;
         }
+        if (args[0].type == ValueType::STRING || is_numeric(args[0].type))
+            return Value::make_string(jdb_text::replace_all(TextArg(args[0]).get(), find_text, rep));
         return args[0];
     });
 
@@ -473,16 +466,16 @@ void VM::register_string_builtins() {
         return Value::make_string(r);
     });
     register_native("STARTSWITH", 2, 2, [](const std::vector<Value>& args) -> Value {
-        return Value::make_bool(jdb_text::starts_with(args[0].as_string()->data, args[1].as_string()->data));
+        return Value::make_bool(jdb_text::starts_with(TextArg(args[0]).get(), TextArg(args[1]).get()));
     });
     register_native("ENDSWITH", 2, 2, [](const std::vector<Value>& args) -> Value {
-        return Value::make_bool(jdb_text::ends_with(args[0].as_string()->data, args[1].as_string()->data));
+        return Value::make_bool(jdb_text::ends_with(TextArg(args[0]).get(), TextArg(args[1]).get()));
     });
     register_native("LTRIM$", [](const std::vector<Value>& args) -> Value {
-        return Value::make_string(jdb_text::ltrim(args[0].as_string()->data));
+        return Value::make_string(jdb_text::ltrim(TextArg(args[0]).get()));
     });
     register_native("RTRIM$", [](const std::vector<Value>& args) -> Value {
-        return Value::make_string(jdb_text::rtrim(args[0].as_string()->data));
+        return Value::make_string(jdb_text::rtrim(TextArg(args[0]).get()));
     });
     register_native("SPACE$", [](const std::vector<Value>& args) -> Value {
         return Value::make_string(jdb_text::spaces(args[0].to_int()));

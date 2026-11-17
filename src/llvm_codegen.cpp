@@ -17219,11 +17219,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     if (upper == "REPLACE$" && expr.args.size() == 3) {
         TypedValue target = codegen_expr(*expr.args[0]);
         if (target.tag == JD_TAG_ARR) {
-            TypedValue find = codegen_expr(*expr.args[1]);
-            TypedValue repl = codegen_expr(*expr.args[2]);
+            TypedValue find = scalar_text(codegen_expr(*expr.args[1]));
+            TypedValue repl = scalar_text(codegen_expr(*expr.args[2]));
             auto& fn = runtime_funcs["__arr_replace"];
             LLVMValueRef args[] = { target.val, coerce_to(find, i8_ptr_type), coerce_to(repl, i8_ptr_type) };
             TypedValue out{ LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "arepl"), JD_TAG_ARR };
+            auto& drop = runtime_funcs["__str_drop"];
+            for (const TypedValue* t : { &find, &repl })
+                if (t->owned) { LLVMValueRef d[] = { t->val }; LLVMBuildCall2(builder, drop.fn_type, drop.fn, d, 1, ""); }
             out.fresh_container = true;
             return out;
         }
@@ -18158,11 +18161,18 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         // value is how many leading arguments are texts.
         static const std::unordered_map<std::string, size_t> reads_as_text = {
             {"LEFT$", 1}, {"RIGHT$", 1}, {"MID$", 1},
-            {"LEFTW$", 1}, {"RIGHTW$", 1}, {"MIDW$", 1}, {"LENW", 1}, {"INSTRW", 2} };
+            {"LEFTW$", 1}, {"RIGHTW$", 1}, {"MIDW$", 1}, {"LENW", 1}, {"INSTRW", 2},
+            {"UCASE$", 1}, {"LCASE$", 1}, {"UPPER$", 1}, {"LOWER$", 1},
+            {"UCASE", 1}, {"LCASE", 1}, {"TRIM$", 1}, {"TRIM", 1},
+            {"LTRIM$", 1}, {"RTRIM$", 1}, {"ASC", 1},
+            {"STARTSWITH", 2}, {"ENDSWITH", 2}, {"REPLACE$", 3},
+            {"INSTR", 2}, {"INSTR$", 2} };
         auto rat = reads_as_text.find(upper);
-        // INSTRW of three arguments takes the position first.
-        if (rat != reads_as_text.end() && !(upper == "INSTRW" && arg_cache.size() != 2))
-            for (size_t i = 0; i < rat->second && i < arg_cache.size(); i++)
+        // INSTR and its twins of three arguments take the position first.
+        size_t first_text = (upper == "INSTR" || upper == "INSTR$" || upper == "INSTRW") &&
+                            arg_cache.size() >= 3 ? 1 : 0;
+        if (rat != reads_as_text.end())
+            for (size_t i = first_text; i < first_text + rat->second && i < arg_cache.size(); i++)
                 arg_cache[i] = scalar_text(arg_cache[i]);
     }
 

@@ -2177,6 +2177,8 @@ Creates a Map directly from a string formatted as a JSON object (e.g., `{"key":"
 
 ### String Functions
 
+A number, truth value or date passed where a string function expects a text is read as the text `STR$` gives it, in both backends: `UCASE$(123)` is `"123"`, `INSTR(12345, "3")` is `2`, `REPLACE$("a3b", 3, 4)` is `"a4b"`. This holds for `LEFT$`, `RIGHT$`, `MID$`, their `W` twins, `LENW`, `INSTR`, `INSTRW`, `UCASE$`, `LCASE$`, `UPPER$`, `LOWER$`, `TRIM$`, `LTRIM$`, `RTRIM$`, `ASC`, `REPLACE$`, `STARTSWITH` and `ENDSWITH`. An array is still taken cell by cell.
+
 * **`LEFT$(str$, n)`**, **`RIGHT$(str$, n)`**, **`MID$(str$, start, [len])`**: Extracts parts of a string. The start position is 0-based. A number passed as the text is turned into its string form, and a start past the end answers an empty string.
 * **`LEN(expression)`**: Returns a scalar length. For strings, the byte count; for maps, the number of keys; for arrays, the element count of the outermost dimension. Always returns a scalar; use `LENV` when you need the full shape of a nested array.
 * **`LENV(expression)`**: Returns a shape vector `[dim0, dim1, ...]` describing the full extent of a nested array. For a 1D array returns `[n]`; for a string returns `[byte_count]`.

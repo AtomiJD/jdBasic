@@ -1,0 +1,81 @@
+' UCASE$, LCASE$, UPPER$, LOWER$, TRIM$, LTRIM$, RTRIM$, ASC, INSTR,
+' REPLACE$, STARTSWITH and ENDSWITH handed a number, a truth value or a date
+' in a text argument take the text STR$ gives it, as LEFT$ and MID$ do.
+'
+'   jdbasic tests/text_number_test.jdb
+'   jdbasic -c tests/text_number_test.jdb
+'
+' Literals, typed and untyped variables, parameters and array cells; an
+' array argument still works cell by cell.
+
+OPTION "EXPLICIT"
+
+DIM pass AS INTEGER = 0
+DIM fail AS INTEGER = 0
+
+SUB Check(what$, got$, want$)
+    IF got$ = want$ THEN
+        pass = pass + 1
+    ELSE
+        fail = fail + 1
+        PRINT "FAIL "; what$; ": got '"; got$; "', want '"; want$; "'"
+    ENDIF
+ENDSUB
+
+FUNC Shout$(v) AS STRING
+    RETURN UCASE$(v)
+ENDFUNC
+
+DIM n AS INTEGER = 12345
+DIM d AS DOUBLE = 2.5
+DIM t AS BOOLEAN = TRUE
+DIM u = 77
+DIM cells = [10, 20]
+
+' ---- case ----
+Check("UCASE$ of an integer variable", UCASE$(n), "12345")
+Check("LCASE$ of a double variable", LCASE$(d), "2.5")
+Check("UPPER$ of an integer variable", UPPER$(n), "12345")
+Check("LOWER$ of a truth value", LOWER$(t), "true")
+Check("UCASE$ of an untyped variable", UCASE$(u), "77")
+Check("UCASE$ of an integer literal", UCASE$(123), "123")
+Check("UCASE$ of a parameter", Shout$(n), "12345")
+Check("UCASE$ of an array cell", UCASE$(cells[1]), "20")
+
+' ---- trimming ----
+Check("TRIM$ of an integer variable", TRIM$(n), "12345")
+Check("TRIM$ of a double literal", TRIM$(4.5), "4.5")
+Check("LTRIM$ of a negative variable", LTRIM$(-n), "-12345")
+Check("RTRIM$ of an integer variable", RTRIM$(n), "12345")
+
+' ---- ASC ----
+Check("ASC of an integer variable", STR$(ASC(n)), "49")
+Check("ASC of an integer literal", STR$(ASC(9)), "57")
+
+' ---- INSTR ----
+Check("INSTR with a number as haystack", STR$(INSTR(n, "3")), "2")
+Check("INSTR with a number as needle", STR$(INSTR("x12345", n)), "1")
+Check("INSTR with a start and a number as haystack", STR$(INSTR(1, n, "4")), "3")
+Check("INSTR of an untyped variable", STR$(INSTR(u, "7")), "0")
+Check("INSTR of a number that is not there", STR$(INSTR(n, "9")), "-1")
+
+' ---- REPLACE$ ----
+Check("REPLACE$ in a number", REPLACE$(n, "3", "x"), "12x45")
+Check("REPLACE$ of a number by a number", REPLACE$("a3b", 3, 4), "a4b")
+Check("REPLACE$ over an array with numbers", JOIN(REPLACE$(["a1", "b1"], 1, 2), ","), "a2,b2")
+
+' ---- STARTSWITH / ENDSWITH ----
+Check("STARTSWITH of a number", STR$(STARTSWITH(n, "12")), STR$(TRUE))
+Check("ENDSWITH of a number", STR$(ENDSWITH(n, 45)), STR$(TRUE))
+Check("STARTSWITH of a number, no match", STR$(STARTSWITH(n, "9")), STR$(FALSE))
+
+' ---- dates ----
+DIM when = DATE.UTC(2026, 11, 17)
+Check("UCASE$ of a date", UCASE$(when), STR$(when))
+
+' ---- arrays stay cell by cell ----
+Check("UCASE$ of an array", JOIN(UCASE$(["a", "b"]), ","), "A,B")
+Check("TRIM$ of an array", JOIN(TRIM$([" x ", "y "]), ","), "x,y")
+
+PRINT pass; " passed, "; fail; " failed"
+IF fail > 0 THEN END 1
