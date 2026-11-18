@@ -3543,6 +3543,14 @@ int64_t jdb_map_has(JdbMap* m, const char* key) {
     return map_find(m, key) >= 0 ? 1 : 0;
 }
 
+// ISNONE of m{key}: the key is missing or holds NONE (a JSON null that
+// came over from the VM).
+int64_t jdb_map_is_none(JdbMap* m, const char* key) {
+    if (!m || !key) return 1;
+    int64_t idx = map_find(m, key);
+    return (idx < 0 || m->tags[idx] == JD_TAG_NONE) ? 1 : 0;
+}
+
 // Removes one key; answers whether it was there.
 int64_t jdb_map_delete(JdbMap* m, const char* key) {
     if (!m || !key) return 0;

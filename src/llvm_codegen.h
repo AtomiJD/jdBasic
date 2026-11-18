@@ -451,6 +451,10 @@ private:
         // native map hands out a copy); drop_read_temp gives it back.
         LLVMValueRef fresh_native = nullptr;
     };
+    // An argument a builtin's own path already evaluated before it fell
+    // through to the general call: the general path takes it from here
+    // instead of evaluating it a second time.
+    std::unordered_map<const Expr*, TypedValue> call_arg_preset;
     // The values of the pipes whose call is being generated, innermost last;
     // a ? placeholder reads the last one.
     std::vector<TypedValue> pipe_values;

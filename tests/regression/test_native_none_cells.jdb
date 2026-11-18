@@ -1,0 +1,90 @@
+' ISNONE of a key that holds null, APPEND of a cell whose kind only the
+' running program knows, and a PRINT an error stops: the compiled program
+' answers what the interpreter answers.
+'
+'   jdbasic tests/regression/test_native_none_cells.jdb
+'   jdbasic -c tests/regression/test_native_none_cells.jdb
+
+OPTION "EXPLICIT"
+
+DIM pass AS INTEGER = 0
+DIM fail AS INTEGER = 0
+
+SUB Check(what$, got$, want$)
+    IF got$ = want$ THEN
+        pass = pass + 1
+    ELSE
+        fail = fail + 1
+        PRINT "FAIL "; what$; ": got '"; got$; "', want '"; want$; "'"
+    ENDIF
+ENDSUB
+
+' ---- ISNONE of a key that holds null ----
+DIM cfg = JSON.PARSE("{""owner"": null, ""port"": 8081}")
+Check("ISNONE of a JSON null", STR$(ISNONE(cfg{"owner"})), STR$(TRUE))
+Check("ISNONE of a JSON number", STR$(ISNONE(cfg{"port"})), STR$(FALSE))
+Check("ISNONE of a missing key", STR$(ISNONE(cfg{"timeout"})), STR$(TRUE))
+
+FUNC Why$(doc)
+    IF ISNONE(doc{"data"}) THEN RETURN "missing"
+    RETURN "has " + TYPEOF(doc{"data"})
+ENDFUNC
+Check("ISNONE of a null through a parameter", Why$(JSON.PARSE("{""data"": null}")), "missing")
+Check("ISNONE of a number through a parameter", Why$(JSON.PARSE("{""data"": 5}")), "has INT64")
+Check("ISNONE of a missing key through a parameter", Why$(JSON.PARSE("{}")), "missing")
+
+DIM jobs = JSON.PARSE("[{""t"": 1, ""u"": null}, {""t"": 2}]")
+DIM seen$ = ""
+FOR EACH job IN jobs
+    seen$ = seen$ + STR$(ISNONE(job{"u"})) + "/" + STR$(ISNONE(job{"t"})) + " "
+NEXT job
+Check("ISNONE over the cells of a parsed array", seen$, STR$(TRUE) + "/" + STR$(FALSE) + " " + STR$(TRUE) + "/" + STR$(FALSE) + " ")
+
+' ---- APPEND of a cell ----
+DIM stock = [["00123", "Bolt", 10], ["04560", "Nut", 80], ["07890", "Washer", 5]]
+FUNC LowStock(rows, threshold)
+    DIM skus = SLICE(rows, 1, 0)
+    DIM qty = SLICE(rows, 1, 2)
+    DIM found = []
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(skus) - 1
+        IF qty[i] < threshold THEN found = APPEND(found, skus[i])
+    NEXT i
+    RETURN found
+ENDFUNC
+Check("APPEND of text cells of a column SLICE took from a parameter", JOIN(LowStock(stock, 50), ","), "00123,07890")
+
+' ---- a PRINT an error stops ----
+DIM two_cells = [1, 2]
+OUTPUT.CAPTURE_BEGIN
+TRY
+    PRINT "next:"; two_cells[LEN(two_cells)]
+CATCH
+    PRINT "caught"
+ENDTRY
+DIM shown$ = OUTPUT.CAPTURE_END$()
+Check("a PRINT an error stops ends no line", REPLACE$(shown$, CHR$(13), ""), "next:caught" + CHR$(10))
+
+' ---- a builtin evaluates each argument once ----
+DIM calls AS INTEGER = 0
+FUNC NextText$() AS STRING
+    calls = calls + 1
+    RETURN "a" + STR$(calls)
+ENDFUNC
+FUNC NextRow()
+    calls = calls + 1
+    RETURN [1, 2, 3]
+ENDFUNC
+calls = 0
+DIM swapped$ = REPLACE$(NextText$(), "a", "b")
+Check("REPLACE$ calls its text argument once", STR$(calls) + " " + swapped$, "1 b1")
+calls = 0
+DIM turned = ROTATE(NextRow(), 1)
+Check("ROTATE calls its array argument once", STR$(calls), "1")
+OUTPUT.CAPTURE_BEGIN
+PRINT "x"
+DIM caught$ = REPLACE$(OUTPUT.CAPTURE_END$(), CHR$(13), "")
+Check("REPLACE$ of OUTPUT.CAPTURE_END$()", caught$, "x" + CHR$(10))
+
+PRINT pass; " passed, "; fail; " failed"
+IF fail > 0 THEN END 1

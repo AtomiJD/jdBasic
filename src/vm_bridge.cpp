@@ -955,6 +955,19 @@ JDRT_API int64_t jdrt_obj_exists(JdRT handle, int64_t h, const char* key) {
     }, [] { return 0; });
 }
 
+// ISNONE of m{key} on a VM map: 1 when the key is missing or holds NONE
+// (a JSON null), without copying the value out.
+JDRT_API int64_t jdrt_obj_is_none(JdRT handle, int64_t h, const char* key) {
+    return bridge_guard(handle, [&]() -> int64_t {
+        auto* rt = resolve_rt(handle);
+        auto it = rt->value_store.find(h);
+        if (it == rt->value_store.end() || it->second.type != ValueType::OBJECT)
+            return 1;
+        const Value* v = it->second.as_object()->get(std::string(key ? key : ""));
+        return (!v || v->type == ValueType::NONE) ? 1 : 0;
+    }, [] { return 1; });
+}
+
 JDRT_API int64_t jdrt_obj_delete(JdRT handle, int64_t h, const char* key) {
     return bridge_guard(handle, [&]() -> int64_t {
         auto* rt = resolve_rt(handle);

@@ -70,6 +70,7 @@ JDRT_API const char* jdrt_obj_get_str(JdRT rt, int64_t h, const char* key);
 JDRT_API int64_t     jdrt_obj_get_obj(JdRT rt, int64_t h, const char* key);
 JDRT_API void*       jdrt_obj_get_arr(JdRT rt, int64_t h, const char* key);
 JDRT_API int64_t     jdrt_obj_exists (JdRT rt, int64_t h, const char* key);
+JDRT_API int64_t     jdrt_obj_is_none(JdRT rt, int64_t h, const char* key);
 JDRT_API int64_t     jdrt_obj_delete (JdRT rt, int64_t h, const char* key);
 
 // Dereference a VM Value handle - used when compiled code needs a
