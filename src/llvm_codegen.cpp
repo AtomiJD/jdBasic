@@ -3575,24 +3575,30 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         auto is_definition = [](const Stmt& st) {
             return st.kind == StmtKind::FUNCTION || st.kind == StmtKind::SUB;
         };
-        // Every assignment to every name, in the main program and in bodies.
+        // A closure counts from an assignment of the main program. Any other
+        // statement that names a variable - an assignment of something
+        // else, a FOR or FOR EACH variable, an INPUT target, anything in a
+        // FUNC or SUB body - makes the name something else.
         std::unordered_set<std::string> closure_names, other_names;
-        std::function<void(const Stmt&)> note_assign = [&](const Stmt& st) {
-            if (!st.var_name.empty() &&
-                (st.kind == StmtKind::DIM || st.kind == StmtKind::LET ||
-                 st.kind == StmtKind::ASSIGN)) {
-                bool closure = st.expr &&
+        std::function<void(const Stmt&, bool)> note_assign = [&](const Stmt& st, bool in_body) {
+            bool body = in_body || is_definition(st);
+            if (!st.var_name.empty() && !is_definition(st)) {
+                bool closure = !body && st.expr &&
+                    (st.kind == StmtKind::DIM || st.kind == StmtKind::LET ||
+                     st.kind == StmtKind::ASSIGN) &&
                     (st.expr->kind == ExprKind::LAMBDA_EXPR ||
                      (st.expr->kind == ExprKind::CALL && is_factory(st.expr->func_name)));
                 (closure ? closure_names : other_names).insert(st.var_name);
             }
-            for (auto& b : st.body) if (b) note_assign(*b);
-            for (auto& c : st.catch_body()) if (c) note_assign(*c);
-            for (auto& f : st.finally_body()) if (f) note_assign(*f);
+            if (!st.label.empty() && !is_definition(st)) other_names.insert(st.label);
+            for (auto& dv : st.destruct_vars()) other_names.insert(dv);
+            for (auto& b : st.body) if (b) note_assign(*b, body);
+            for (auto& c : st.catch_body()) if (c) note_assign(*c, body);
+            for (auto& f : st.finally_body()) if (f) note_assign(*f, body);
             for (auto& br : st.branches)
-                for (auto& b : br.body) if (b) note_assign(*b);
+                for (auto& b : br.body) if (b) note_assign(*b, body);
         };
-        for (auto& s : program) if (s) note_assign(*s);
+        for (auto& s : program) if (s) note_assign(*s, false);
         std::unordered_set<std::string> funcref_globals;
         for (auto& n : closure_names)
             if (!other_names.count(n)) funcref_globals.insert(n);
