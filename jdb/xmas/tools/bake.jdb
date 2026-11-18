@@ -1,0 +1,21 @@
+' Bakes every SVG of jdb/xmas/art into a .rgbz beside it, the form the
+' browser runtime loads fast: width and height as two little-endian 32-bit
+' numbers, then the RGBA pixels, deflated as a whole (raw deflate).
+'
+'   jdBasic jdb/xmas/tools/bake.jdb        (from the repository root)
+
+OPTION "EXPLICIT"
+
+IMPORT RASTER
+
+DIM art$ = PATH.ABS$("jdb/xmas/art")
+DIM names = FILE.LIST(art$ + "/*.svg")
+DIM i = 0
+FOR i = 0 TO LEN(names) - 1
+    DIM svg$ = art$ + "/" + names[i]
+    DIM img = RASTER.RENDER(TXTREADER$(svg$), {"scale": 1, "background": "none"})
+    DIM raw$ = PACK$("<II", img{"width"}, img{"height"}) + JOIN(SELECT(LAMBDA v -> CHR$(v), img{"pixels"}), "")
+    DIM out$ = LEFT$(svg$, LEN(svg$) - 4) + ".rgbz"
+    BINWRITER out$, CODEC.DEFLATE$(raw$, 9, "raw")
+    PRINT names[i]; " "; img{"width"}; "x"; img{"height"}; " -> "; FILE.SIZE(out$); " bytes"
+NEXT i

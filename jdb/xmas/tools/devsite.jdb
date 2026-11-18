@@ -1,0 +1,41 @@
+' Serves the story cards locally as they are served under /xmas/ on the
+' box: the runtime page and its files from wasm/, the program, its art and
+' assets.txt from jdb/xmas, the modules it imports from lib/.
+'
+'   jdBasic jdb/xmas/tools/devsite.jdb [port]
+'
+' Run from the repository root, then open
+'   http://127.0.0.1:8190/xmas/?prog=spike&fs=1&assets=assets.txt
+
+OPTION "EXPLICIT"
+
+DIM cli = OS.ARGS()
+DIM port AS INTEGER = 8190
+IF LEN(cli) > 1 THEN port = VAL(cli[1])
+DIM roots = [PATH.ABS$("jdb/xmas"), PATH.ABS$("lib"), PATH.ABS$("wasm")]
+DIM kinds = {".html": "text/html", ".js": "application/javascript", ".wasm": "application/wasm", ".css": "text/css", ".jdb": "text/plain", ".txt": "text/plain", ".svg": "image/svg+xml", ".json": "application/json", ".woff2": "font/woff2", ".ttf": "font/ttf", ".png": "image/png"}
+
+FUNC Reply(status AS INTEGER, body$ AS STRING, kind$ AS STRING)
+    RETURN {"__http_status": status, "__http_body": body$, "__http_content_type": kind$, "__http_headers": {"Cache-Control": "no-store"}}
+ENDFUNC
+
+FUNC HANDLEFILE(request)
+    DIM path$ AS STRING = request{"path"}
+    IF INSTR(path$, "..") >= 0 ORELSE NOT STARTSWITH(path$, "/xmas/") THEN RETURN Reply(404, "not here", "text/plain")
+    DIM rest$ AS STRING = MID$(path$, LEN("/xmas/"), LEN(path$))
+    IF rest$ = "" THEN rest$ = "index.html"
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(roots) - 1
+        DIM file$ AS STRING = roots[i] + "/" + rest$
+        IF FILE.EXISTS(file$) ANDALSO NOT FILE.ISDIR(file$) THEN RETURN Reply(200, BINREADER$(file$), kinds{LCASE$(PATH.EXT$(file$))} ?? "application/octet-stream")
+    NEXT i
+    RETURN Reply(404, "not here", "text/plain")
+ENDFUNC
+
+HTTP.SERVER.ON_NOTFOUND HANDLEFILE@
+IF NOT HTTP.SERVER.START(port, "127.0.0.1") THEN
+    PRINT "port "; port; " is taken"
+    END 1
+ENDIF
+PRINT "http://127.0.0.1:"; port; "/xmas/?prog=spike&fs=1&assets=assets.txt&mute=1"
+HTTP.SERVER.WAIT

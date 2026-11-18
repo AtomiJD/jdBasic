@@ -73,6 +73,16 @@
   #turn .ph{width:54px;height:88px;border:3px solid #38e0ff;border-radius:10px;
             transform:rotate(90deg);transition:transform .8s ease-in-out;}
   #turn.show .ph{transform:rotate(0deg);}
+  /* A text field over the graphics, for programs that ask through
+     /input_request.json: a phone only opens its keyboard for a real input. */
+  #askbox{position:fixed;left:0;right:0;top:0;z-index:50;display:none;flex-direction:column;gap:10px;
+          padding:16px;background:rgba(10,14,24,.94);color:#eef;font:16px system-ui,sans-serif;}
+  #askbox.open{display:flex;}
+  #askbox input{font-size:18px;padding:10px;border-radius:8px;border:1px solid #567;background:#fff;color:#111;}
+  #askbox .row{display:flex;gap:10px;align-items:center;}
+  #askbox .count{flex:1;color:#9ab;font-size:13px;}
+  #askbox button{font-size:16px;padding:8px 18px;border-radius:8px;border:0;background:#c8202c;color:#fff;}
+  #askbox button.cancel{background:#445;}
 </style>
 </head>
 <body>
@@ -107,6 +117,13 @@
     <div class="gfxwrap"><canvas id="canvas" tabindex="0"></canvas></div>
     <div id="turn"><div class="ph"></div><div id="turntext">Bitte das Geraet hochkant halten</div></div>
   </div>
+  <form id="askbox" autocomplete="off">
+    <label id="asklabel" for="askinput"></label>
+    <input id="askinput" type="text" enterkeyhint="done">
+    <div class="row"><span class="count" id="askcount"></span>
+      <button type="button" class="cancel" id="askcancel">&#10005;</button>
+      <button type="submit">OK</button></div>
+  </form>
   <input type="file" id="fileopen" accept=".jdb,.bas,.txt" hidden>
 
   <script src="vendor/xterm/xterm.js"></script>
@@ -655,6 +672,43 @@
       prompt();
     }
     function maybeAutoStart(){ if(ready && Mod && !autoDone){ autoDone=true; autoStart(); } }
+
+    // ---- text input for graphics programs ----
+    // A program writes /input_request.json ({"prompt","max","value"}); the
+    // page shows a real text field and answers in /input_reply.json with
+    // {"ok":true,"text":...} or {"ok":false}, then removes the request.
+    {
+      const box = document.getElementById('askbox');
+      const field = document.getElementById('askinput');
+      const count = document.getElementById('askcount');
+      let asking = false;
+      const showCount = ()=>{ count.textContent = field.maxLength > 0 ? field.value.length + ' / ' + field.maxLength : ''; };
+      function answer(reply){
+        try { Mod.FS.writeFile('/input_reply.json', JSON.stringify(reply)); } catch(e){}
+        try { Mod.FS.unlink('/input_request.json'); } catch(e){}
+        box.classList.remove('open'); field.blur(); asking = false;
+        document.getElementById('canvas').focus();
+      }
+      box.addEventListener('submit', (e)=>{ e.preventDefault(); answer({ok:true, text:field.value}); });
+      document.getElementById('askcancel').addEventListener('click', ()=> answer({ok:false}));
+      for (const t of ['keydown','keyup','keypress'])
+        box.addEventListener(t, (e)=>{ e.stopPropagation(); if (t === 'keydown' && e.key === 'Escape') answer({ok:false}); });
+      field.addEventListener('input', showCount);
+      setInterval(()=>{
+        if (asking || !Mod) return;
+        const raw = readMaybe('/input_request.json');
+        if (raw === null) return;
+        let req = {};
+        try { req = JSON.parse(raw); } catch(e){}
+        asking = true;
+        document.getElementById('asklabel').textContent = req.prompt || '';
+        field.maxLength = req.max > 0 ? req.max : 524288;
+        field.value = req.value || '';
+        showCount();
+        box.classList.add('open');
+        field.focus();
+      }, 150);
+    }
 
     // ---- wasm runtime ----
     createJdBasic({

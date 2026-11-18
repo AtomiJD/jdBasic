@@ -1,0 +1,2 @@
+# Baked pictures (deflated RGBA) are binary.
+*.rgbz binary

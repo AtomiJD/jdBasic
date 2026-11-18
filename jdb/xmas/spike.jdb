@@ -1,0 +1,406 @@
+' Spike for the Christmas story cards: a jointed puppet from SVG parts
+' rasterized at start, speech bubbles that type themselves, a story read
+' from the link, and Stille Nacht on the sequencer after the first tap.
+' Desktop: run from jdb/xmas, an optional argument is a story code.
+' Browser: the page hands the code over as "s" in /url_params.json.
+OPTION "EXPLICIT"
+
+IMPORT RASTER
+
+DIM SW = 720
+DIM SH = 1280
+DIM on_web = OS.GETOS$() = "WEB"
+DIM art_dir$ = IIF(on_web, "/art/", "art/")
+DIM font$ = "/jdbasic_default.ttf"
+IF NOT on_web THEN font$ = PATH.DIRNAME$(OS.SELF$()) + "/jdbasic_default.ttf"
+
+' ---------------------------------------------------------------- story code
+
+FUNC B64Url$(raw$)
+    DIM s$ = REPLACE$(REPLACE$(CODEC.BASE64_ENCODE$(raw$), "+", "-"), "/", "_")
+    DO WHILE ENDSWITH(s$, "=")
+        s$ = LEFT$(s$, LEN(s$) - 1)
+    LOOP
+    RETURN s$
+ENDFUNC
+
+FUNC UnB64Url$(code$)
+    DIM s$ = REPLACE$(REPLACE$(code$, "-", "+"), "_", "/")
+    DO WHILE LEN(s$) MOD 4 <> 0
+        s$ = s$ + "="
+    LOOP
+    RETURN CODEC.BASE64_DECODE$(s$)
+ENDFUNC
+
+FUNC EncodeStory$(story)
+    RETURN "1" + B64Url$(CODEC.DEFLATE$(JSON.STRINGIFY$(story), 9, "raw"))
+ENDFUNC
+
+FUNC DecodeStory(code$)
+    IF LEFT$(code$, 1) <> "1" THEN RETURN NONE
+    TRY
+        RETURN JSON.PARSE(CODEC.INFLATE$(UnB64Url$(MID$(code$, 1)), "raw"))
+    CATCH
+        RETURN NONE
+    ENDTRY
+ENDFUNC
+
+FUNC UrlParams()
+    IF NOT on_web ORELSE NOT FILE.EXISTS("/url_params.json") THEN RETURN {}
+    RETURN JSON.PARSE(TXTREADER$("/url_params.json"))
+ENDFUNC
+
+DIM url_params = UrlParams()
+DIM muted = GETENV$("XMAS_MUTE") <> "" ORELSE MAP.EXISTS(url_params, "mute")
+
+FUNC LinkCode$()
+    IF on_web THEN RETURN "" + (url_params{"s"} ?? "")
+    DIM a = OS.ARGS()
+    IF LEN(a) > 0 THEN RETURN a[LEN(a) - 1]
+    RETURN ""
+ENDFUNC
+
+DIM demo_story = {"lines": ["Ho ho ho! Fröhliche Weihnachten, liebe Oma!", "Ich habe dir etwas ganz Besonderes mitgebracht. Schau mal!"], "from": "Achim", "to": "Oma"}
+DIM story = DecodeStory(LinkCode$())
+IF ISNONE(story) THEN story = demo_story
+DIM demo_code$ = EncodeStory$(demo_story)
+
+' the worst case of the editor: three scenes of four bubbles of 80 characters
+DIM long_lines = ["Liebe Oma, ich wünsche dir frohe Weihnachten und ein wunderbares neues Jahr!", "Weißt du noch, wie wir letztes Jahr zusammen Plätzchen gebacken haben? Herrlich", "Der Schnee liegt schon ganz hoch, und die Kinder bauen draußen einen Schneemann.", "Ich habe dir ein kleines Geschenk mitgebracht, aber du darfst es erst morgen öffnen.", "Hohoho! Mein Schlitten steht auf dem Dach, die Rentiere warten schon ungeduldig.", "Danke, lieber Weihnachtsmann! Möchtest du eine Tasse heißen Kakao mit Sahne?", "Sehr gern, aber nur ganz kurz. Heute Nacht muss ich noch um die ganze Welt fliegen", "Dann nimm dir noch ein paar Zimtsterne mit, die habe ich extra für dich gebacken.", "Du bist die Beste! Nächstes Jahr komme ich wieder, versprochen. Bleib gesund!", "Wir vermissen dich sehr und freuen uns riesig auf den Besuch im Januar bei dir.", "Pass auf dich auf, und lass dir den Weihnachtsbraten schmecken. Alles Liebe!", "Frohe Weihnachten euch allen, und einen guten Rutsch ins neue Jahr 2027!"]
+DIM worst_code$ = EncodeStory$({"lines": long_lines, "from": "Achim", "to": "Oma"})
+
+' ---------------------------------------------------------------- pictures
+
+DIM raster_ms = 0
+
+' A part as a smooth GFX image, from its baked .rgbz (tools/bake.jdb) or
+' else from its SVG; [image, width, height].
+FUNC LoadPart(name$)
+    DIM t0 = TICK()
+    DIM w = 0
+    DIM h = 0
+    DIM pixels = []
+    IF FILE.EXISTS(art_dir$ + name$ + ".rgbz") THEN
+        DIM raw$ = CODEC.INFLATE$(BINREADER$(art_dir$ + name$ + ".rgbz"), "raw")
+        DIM size = UNPACK("<II", raw$)
+        w = size[0]
+        h = size[1]
+        pixels = UNPACK(STR$(w * h * 4) + "B", raw$, 8)
+    ELSE
+        DIM px = RASTER.RENDER(TXTREADER$(art_dir$ + name$ + ".svg"), {"scale": 1, "background": "none"})
+        w = px{"width"}
+        h = px{"height"}
+        pixels = px{"pixels"}
+    ENDIF
+    DIM spr = SPRITE.CREATE(w, h)
+    SPRITE.SETBUFFER spr, pixels
+    DIM img = GFX.NEWTARGET(w, h, TRUE)
+    GFX.TARGET img, TRUE
+    SPRITE.POS spr, 0, 0
+    SPRITE.DRAW spr
+    GFX.TARGET
+    SPRITE.DELETE spr
+    raster_ms = raster_ms + TICK() - t0
+    RETURN [img, w, h]
+ENDFUNC
+
+' ---------------------------------------------------------------- the puppet
+
+' Parts with their pivot; joints in the torso's own coordinates.
+DIM PIV = {"torso": [110, 215], "head": [100, 200], "arm": [35, 22], "leg": [40, 10]}
+DIM JOINT = {"head": [110, 22], "arm_l": [50, 46], "arm_r": [170, 46], "leg_l": [78, 200], "leg_r": [142, 200]}
+
+' A point of the torso in screen coordinates.
+FUNC TorsoPoint(pose, p)
+    DIM r = RADIANS(pose{"tilt"})
+    DIM dx = (p[0] - PIV{"torso"}[0]) * pose{"scale"}
+    DIM dy = (p[1] - PIV{"torso"}[1]) * pose{"scale"}
+    RETURN [pose{"x"} + dx * COS(r) - dy * SIN(r), pose{"y"} + dx * SIN(r) + dy * COS(r)]
+ENDFUNC
+
+' A local point of a part turned by ang around its pivot at the joint.
+FUNC PartPoint(jx, jy, piv, ang, sc, p)
+    DIM r = RADIANS(ang)
+    DIM dx = (p[0] - piv[0]) * sc
+    DIM dy = (p[1] - piv[1]) * sc
+    RETURN [jx + dx * COS(r) - dy * SIN(r), jy + dx * SIN(r) + dy * COS(r)]
+ENDFUNC
+
+SUB DrawPart(part, piv, jx, jy, ang, sc)
+    DIM w = part[1] * sc
+    DIM h = part[2] * sc
+    DIM c = PartPoint(jx, jy, piv, ang, sc, [part[1] / 2, part[2] / 2])
+    GFX.DRAWIMAGE_EX(part[0], c[0] - w / 2, c[1] - h / 2, w, h, ang)
+ENDSUB
+
+SUB DrawPuppet(parts, pose)
+    DIM sc = pose{"scale"}
+    DIM j = TorsoPoint(pose, JOINT{"leg_l"})
+    DrawPart(parts{"leg"}, PIV{"leg"}, j[0], j[1], pose{"tilt"} + pose{"leg_l"}, sc)
+    j = TorsoPoint(pose, JOINT{"leg_r"})
+    DrawPart(parts{"leg"}, PIV{"leg"}, j[0], j[1], pose{"tilt"} + pose{"leg_r"}, sc)
+    j = TorsoPoint(pose, PIV{"torso"})
+    DrawPart(parts{"torso"}, PIV{"torso"}, j[0], j[1], pose{"tilt"}, sc)
+    DIM hj = TorsoPoint(pose, JOINT{"head"})
+    DIM head_ang = pose{"tilt"} + pose{"head"}
+    DrawPart(parts{"head"}, PIV{"head"}, hj[0], hj[1], head_ang, sc)
+    ' eyes and mouth are drawn, so they can blink and talk
+    DIM eye_h = IIF(pose{"blink"}, 1, 7) * sc
+    DIM eye_pt = PartPoint(hj[0], hj[1], PIV{"head"}, head_ang, sc, [84, 113])
+    DRAWCOLOR 40, 30, 30
+    ELLIPSE eye_pt[0], eye_pt[1], 5 * sc, eye_h, TRUE
+    eye_pt = PartPoint(hj[0], hj[1], PIV{"head"}, head_ang, sc, [116, 113])
+    ELLIPSE eye_pt[0], eye_pt[1], 5 * sc, eye_h, TRUE
+    DIM m = PartPoint(hj[0], hj[1], PIV{"head"}, head_ang, sc, [100, 158])
+    DRAWCOLOR 120, 30, 40
+    ELLIPSE m[0], m[1], 11 * sc, MAX([2, 9 * pose{"mouth"}]) * sc, TRUE
+    j = TorsoPoint(pose, JOINT{"arm_l"})
+    DrawPart(parts{"arm"}, PIV{"arm"}, j[0], j[1], pose{"tilt"} + pose{"arm_l"}, sc)
+    j = TorsoPoint(pose, JOINT{"arm_r"})
+    DrawPart(parts{"arm"}, PIV{"arm"}, j[0], j[1], pose{"tilt"} + pose{"arm_r"}, sc)
+ENDSUB
+
+' ---------------------------------------------------------------- room and bubble
+
+SUB DrawRoom(t)
+    CLS 74, 38, 40
+    DIM i = 0
+    FOR i = 0 TO 11
+        RECT i * 60, 0, 30, 900, TRUE, 82, 44, 46
+    NEXT i
+    RECT 0, 900, SW, SH - 900, TRUE, 92, 58, 38
+    FOR i = 0 TO 7
+        RECT 0, 900 + i * 48, SW, 3, TRUE, 70, 42, 28
+    NEXT i
+    ' window with the night outside
+    RECT 440, 160, 220, 300, TRUE, 230, 220, 200
+    RECT 452, 172, 196, 276, TRUE, 20, 32, 70
+    DIM f = 0
+    FOR f = 0 TO 24
+        DIM fx = 452 + (f * 97 + INT(t * 20 * (1 + f MOD 3))) MOD 196
+        DIM fy = 172 + (f * 53 + INT(t * 40 * (1 + f MOD 2))) MOD 276
+        CIRCLE fx, fy, 2 + f MOD 2, TRUE, 255, 255, 255
+    NEXT f
+    RECT 547, 172, 6, 276, TRUE, 230, 220, 200
+    ' fireplace with a fire
+    RECT 40, 560, 330, 340, TRUE, 150, 140, 135
+    RECT 20, 540, 370, 36, TRUE, 120, 90, 70
+    RECT 100, 640, 210, 260, TRUE, 30, 20, 20
+    DIM flick = SIN(t * 9) * 8
+    DRAWCOLOR 240, 120, 30
+    ELLIPSE 205, 840 - flick, 70, 70 + flick, TRUE
+    DRAWCOLOR 255, 200, 60
+    ELLIPSE 205, 860, 40, 40 - flick / 2, TRUE
+    ' garland
+    FOR i = 0 TO 13
+        CIRCLE 30 + i * 26, 548 + INT(SIN(i) * 4), 9, TRUE, 30, 110, 50
+        IF i MOD 2 = 0 THEN CIRCLE 30 + i * 26, 562, 5, TRUE, 230, 40, 40
+    NEXT i
+ENDSUB
+
+FUNC Wrap(text$, max_w)
+    DIM words = SPLIT(text$, " ")
+    DIM rows = []
+    DIM cur$ = ""
+    DIM i = 0
+    FOR i = 0 TO LEN(words) - 1
+        DIM probe$ = IIF(cur$ = "", words[i], cur$ + " " + words[i])
+        IF GFX.TEXTSIZE(probe$)[0] > max_w ANDALSO cur$ <> "" THEN
+            rows = APPEND(rows, cur$)
+            cur$ = words[i]
+        ELSE
+            cur$ = probe$
+        ENDIF
+    NEXT i
+    IF cur$ <> "" THEN rows = APPEND(rows, cur$)
+    RETURN rows
+ENDFUNC
+
+' A bubble whose text has typed n_chars characters, its tail towards (tx, ty).
+SUB DrawBubble(text$, n_chars, tx, ty)
+    DIM bw = 600
+    DIM rows = Wrap(text$, bw - 60)
+    DIM bh = 40 + LEN(rows) * 44
+    DIM bx = (SW - bw) / 2
+    DIM by = MAX([40, ty - 70 - bh])
+    DIM root_x = CLAMP(tx + 40, bx + 70, bx + bw - 70)
+    DIM root_y = by + bh - 12
+    DIM seg = 0
+    FOR seg = 0 TO 9
+        DIM f0 = seg / 10
+        DIM f1 = (seg + 1) / 10
+        GFX.STROKE LERP(root_x, tx, f0), LERP(root_y, ty, f0), LERP(root_x, tx, f1), LERP(root_y, ty, f1), 34 - seg * 3, 255, 255, 255
+    NEXT seg
+    ROUNDED_RECT bx, by, bw, bh, 28, TRUE, 255, 255, 255
+    DIM remaining = n_chars
+    DIM i = 0
+    FOR i = 0 TO LEN(rows) - 1
+        IF remaining <= 0 THEN EXITFOR
+        DIM shown$ = LEFTW$(rows[i], remaining)
+        TEXT bx + 30, by + 22 + i * 44, shown$, 40, 30, 30
+        remaining = remaining - LENW(rows[i]) - 1
+    NEXT i
+ENDSUB
+
+' ---------------------------------------------------------------- music
+
+' Stille Nacht (Franz Xaver Gruber, 1818), one bar of 6/8 per cycle in
+' twelve sixteenths, C major.
+SUB StartMusic()
+    SOUND.INIT
+    SOUND.RESET
+    SOUND.MASTER "FIXED", 0.32
+    SOUND.REVERB 0.7, 0.4, 0.8, 0.3
+    SOUND.BPM 92
+    SOUND.VOICE 0, "TRIANGLE", 0.03, 0.4, 0.6, 0.6
+    SOUND.UNISON 0, 3, 0.12, 0.6
+    SOUND.OSC2 0, "SINE", -12, 0.35
+    SOUND.FILTER 0, 2200
+    SOUND.LFO 0, 5.2, 0.12
+    SOUND.REVERBSEND 0, 0.45
+    SOUND.VOICE 1, "SINE", 0.01, 0.3, 0.6, 0.5
+    SOUND.VOICE 2, "SINE", 1.0, 0.5, 0.8, 1.8
+    SOUND.UNISON 2, 3, 0.15, 0.8
+    SOUND.REVERBSEND 2, 0.6
+    DIM bars = ["g4@3 a4 g4@2 e4@6", "g4@3 a4 g4@2 e4@6", "d5@4 d5@2 b4@6", "c5@4 c5@2 g4@6", "a4@4 a4@2 c5@3 b4 a4@2", "g4@3 a4 g4@2 e4@6", "a4@4 a4@2 c5@3 b4 a4@2", "g4@3 a4 g4@2 e4@6", "d5@4 d5@2 f5@3 d5 b4@2", "c5@12", "e5@12", "c5@3 g4 e4@2 g4@3 f4 d4@2", "c4@12", "~@12"]
+    DIM mel$ = "[[" + JOIN(bars, "] [") + "]]/" + STR$(LEN(bars))
+    SOUND.SEQ 0, mel$, "VOICE"
+    SOUND.SEQ 1, "<c2 c2 g1 c2 f1 c2 f1 c2 g1 c2 c2 g1 c2 c2>", "VOICE"
+    SOUND.SEQ 2, "<C C G7 C F C F C G7 C C G7 C C>", "VOICE"
+    SOUND.GAIN 0, 0.32
+    SOUND.GAIN 1, 0.35
+    SOUND.GAIN 2, 0.14
+ENDSUB
+
+' ---------------------------------------------------------------- run
+
+SCREEN SW, SH, "Xmas spike"
+SETFONT font$, 30
+
+DIM parts = {}
+parts{"torso"} = LoadPart("santa_torso")
+parts{"head"} = LoadPart("santa_head")
+parts{"arm"} = LoadPart("santa_arm")
+parts{"leg"} = LoadPart("santa_leg")
+
+DIM started = FALSE
+DIM running = TRUE
+
+' ?ask=1 on the web: the first tap asks for the first line through the page's text field.
+DIM ask_mode = on_web ANDALSO MAP.EXISTS(url_params, "ask")
+DIM asking = FALSE
+
+SUB AskText(prompt$, max_chars, value$)
+    IF FILE.EXISTS("/input_reply.json") THEN KILL "/input_reply.json"
+    TXTWRITER "/input_request.json", JSON.STRINGIFY$({"prompt": prompt$, "max": max_chars, "value": value$})
+    asking = TRUE
+ENDSUB
+
+' The reply map once the page has answered, NONE before.
+FUNC TextReply()
+    IF NOT FILE.EXISTS("/input_reply.json") THEN RETURN NONE
+    DIM reply = JSON.PARSE(TXTREADER$("/input_reply.json"))
+    KILL "/input_reply.json"
+    asking = FALSE
+    RETURN reply
+ENDFUNC
+
+SUB OnTap(info)
+    IF NOT started ANDALSO NOT asking THEN
+        IF ask_mode THEN
+            AskText("Dein Gruß (max. 80 Zeichen)", 80, lines[0])
+        ELSE
+            started = TRUE
+        ENDIF
+        IF muted THEN RETURN
+        TRY
+            StartMusic()
+        CATCH
+            PRINT "music: "; ERRMSG$
+        ENDTRY
+    ENDIF
+ENDSUB
+
+SUB OnQuit(info)
+    running = FALSE
+ENDSUB
+
+ON "MOUSEDOWN" CALL OnTap@
+ON "QUIT" CALL OnQuit@
+
+PRINT "raster "; raster_ms; " ms, demo link "; LEN(demo_code$); " chars, worst case "; LEN(worst_code$); " chars"
+PRINT "demo code: "; demo_code$
+
+DIM t_start = TICK()
+DIM t_run = 0
+DIM frames = 0
+DIM fps = 0
+DIM fps_mark = TICK()
+DIM lines = story{"lines"}
+
+' XMAS_SHOTS=<dir> starts without a tap, saves frames at these story seconds and quits.
+DIM shot_dir$ = GETENV$("XMAS_SHOTS")
+DIM shot_times = [2, 8, LEN(lines) * 5.5 + 1]
+DIM shot_i = 0
+
+DO WHILE running
+    DIM ms_now = TICK()
+    DIM t = (ms_now - t_start) / 1000
+    DrawRoom(t)
+    DIM pose = {"x": 380, "y": 1020, "scale": 1.0, "tilt": SIN(t * 1.6) * 2, "head": SIN(t * 2.1) * 4, "arm_l": 8 + SIN(t * 1.3) * 3, "arm_r": -8, "leg_l": 0, "leg_r": 0, "mouth": 0, "blink": (INT(ms_now) MOD 3200) < 120}
+    IF asking THEN
+        DIM reply = TextReply()
+        IF NOT ISNONE(reply) THEN
+            IF reply{"ok"} ANDALSO TRIM$(reply{"text"}) <> "" THEN lines[0] = TRIM$(reply{"text"})
+            started = TRUE
+        ENDIF
+    ENDIF
+    IF NOT started THEN
+        DrawPuppet(parts, pose)
+        ROUNDED_RECT 160, 1110, 400, 90, 30, TRUE, 200, 30, 40
+        TEXT 220, 1138, IIF(LEFT$(story{"to"} ?? "", 1) = "", "Tippen!", "Für " + story{"to"} + ": tippen!"), 255, 255, 255
+        t_run = ms_now
+    ELSE
+        DIM st = (ms_now - t_run) / 1000
+        DIM per_line = 5.5
+        DIM idx = INT(st / per_line)
+        IF idx < LEN(lines) THEN
+            DIM local_t = st - idx * per_line
+            DIM n_chars = INT(local_t * 22)
+            DIM talking = n_chars < LENW(lines[idx])
+            IF talking THEN pose{"mouth"} = ABS(SIN(local_t * 14))
+            IF idx = 0 THEN pose{"arm_r"} = -140 + SIN(local_t * 8) * 20
+            DrawPuppet(parts, pose)
+            DIM mouth_at = TorsoPoint(pose, JOINT{"head"})
+            DrawBubble(lines[idx], n_chars, mouth_at[0], mouth_at[1] - 190)
+        ELSE
+            ' the happy end: a jump with both arms up
+            DIM hop = ABS(SIN(st * 5)) * 60
+            pose{"y"} = pose{"y"} - hop
+            pose{"arm_l"} = 150 + SIN(st * 10) * 10
+            pose{"arm_r"} = -150 - SIN(st * 10) * 10
+            pose{"leg_l"} = 10 * SIN(st * 10)
+            pose{"leg_r"} = -10 * SIN(st * 10)
+            pose{"mouth"} = 0.8
+            DrawPuppet(parts, pose)
+            TEXT 120, 160, "Von " + (story{"from"} ?? "") + " für " + (story{"to"} ?? ""), 255, 240, 200
+        ENDIF
+    ENDIF
+    frames = frames + 1
+    IF ms_now - fps_mark >= 1000 THEN
+        fps = frames
+        frames = 0
+        fps_mark = ms_now
+    ENDIF
+    TEXT 10, SH - 40, STR$(fps) + " fps  raster " + STR$(INT(raster_ms)) + " ms  link " + STR$(LEN(demo_code$)) + "/" + STR$(LEN(worst_code$)), 255, 255, 0
+    IF shot_dir$ <> "" THEN
+        IF NOT started THEN started = TRUE
+        IF shot_i < LEN(shot_times) ANDALSO (ms_now - t_run) / 1000 >= shot_times[shot_i] THEN
+            GFX.SAVE_SCREENSHOT(shot_dir$ + "/xmas_shot" + STR$(shot_i) + ".png")
+            shot_i = shot_i + 1
+            IF shot_i = LEN(shot_times) THEN running = FALSE
+        ENDIF
+    ENDIF
+    SCREENFLIP
+    SLEEP 1
+LOOP

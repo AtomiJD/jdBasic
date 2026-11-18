@@ -1,0 +1,8 @@
+art/santa_torso.rgbz
+art/santa_head.rgbz
+art/santa_arm.rgbz
+art/santa_leg.rgbz
+raster.jdb
+xml.jdb
+img.jdb
+ttf.jdb
