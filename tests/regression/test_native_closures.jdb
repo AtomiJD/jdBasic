@@ -135,5 +135,35 @@ NEXT i
 DIM seen$ = JOIN(viaLambda, ",") + " " + JOIN(direct, ",") + " " + JOIN(inFunc, ",") + " " + say(0)
 Check("SELECT cells of a captured text outlive the closure", seen$, "a,a a,a in,in zz")
 
+' A capture handed back through a FUNC that returns its argument.
+FUNC Same$(a$)
+    RETURN a$
+ENDFUNC
+FUNC MakeVia(word$)
+    RETURN LAMBDA USE(word$) x -> Same$(word$)
+ENDFUNC
+DIM via = MakeVia("cap")
+DIM viaCells = SELECT(via, [1, 2])
+via = MakeVia("new")
+FOR i = 1 TO 300
+    filler = APPEND(filler, ["v" + STR$(i)])
+NEXT i
+Check("a capture handed back through a FUNC into SELECT", JOIN(viaCells, ",") + " " + via(0), "cap,cap new")
+
+' An event handler calling a closure: the captured text stays the
+' closure's, call after call.
+DIM heard$ = ""
+SUB OnHeard(args AS ARRAY)
+    heard$ = heard$ + say(1) + "|"
+ENDSUB
+ON "HEARD" CALL OnHeard@
+FOR i = 1 TO 3
+    RAISEEVENT "HEARD", [i]
+NEXT i
+FOR i = 1 TO 300
+    filler = APPEND(filler, ["h" + STR$(i)])
+NEXT i
+Check("an event handler calling a closure keeps its capture", heard$ + " " + say(0), "zz|zz|zz| zz")
+
 PRINT pass; " passed, "; fail; " failed"
 IF fail > 0 THEN END 1

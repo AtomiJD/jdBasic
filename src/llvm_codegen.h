@@ -224,7 +224,9 @@ private:
     // runtime even when the target user FUNC has a non-f64 signature.
     // Wrapper is generated lazily on first reference.
     std::unordered_map<std::string, LLVMValueRef> funcref_wrappers;
-    LLVMValueRef build_funcref_wrapper(const std::string& fn_name, int arity);
+    // to_bridge: the answer goes to the bridge (an ASYNC FUNC's thread), which
+    // makes its own value of it, so a text is never copied for a caller.
+    LLVMValueRef build_funcref_wrapper(const std::string& fn_name, int arity, bool to_bridge = false);
     LLVMValueRef funcref_arg_channel();
     LLVMValueRef funcref_ret_channel();
     LLVMValueRef funcref_arg_slot(unsigned idx);

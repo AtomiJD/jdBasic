@@ -118,9 +118,10 @@ struct CompiledCall {
 };
 
 // Set while the runtime calls a compiled callback (SELECT, FILTER, REDUCE
-// and the rest). The lambda or FUNC wrapper takes it on entry: called from
-// such a loop it hands its answer back as it is, called by compiled code it
-// answers a text of its own for the caller to drop.
+// and the rest), which is always a lambda or a FUNC wrapper: it takes the
+// mark on entry, hands its answer back as it is, and a call it makes from
+// its body sees no mark. Compiled code calling one gets a text of its own
+// for the caller to drop.
 static thread_local bool g_runtime_call = false;
 
 extern "C" int32_t jdb_take_runtime_call(void) {

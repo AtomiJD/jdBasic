@@ -12487,9 +12487,21 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             // A text capture is the closure's own copy and goes when the
             // closure does: an answer that may be it is always copied, also
             // for a runtime loop, which keeps what it is handed.
-            bool text_capture = false;
+            std::unordered_set<std::string> text_caps;
             for (auto& cp : captured)
-                if (cp.second.tag == JD_TAG_STR || cp.second.tag == JD_TAG_RUNTIME) text_capture = true;
+                if (cp.second.tag == JD_TAG_STR || cp.second.tag == JD_TAG_RUNTIME)
+                    text_caps.insert(cp.first);
+            // A body that mentions the capture anywhere may hand it back,
+            // through a call that returns its argument as well; one that
+            // never names it cannot.
+            std::function<bool(const Expr&)> may_be_capture = [&](const Expr& b) -> bool {
+                if (b.kind == ExprKind::VARIABLE && text_caps.count(b.str_val)) return true;
+                if (b.left && may_be_capture(*b.left)) return true;
+                if (b.right && may_be_capture(*b.right)) return true;
+                for (auto& a : b.args) if (a && may_be_capture(*a)) return true;
+                return false;
+            };
+            bool text_capture = !text_caps.empty() && may_be_capture(*expr.right);
             LLVMValueRef one = LLVMConstInt(LLVMInt1TypeInContext(ctx), 1, 0);
             LLVMValueRef direct = from_runtime ? LLVMBuildNot(builder, from_runtime, "lret_direct") : one;
             LLVMValueRef copy_cond = text_capture ? one : direct;
@@ -15362,8 +15374,8 @@ LLVMCodegen::TypedValue LLVMCodegen::emit_named_call(LLVMValueRef name_ptr, cons
     return { result, JD_TAG_VM_HANDLE };
 }
 
-LLVMValueRef LLVMCodegen::build_funcref_wrapper(const std::string& fn_name, int arity) {
-    std::string key = fn_name + "/" + std::to_string(arity);
+LLVMValueRef LLVMCodegen::build_funcref_wrapper(const std::string& fn_name, int arity, bool to_bridge) {
+    std::string key = fn_name + "/" + std::to_string(arity) + (to_bridge ? "/bridge" : "");
     auto cached = funcref_wrappers.find(key);
     if (cached != funcref_wrappers.end()) return cached->second;
 
@@ -15377,7 +15389,7 @@ LLVMValueRef LLVMCodegen::build_funcref_wrapper(const std::string& fn_name, int 
     LLVMTypeRef wrap_ty = LLVMFunctionType(f64_type,
         wrap_params.empty() ? nullptr : wrap_params.data(), arity, 0);
 
-    std::string wrap_name = "__funcref_" + fn_name + "_" + std::to_string(arity);
+    std::string wrap_name = "__funcref_" + fn_name + "_" + std::to_string(arity) + (to_bridge ? "_bridge" : "");
     for (auto& c : wrap_name) if (c == '.' || c == '$' || c == '@') c = '_';
     LLVMValueRef wrap_fn = LLVMAddFunction(module, wrap_name.c_str(), wrap_ty);
 
@@ -15394,6 +15406,7 @@ LLVMValueRef LLVMCodegen::build_funcref_wrapper(const std::string& fn_name, int 
         from_runtime = LLVMBuildICmp(builder, LLVMIntNE,
             LLVMBuildCall2(builder, tk->fn_type, tk->fn, nullptr, 0, "w_from_rt"),
             LLVMConstInt(i32_type, 0, 0), "w_from_rt_b");
+    if (to_bridge) from_runtime = LLVMConstInt(LLVMInt1TypeInContext(ctx), 1, 0);
     // A text answer is copied when compiled code made the call, so that
     // caller may drop it; a runtime loop gets it as it is.
     auto copy_for_caller = [&](LLVMValueRef bits, LLVMValueRef cond) -> LLVMValueRef {
@@ -16084,7 +16097,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         // registers the result in g_async_tasks for later AWAIT.
         if (fi.is_async) {
             int arity = (int)expr.args.size();
-            LLVMValueRef wrapper = build_funcref_wrapper(name, arity);
+            LLVMValueRef wrapper = build_funcref_wrapper(name, arity, true);
             auto* spawn = get_runtime_func("__jdrt_async_spawn");
             if (wrapper && spawn) {
                 // Coerce every arg to f64; pun ptr-typed args through
