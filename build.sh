@@ -179,6 +179,22 @@ if [ "$WANT_GFX" = "1" ]; then
     GFX_SRC="src/graphics.cpp src/sprites.cpp src/tiledmap.cpp"
 fi
 
+WANT_OPENGL=${OPENGL:-0}
+OPENGL_SRC=""
+if [ "$WANT_OPENGL" = "1" ]; then
+    if [ "$WANT_GFX" != "1" ]; then
+        echo "ERROR: OPENGL=1 requires GFX=1 (SDL window + event queue)"; exit 1
+    fi
+    CXXFLAGS="$CXXFLAGS -DOPENGL"
+    # Windows links opengl32.lib; Linux uses libGL (-lGL), macOS uses -framework OpenGL.
+    if [ "$(uname -s)" = "Darwin" ]; then
+        LDFLAGS="$LDFLAGS -framework OpenGL"
+    else
+        LDFLAGS="$LDFLAGS -lGL"
+    fi
+    OPENGL_SRC="src/opengl.cpp"
+fi
+
 IMGUI_SRC=""
 if [ "$WANT_IMGUI" = "1" ]; then
     if [ "$WANT_GFX" != "1" ]; then
@@ -317,7 +333,7 @@ SRC="src/main.cpp src/lexer.cpp src/parser.cpp src/compiler.cpp src/vm.cpp src/v
      src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp src/audio_fx.cpp src/midi.cpp src/audio_io.cpp \
      src/gui.cpp src/ai.cpp src/llm.cpp src/channels.cpp src/file_streams.cpp \
      src/numerics.cpp src/screencap.cpp src/pybridge.cpp src/pcode.cpp \
-     $HTTP_SRC $NET_SRC $GFX_SRC $IMGUI_SRC $NATIVEC_SRC $MCPSERVER_SRC $SQL_SRC $FTXUI_SRC $TUI_SRC $MIDI_SRC"
+     $HTTP_SRC $NET_SRC $GFX_SRC $OPENGL_SRC $IMGUI_SRC $NATIVEC_SRC $MCPSERVER_SRC $SQL_SRC $FTXUI_SRC $TUI_SRC $MIDI_SRC"
 
 # ── Compile in parallel ──────────────────────────────────────
 # Map src/foo.cpp → build/obj/foo.o, libs/imgui/imgui.cpp → build/obj/imgui.o.
@@ -368,6 +384,7 @@ features="console"
 [ "$WANT_HTTP"  = "1" ] && features="$features+HTTP"
 [ "$WANT_NET"   = "1" ] && features="$features+NET"
 [ "$WANT_GFX"   = "1" ] && features="$features+GFX"
+[ "$WANT_OPENGL" = "1" ] && features="$features+OPENGL"
 [ "$WANT_IMGUI" = "1" ] && features="$features+IMGUI"
 [ "$WANT_LLM"     = "1" ] && features="$features+LLM"
 [ "$WANT_ONNX"    = "1" ] && features="$features+ONNX"
