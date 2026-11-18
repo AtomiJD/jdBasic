@@ -48,11 +48,12 @@ DIM FS$ AS STRING = "#version 330 core" + CHR$(10) + _
     "in vec3 vWorldPos;" + CHR$(10) + _
     "in vec3 vNormal;" + CHR$(10) + _
     "in float vType;" + CHR$(10) + _
+    "uniform float uForceType;" + CHR$(10) + _
     "out vec4 FragColor;" + CHR$(10) + _
     "float hash12(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }" + CHR$(10) + _
     "void main() {" + CHR$(10) + _
     "  vec3 base;" + CHR$(10) + _
-    "  float t = vType;" + CHR$(10) + _
+    "  float t = uForceType >= 0.0 ? uForceType : vType;" + CHR$(10) + _
     "  bool top    = vNormal.y >  0.5;" + CHR$(10) + _
     "  bool bottom = vNormal.y < -0.5;" + CHR$(10) + _
     "  if (t < 1.5) {" + CHR$(10) + _
@@ -249,6 +250,46 @@ DIM cross_verts = [ _
 DIM cross_vao AS INTEGER = GL.VAO()
 DIM cross_vbo AS INTEGER = GL.VBO(cross_verts)
 GL.ATTRIB(0, 2, 2 * 4, 0)
+
+' First-person "hand": a unit cube in 0..1 range, rendered later in camera-
+' space via a model matrix. Shares the main voxel shader; the per-vertex
+' type field is a dummy (uForceType uniform overrides it with sel_type).
+DIM held_verts[0]
+DIM held_idx[0]
+DIM hf AS INTEGER, hc AS INTEGER
+DIM hcx AS DOUBLE, hcy AS DOUBLE, hcz AS DOUBLE
+DIM hnx AS DOUBLE, hny AS DOUBLE, hnz AS DOUBLE
+DIM hbi AS INTEGER = 0
+FOR hf = 0 TO 5
+    hnx = face_normals[hf * 3 + 0]
+    hny = face_normals[hf * 3 + 1]
+    hnz = face_normals[hf * 3 + 2]
+    FOR hc = 0 TO 3
+        hcx = face_corners[hf * 12 + hc * 3 + 0]
+        hcy = face_corners[hf * 12 + hc * 3 + 1]
+        hcz = face_corners[hf * 12 + hc * 3 + 2]
+        PUSH held_verts, hcx
+        PUSH held_verts, hcy
+        PUSH held_verts, hcz
+        PUSH held_verts, hnx
+        PUSH held_verts, hny
+        PUSH held_verts, hnz
+        PUSH held_verts, 0
+    NEXT hc
+    PUSH held_idx, hbi + 0
+    PUSH held_idx, hbi + 1
+    PUSH held_idx, hbi + 2
+    PUSH held_idx, hbi + 0
+    PUSH held_idx, hbi + 2
+    PUSH held_idx, hbi + 3
+    hbi = hbi + 4
+NEXT hf
+DIM held_vao AS INTEGER = GL.VAO()
+DIM held_vbo AS INTEGER = GL.VBO(held_verts)
+DIM held_ebo AS INTEGER = GL.EBO(held_idx)
+GL.ATTRIB(0, 3, 7 * 4, 0)
+GL.ATTRIB(1, 3, 7 * 4, 3 * 4)
+GL.ATTRIB(2, 1, 7 * 4, 6 * 4)
 
 SUB rebuild_gl_mesh()
     GL.BUFFER.DELETE(vbo)
@@ -455,8 +496,10 @@ ENDFUNC
 DIM proj = MAT4.PERSPECTIVE(65.0, WIN_W * 1.0 / WIN_H, 0.1, 200.0)
 
 DIM last_t AS INTEGER = TICK()
+DIM start_t AS INTEGER = TICK()
 DIM move_speed AS DOUBLE = 7.0
 DIM look_speed AS DOUBLE = 1.6
+DIM bob_phase AS DOUBLE = 0.0
 
 PRINT "world ready. WASD + Space/Shift, arrows to look, LMB dig, RMB place, 1/2/3 select, ESC quit."
 
@@ -509,11 +552,45 @@ DO
     GL.CLEAR(135, 180, 220)
     GL.USE(prog)
     GL.UNIFORM.MAT4("uMVP", mvp)
+    GL.UNIFORM.F1("uForceType", -1.0)
     GL.VAO.BIND(vao)
     GL.DRAW.TRIS.IDX(LEN(idx))
 
-    ' crosshair - draw without depth test so it's always visible
+    ' --- held block (first-person hand) ---
+    ' Camera-space transform: identity view, model places a small cube at
+    ' the lower-right in front of the camera. bob_phase advances whenever
+    ' a WASD key is held, so the hand swings while you walk.
+    DIM moving AS INTEGER = 0
+    IF is_down("W") THEN moving = 1
+    IF is_down("A") THEN moving = 1
+    IF is_down("S") THEN moving = 1
+    IF is_down("D") THEN moving = 1
+    IF moving = 1 THEN bob_phase = bob_phase + dt * 8.0
+    DIM bob_y AS DOUBLE = 0.0
+    DIM bob_x AS DOUBLE = 0.0
+    IF moving = 1 THEN
+        bob_y = SIN(bob_phase) * 0.025
+        bob_x = COS(bob_phase * 0.5) * 0.02
+    ENDIF
+
+    DIM hm = MAT4.IDENTITY()
+    hm = MAT4.TRANSLATE(hm, 0.55 + bob_x, -0.42 + bob_y, -1.0)
+    hm = MAT4.ROTATE(hm, 30.0, 0, 1, 0)
+    hm = MAT4.ROTATE(hm, -20.0, 1, 0, 0)
+    hm = MAT4.SCALE(hm, 0.28, 0.28, 0.28)
+    hm = MAT4.TRANSLATE(hm, -0.5, -0.5, -0.5)
+    DIM hmvp = MAT4.MUL(proj, hm)
+
+    ' CULL_FACE + CCW-outside winding leaves only the 3 camera-facing faces,
+    ' so drawing without depth test cannot show interior back faces.
     GL.DISABLE("DEPTH_TEST")
+    GL.USE(prog)
+    GL.UNIFORM.MAT4("uMVP", hmvp)
+    GL.UNIFORM.F1("uForceType", sel_type * 1.0)
+    GL.VAO.BIND(held_vao)
+    GL.DRAW.TRIS.IDX(LEN(held_idx))
+
+    ' crosshair
     GL.USE(cross_prog)
     GL.VAO.BIND(cross_vao)
     GL.DRAW.LINES(0, 4)
@@ -525,9 +602,12 @@ LOOP WHILE running = 1
 
 GL.VAO.DELETE(vao)
 GL.VAO.DELETE(cross_vao)
+GL.VAO.DELETE(held_vao)
 GL.BUFFER.DELETE(vbo)
 GL.BUFFER.DELETE(ebo)
 GL.BUFFER.DELETE(cross_vbo)
+GL.BUFFER.DELETE(held_vbo)
+GL.BUFFER.DELETE(held_ebo)
 GL.SHADER.DELETE(prog)
 GL.SHADER.DELETE(cross_prog)
 GL.CLOSE()
