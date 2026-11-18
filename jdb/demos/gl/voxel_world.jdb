@@ -62,16 +62,23 @@ DIM FS$ AS STRING = "#version 330 core" + CHR$(10) + _
     "    else             base = vec3(0.47, 0.33, 0.20);" + CHR$(10) + _
     "  } else if (t < 2.5) {" + CHR$(10) + _
     "    base = vec3(0.45, 0.30, 0.18);" + CHR$(10) + _
-    "  } else {" + CHR$(10) + _
+    "  } else if (t < 3.5) {" + CHR$(10) + _
     "    base = vec3(0.52, 0.52, 0.55);" + CHR$(10) + _
+    "  } else if (t < 4.5) {" + CHR$(10) + _          ' skin
+    "    base = vec3(0.98, 0.82, 0.68);" + CHR$(10) + _
+    "  } else if (t < 5.5) {" + CHR$(10) + _          ' pink dress
+    "    base = vec3(0.98, 0.52, 0.76);" + CHR$(10) + _
+    "  } else {" + CHR$(10) + _                       ' hair brown
+    "    base = vec3(0.42, 0.24, 0.10);" + CHR$(10) + _
     "  }" + CHR$(10) + _
+    "  float noise_amt = t >= 3.5 ? 0.06 : 0.24;" + CHR$(10) + _
     "  vec2 uv;" + CHR$(10) + _
     "  if (abs(vNormal.y) > 0.5) uv = vWorldPos.xz;" + CHR$(10) + _
     "  else if (abs(vNormal.x) > 0.5) uv = vWorldPos.yz;" + CHR$(10) + _
     "  else uv = vWorldPos.xy;" + CHR$(10) + _
     "  float n1 = hash12(floor(uv * 6.0));" + CHR$(10) + _
     "  float n2 = hash12(floor(uv * 24.0));" + CHR$(10) + _
-    "  base *= 0.78 + 0.18 * n1 + 0.06 * n2;" + CHR$(10) + _
+    "  base *= (1.0 - noise_amt) + noise_amt * n1 + noise_amt * 0.33 * n2;" + CHR$(10) + _
     "  vec3 L = normalize(vec3(0.4, 1.0, 0.3));" + CHR$(10) + _
     "  float lambert = clamp(dot(vNormal, L), 0.0, 1.0);" + CHR$(10) + _
     "  float shade = 0.55 + 0.45 * lambert;" + CHR$(10) + _
@@ -409,6 +416,12 @@ DIM yaw   AS DOUBLE = -MATH.PI * 0.25
 DIM pitch AS DOUBLE = -0.5
 DIM sel_type AS INTEGER = BT_GRASS
 
+' Third-person view toggle (F5). When tpv=1 the render camera sits behind
+' the eye point by TPV_DIST units; the eye (cam_x/y/z) still drives raycasts.
+DIM tpv AS INTEGER = 0
+CONST TPV_DIST = 4.0
+CONST EYE_OFFSET = 1.6
+
 DIM keys AS MAP = {}
 DIM running AS INTEGER = 1
 
@@ -437,6 +450,10 @@ SUB OnKeyDown(info)
     IF k$ = "3" THEN
         sel_type = BT_STONE
         PRINT "selected: stone"
+    ENDIF
+    IF k$ = "F5" THEN
+        tpv = 1 - tpv
+        IF tpv = 1 THEN PRINT "third-person on" ELSE PRINT "first-person on"
     ENDIF
 ENDSUB
 
@@ -480,6 +497,87 @@ SUB OnQuit(info)
     running = 0
 ENDSUB
 
+' --- character part draw: a cube centred at (cx, cy, cz) in character-local
+' space (feet at y=0, facing -Z), scaled (sx, sy, sz), coloured by type.
+' Character is anchored at (cam_x, cam_y - EYE_OFFSET, cam_z) and rotated by
+' yaw around Y so she faces where the camera looks.
+SUB draw_char_part(vp_mat, cx AS DOUBLE, cy AS DOUBLE, cz AS DOUBLE, sx AS DOUBLE, sy AS DOUBLE, sz AS DOUBLE, ctype AS INTEGER)
+    DIM m = MAT4.IDENTITY()
+    m = MAT4.TRANSLATE(m, cam_x, cam_y - EYE_OFFSET, cam_z)
+    m = MAT4.ROTATE_RAD(m, -yaw, 0, 1, 0)
+    m = MAT4.TRANSLATE(m, cx, cy, cz)
+    m = MAT4.SCALE(m, sx, sy, sz)
+    m = MAT4.TRANSLATE(m, -0.5, -0.5, -0.5)
+    DIM mm = MAT4.MUL(vp_mat, m)
+    GL.UNIFORM.MAT4("uMVP", mm)
+    GL.UNIFORM.F1("uForceType", ctype * 1.0)
+    GL.DRAW.TRIS.IDX(LEN(held_idx))
+ENDSUB
+
+SUB draw_character(vp_mat)
+    ' Walk-swing: arms and legs counter-swing. When not moving, pose is still.
+    DIM swing AS DOUBLE = 0.0
+    IF is_down("W") OR is_down("A") OR is_down("S") OR is_down("D") THEN
+        swing = SIN(bob_phase) * 0.25
+    ENDIF
+    GL.USE(prog)
+    GL.VAO.BIND(held_vao)
+    ' head
+    draw_char_part(vp_mat, 0.0, 1.55, 0.0, 0.50, 0.50, 0.50, 4)
+    ' hair - flat cap sitting on top of the head
+    draw_char_part(vp_mat, 0.0, 1.88, 0.0, 0.56, 0.18, 0.56, 6)
+    ' hair - side flaps for a short-bob look
+    draw_char_part(vp_mat, -0.30, 1.60, 0.0, 0.08, 0.38, 0.58, 6)
+    draw_char_part(vp_mat,  0.30, 1.60, 0.0, 0.08, 0.38, 0.58, 6)
+    ' body (pink dress top)
+    draw_char_part(vp_mat, 0.0, 1.00, 0.0, 0.58, 0.55, 0.34, 5)
+    ' pink skirt - wider, flatter
+    draw_char_part(vp_mat, 0.0, 0.58, 0.0, 0.92, 0.26, 0.68, 5)
+    ' arms (left/right) - swing opposite phases
+    draw_char_part(vp_mat, -0.42, 1.00 + swing * 0.08,  swing * 0.20, 0.20, 0.55, 0.20, 4)
+    draw_char_part(vp_mat,  0.42, 1.00 - swing * 0.08, -swing * 0.20, 0.20, 0.55, 0.20, 4)
+    ' legs
+    draw_char_part(vp_mat, -0.17, 0.22, -swing * 0.20, 0.25, 0.40, 0.25, 4)
+    draw_char_part(vp_mat,  0.17, 0.22,  swing * 0.20, 0.25, 0.40, 0.25, 4)
+    ' held block in the right hand (end of right arm, slight forward offset)
+    draw_char_part(vp_mat,  0.42, 0.68, -0.18, 0.26, 0.26, 0.26, sel_type)
+ENDSUB
+
+SUB draw_first_person(proj_mat, moving AS INTEGER)
+    DIM bx AS DOUBLE = 0.0, by AS DOUBLE = 0.0
+    IF moving = 1 THEN
+        by = SIN(bob_phase) * 0.025
+        bx = COS(bob_phase * 0.5) * 0.02
+    ENDIF
+    GL.DISABLE("DEPTH_TEST")
+    GL.USE(prog)
+    GL.VAO.BIND(held_vao)
+
+    ' arm (skin) - a narrow long cube extending from lower-right-back to the hand
+    DIM am = MAT4.IDENTITY()
+    am = MAT4.TRANSLATE(am, 0.48 + bx, -0.78 + by, -0.70)
+    am = MAT4.ROTATE(am, -55.0, 1, 0, 0)
+    am = MAT4.ROTATE(am, -15.0, 0, 0, 1)
+    am = MAT4.SCALE(am, 0.14, 0.55, 0.14)
+    am = MAT4.TRANSLATE(am, -0.5, -0.5, -0.5)
+    DIM amvp = MAT4.MUL(proj_mat, am)
+    GL.UNIFORM.MAT4("uMVP", amvp)
+    GL.UNIFORM.F1("uForceType", 4.0)
+    GL.DRAW.TRIS.IDX(LEN(held_idx))
+
+    ' held block in the hand
+    DIM hm = MAT4.IDENTITY()
+    hm = MAT4.TRANSLATE(hm, 0.55 + bx, -0.42 + by, -1.0)
+    hm = MAT4.ROTATE(hm, 30.0, 0, 1, 0)
+    hm = MAT4.ROTATE(hm, -20.0, 1, 0, 0)
+    hm = MAT4.SCALE(hm, 0.28, 0.28, 0.28)
+    hm = MAT4.TRANSLATE(hm, -0.5, -0.5, -0.5)
+    DIM hmvp = MAT4.MUL(proj_mat, hm)
+    GL.UNIFORM.MAT4("uMVP", hmvp)
+    GL.UNIFORM.F1("uForceType", sel_type * 1.0)
+    GL.DRAW.TRIS.IDX(LEN(held_idx))
+ENDSUB
+
 ON "KEYDOWN"   CALL OnKeyDown@
 ON "KEYUP"     CALL OnKeyUp@
 ON "MOUSEDOWN" CALL OnMouseDown@
@@ -501,7 +599,7 @@ DIM move_speed AS DOUBLE = 7.0
 DIM look_speed AS DOUBLE = 1.6
 DIM bob_phase AS DOUBLE = 0.0
 
-PRINT "world ready. WASD + Space/Shift, arrows to look, LMB dig, RMB place, 1/2/3 select, ESC quit."
+PRINT "world ready. WASD + Space/Shift, arrows to look, LMB dig, RMB place, 1/2/3 select, F5 3rd-person, ESC quit."
 
 DO
     DIM tnow AS INTEGER = TICK()
@@ -542,55 +640,46 @@ DO
     IF is_down("Left Shift") THEN cam_y = cam_y - mv
     IF is_down("LShift")     THEN cam_y = cam_y - mv
 
+    ' --- render camera (tpv offsets behind the eye) ---
+    DIM render_cx AS DOUBLE = cam_x
+    DIM render_cy AS DOUBLE = cam_y
+    DIM render_cz AS DOUBLE = cam_z
+    IF tpv = 1 THEN
+        render_cx = cam_x - view_dir_x() * TPV_DIST
+        render_cy = cam_y - view_dir_y() * TPV_DIST + 0.4
+        render_cz = cam_z - view_dir_z() * TPV_DIST
+    ENDIF
+
     DIM look_x AS DOUBLE = cam_x + view_dir_x()
     DIM look_y AS DOUBLE = cam_y + view_dir_y()
     DIM look_z AS DOUBLE = cam_z + view_dir_z()
 
-    DIM view = MAT4.LOOKAT(cam_x, cam_y, cam_z, look_x, look_y, look_z, 0, 1, 0)
-    DIM mvp  = MAT4.MUL(proj, view)
+    DIM view = MAT4.LOOKAT(render_cx, render_cy, render_cz, look_x, look_y, look_z, 0, 1, 0)
+    DIM vp   = MAT4.MUL(proj, view)
 
     GL.CLEAR(135, 180, 220)
     GL.USE(prog)
-    GL.UNIFORM.MAT4("uMVP", mvp)
+    GL.UNIFORM.MAT4("uMVP", vp)
     GL.UNIFORM.F1("uForceType", -1.0)
     GL.VAO.BIND(vao)
     GL.DRAW.TRIS.IDX(LEN(idx))
 
-    ' --- held block (first-person hand) ---
-    ' Camera-space transform: identity view, model places a small cube at
-    ' the lower-right in front of the camera. bob_phase advances whenever
-    ' a WASD key is held, so the hand swings while you walk.
+    ' --- movement + bob state ---
     DIM moving AS INTEGER = 0
     IF is_down("W") THEN moving = 1
     IF is_down("A") THEN moving = 1
     IF is_down("S") THEN moving = 1
     IF is_down("D") THEN moving = 1
     IF moving = 1 THEN bob_phase = bob_phase + dt * 8.0
-    DIM bob_y AS DOUBLE = 0.0
-    DIM bob_x AS DOUBLE = 0.0
-    IF moving = 1 THEN
-        bob_y = SIN(bob_phase) * 0.025
-        bob_x = COS(bob_phase * 0.5) * 0.02
+
+    IF tpv = 1 THEN
+        draw_character(vp)
+    ELSE
+        draw_first_person(proj, moving)
     ENDIF
 
-    DIM hm = MAT4.IDENTITY()
-    hm = MAT4.TRANSLATE(hm, 0.55 + bob_x, -0.42 + bob_y, -1.0)
-    hm = MAT4.ROTATE(hm, 30.0, 0, 1, 0)
-    hm = MAT4.ROTATE(hm, -20.0, 1, 0, 0)
-    hm = MAT4.SCALE(hm, 0.28, 0.28, 0.28)
-    hm = MAT4.TRANSLATE(hm, -0.5, -0.5, -0.5)
-    DIM hmvp = MAT4.MUL(proj, hm)
-
-    ' CULL_FACE + CCW-outside winding leaves only the 3 camera-facing faces,
-    ' so drawing without depth test cannot show interior back faces.
+    ' crosshair always on top
     GL.DISABLE("DEPTH_TEST")
-    GL.USE(prog)
-    GL.UNIFORM.MAT4("uMVP", hmvp)
-    GL.UNIFORM.F1("uForceType", sel_type * 1.0)
-    GL.VAO.BIND(held_vao)
-    GL.DRAW.TRIS.IDX(LEN(held_idx))
-
-    ' crosshair
     GL.USE(cross_prog)
     GL.VAO.BIND(cross_vao)
     GL.DRAW.LINES(0, 4)

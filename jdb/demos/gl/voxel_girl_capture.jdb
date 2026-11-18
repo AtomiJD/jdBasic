@@ -1,0 +1,189 @@
+' Headless render of the Phase 3 character from a 3rd-person camera.
+' Produces voxel_girl.png.
+
+OPTION "EXPLICIT"
+
+CONST WIN_W = 800
+CONST WIN_H = 600
+
+DIM VS$ AS STRING = "#version 330 core" + CHR$(10) + _
+    "layout(location=0) in vec3 aPos;" + CHR$(10) + _
+    "layout(location=1) in vec3 aNormal;" + CHR$(10) + _
+    "layout(location=2) in float aType;" + CHR$(10) + _
+    "uniform mat4 uMVP;" + CHR$(10) + _
+    "out vec3 vWorldPos;" + CHR$(10) + _
+    "out vec3 vNormal;" + CHR$(10) + _
+    "out float vType;" + CHR$(10) + _
+    "void main() {" + CHR$(10) + _
+    "  gl_Position = uMVP * vec4(aPos, 1.0);" + CHR$(10) + _
+    "  vWorldPos = aPos;" + CHR$(10) + _
+    "  vNormal = aNormal;" + CHR$(10) + _
+    "  vType = aType;" + CHR$(10) + _
+    "}"
+
+DIM FS$ AS STRING = "#version 330 core" + CHR$(10) + _
+    "in vec3 vWorldPos;" + CHR$(10) + _
+    "in vec3 vNormal;" + CHR$(10) + _
+    "in float vType;" + CHR$(10) + _
+    "uniform float uForceType;" + CHR$(10) + _
+    "out vec4 FragColor;" + CHR$(10) + _
+    "float hash12(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }" + CHR$(10) + _
+    "void main() {" + CHR$(10) + _
+    "  vec3 base;" + CHR$(10) + _
+    "  float t = uForceType >= 0.0 ? uForceType : vType;" + CHR$(10) + _
+    "  bool top    = vNormal.y >  0.5;" + CHR$(10) + _
+    "  bool bottom = vNormal.y < -0.5;" + CHR$(10) + _
+    "  if (t < 1.5) {" + CHR$(10) + _
+    "    if (top)         base = vec3(0.34, 0.72, 0.30);" + CHR$(10) + _
+    "    else if (bottom) base = vec3(0.45, 0.30, 0.18);" + CHR$(10) + _
+    "    else             base = vec3(0.47, 0.33, 0.20);" + CHR$(10) + _
+    "  } else if (t < 2.5) {" + CHR$(10) + _
+    "    base = vec3(0.45, 0.30, 0.18);" + CHR$(10) + _
+    "  } else if (t < 3.5) {" + CHR$(10) + _
+    "    base = vec3(0.52, 0.52, 0.55);" + CHR$(10) + _
+    "  } else if (t < 4.5) {" + CHR$(10) + _
+    "    base = vec3(0.98, 0.82, 0.68);" + CHR$(10) + _
+    "  } else if (t < 5.5) {" + CHR$(10) + _
+    "    base = vec3(0.98, 0.52, 0.76);" + CHR$(10) + _
+    "  } else {" + CHR$(10) + _
+    "    base = vec3(0.42, 0.24, 0.10);" + CHR$(10) + _
+    "  }" + CHR$(10) + _
+    "  float noise_amt = t >= 3.5 ? 0.06 : 0.24;" + CHR$(10) + _
+    "  vec2 uv;" + CHR$(10) + _
+    "  if (abs(vNormal.y) > 0.5) uv = vWorldPos.xz;" + CHR$(10) + _
+    "  else if (abs(vNormal.x) > 0.5) uv = vWorldPos.yz;" + CHR$(10) + _
+    "  else uv = vWorldPos.xy;" + CHR$(10) + _
+    "  float n1 = hash12(floor(uv * 6.0));" + CHR$(10) + _
+    "  float n2 = hash12(floor(uv * 24.0));" + CHR$(10) + _
+    "  base *= (1.0 - noise_amt) + noise_amt * n1 + noise_amt * 0.33 * n2;" + CHR$(10) + _
+    "  vec3 L = normalize(vec3(0.4, 1.0, 0.3));" + CHR$(10) + _
+    "  float lambert = clamp(dot(vNormal, L), 0.0, 1.0);" + CHR$(10) + _
+    "  float shade = 0.55 + 0.45 * lambert;" + CHR$(10) + _
+    "  if (top)    shade *= 1.05;" + CHR$(10) + _
+    "  if (bottom) shade *= 0.55;" + CHR$(10) + _
+    "  FragColor = vec4(base * shade, 1.0);" + CHR$(10) + _
+    "}"
+
+DIM face_normals = [ _
+    1, 0, 0,   -1, 0, 0, _
+    0, 1, 0,    0,-1, 0, _
+    0, 0, 1,    0, 0,-1 ]
+
+DIM face_corners = [ _
+    1,0,1,  1,0,0,  1,1,0,  1,1,1, _
+    0,0,0,  0,0,1,  0,1,1,  0,1,0, _
+    0,1,1,  1,1,1,  1,1,0,  0,1,0, _
+    0,0,0,  1,0,0,  1,0,1,  0,0,1, _
+    0,0,1,  1,0,1,  1,1,1,  0,1,1, _
+    0,0,0,  0,1,0,  1,1,0,  1,0,0 ]
+
+' --- held cube (reused for every character part) ---
+DIM held_verts[0]
+DIM held_idx[0]
+DIM hf AS INTEGER, hc AS INTEGER
+DIM hcx AS DOUBLE, hcy AS DOUBLE, hcz AS DOUBLE
+DIM hnx AS DOUBLE, hny AS DOUBLE, hnz AS DOUBLE
+DIM hbi AS INTEGER = 0
+FOR hf = 0 TO 5
+    hnx = face_normals[hf * 3 + 0]
+    hny = face_normals[hf * 3 + 1]
+    hnz = face_normals[hf * 3 + 2]
+    FOR hc = 0 TO 3
+        hcx = face_corners[hf * 12 + hc * 3 + 0]
+        hcy = face_corners[hf * 12 + hc * 3 + 1]
+        hcz = face_corners[hf * 12 + hc * 3 + 2]
+        PUSH held_verts, hcx
+        PUSH held_verts, hcy
+        PUSH held_verts, hcz
+        PUSH held_verts, hnx
+        PUSH held_verts, hny
+        PUSH held_verts, hnz
+        PUSH held_verts, 0
+    NEXT hc
+    PUSH held_idx, hbi + 0
+    PUSH held_idx, hbi + 1
+    PUSH held_idx, hbi + 2
+    PUSH held_idx, hbi + 0
+    PUSH held_idx, hbi + 2
+    PUSH held_idx, hbi + 3
+    hbi = hbi + 4
+NEXT hf
+
+' --- character position (simulating player standing on grass) ---
+DIM cam_x AS DOUBLE = 8.0
+DIM cam_y AS DOUBLE = 4.0
+DIM cam_z AS DOUBLE = 8.0
+DIM yaw   AS DOUBLE = -MATH.PI * 0.25
+CONST EYE_OFFSET = 1.6
+DIM sel_type AS INTEGER = 1  ' grass
+
+SUB draw_char_part(vp_mat, cx AS DOUBLE, cy AS DOUBLE, cz AS DOUBLE, sx AS DOUBLE, sy AS DOUBLE, sz AS DOUBLE, ctype AS INTEGER)
+    DIM m = MAT4.IDENTITY()
+    m = MAT4.TRANSLATE(m, cam_x, cam_y - EYE_OFFSET, cam_z)
+    m = MAT4.ROTATE_RAD(m, -yaw, 0, 1, 0)
+    m = MAT4.TRANSLATE(m, cx, cy, cz)
+    m = MAT4.SCALE(m, sx, sy, sz)
+    m = MAT4.TRANSLATE(m, -0.5, -0.5, -0.5)
+    DIM mm = MAT4.MUL(vp_mat, m)
+    GL.UNIFORM.MAT4("uMVP", mm)
+    GL.UNIFORM.F1("uForceType", ctype * 1.0)
+    GL.DRAW.TRIS.IDX(LEN(held_idx))
+ENDSUB
+
+GL.WINDOW(WIN_W, WIN_H, "girl capture")
+GL.ENABLE("DEPTH_TEST")
+GL.ENABLE("CULL_FACE")
+DIM prog AS INTEGER = GL.SHADER(VS$, FS$)
+DIM held_vao AS INTEGER = GL.VAO()
+DIM held_vbo AS INTEGER = GL.VBO(held_verts)
+DIM held_ebo AS INTEGER = GL.EBO(held_idx)
+GL.ATTRIB(0, 3, 7 * 4, 0)
+GL.ATTRIB(1, 3, 7 * 4, 3 * 4)
+GL.ATTRIB(2, 1, 7 * 4, 6 * 4)
+
+DIM proj = MAT4.PERSPECTIVE(50.0, WIN_W * 1.0 / WIN_H, 0.1, 50.0)
+' Camera 3 units in front of her and 1 to her right, looking at her centre.
+' This is NOT the in-game tpv (which looks at her back) but gives the clearest
+' smoke-shot: face, dress, and the block in her right hand all visible.
+DIM fx AS DOUBLE = SIN(yaw)
+DIM fz AS DOUBLE = -COS(yaw)
+DIM rxx AS DOUBLE = -fz
+DIM rzz AS DOUBLE = fx
+DIM rcx AS DOUBLE = cam_x + (-fx) * 3.0 + rxx * 1.2
+DIM rcy AS DOUBLE = cam_y + 0.2
+DIM rcz AS DOUBLE = cam_z + (-fz) * 3.0 + rzz * 1.2
+DIM view = MAT4.LOOKAT(rcx, rcy, rcz, cam_x, cam_y - 0.4, cam_z, 0, 1, 0)
+DIM vp   = MAT4.MUL(proj, view)
+
+GL.CLEAR(135, 180, 220)
+GL.USE(prog)
+GL.VAO.BIND(held_vao)
+
+' A single grass block on the floor beneath her so we see context
+draw_char_part(vp, 0.0, -0.5, 0.0, 3.0, 1.0, 3.0, 1)
+
+' character
+draw_char_part(vp, 0.0, 1.55, 0.0, 0.50, 0.50, 0.50, 4)
+draw_char_part(vp, 0.0, 1.88, 0.0, 0.56, 0.18, 0.56, 6)
+draw_char_part(vp, -0.30, 1.60, 0.0, 0.08, 0.38, 0.58, 6)
+draw_char_part(vp,  0.30, 1.60, 0.0, 0.08, 0.38, 0.58, 6)
+draw_char_part(vp, 0.0, 1.00, 0.0, 0.58, 0.55, 0.34, 5)
+draw_char_part(vp, 0.0, 0.58, 0.0, 0.92, 0.26, 0.68, 5)
+draw_char_part(vp, -0.42, 1.00, 0.0, 0.20, 0.55, 0.20, 4)
+draw_char_part(vp,  0.42, 1.00, 0.0, 0.20, 0.55, 0.20, 4)
+draw_char_part(vp, -0.17, 0.22, 0.0, 0.25, 0.40, 0.25, 4)
+draw_char_part(vp,  0.17, 0.22, 0.0, 0.25, 0.40, 0.25, 4)
+' held block in right hand
+draw_char_part(vp,  0.42, 0.68, -0.18, 0.26, 0.26, 0.26, sel_type)
+
+GL.SAVE_SCREENSHOT("voxel_girl.png")
+PRINT "screenshot saved to voxel_girl.png"
+GL.FLIP()
+SLEEP 100
+
+GL.VAO.DELETE(held_vao)
+GL.BUFFER.DELETE(held_vbo)
+GL.BUFFER.DELETE(held_ebo)
+GL.SHADER.DELETE(prog)
+GL.CLOSE()
+END
