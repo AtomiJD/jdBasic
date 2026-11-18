@@ -18125,6 +18125,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     // and the VM-bridge fallback) reuses these - so a side-effecting arg
     // (ABS(f()), CINT(f()), MAP.EXISTS(m, f())) is run exactly once, never 2-3x.
     std::vector<TypedValue> arg_cache;
+    std::vector<bool> text_cell;
     {
         auto rit_h = runtime_funcs.find(upper);
         unsigned pc_h = (rit_h != runtime_funcs.end()) ? LLVMCountParamTypes(rit_h->second.fn_type) : 0;
@@ -18139,9 +18140,41 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             "RADIANS", "DEGREES",
         };
         bool keeps_kind = cellwise_math.count(upper) > 0 && expr.args.size() == 1;
+        // These builtins take a number, truth value or date in a text
+        // argument as the text STR$ gives it, as the interpreter does. The
+        // value is how many leading arguments are texts.
+        static const std::unordered_map<std::string, size_t> reads_as_text = {
+            {"LEFT$", 1}, {"RIGHT$", 1}, {"MID$", 1},
+            {"LEFTW$", 1}, {"RIGHTW$", 1}, {"MIDW$", 1}, {"LENW", 1}, {"INSTRW", 2},
+            {"UCASE$", 1}, {"LCASE$", 1}, {"UPPER$", 1}, {"LOWER$", 1},
+            {"UCASE", 1}, {"LCASE", 1}, {"TRIM$", 1}, {"TRIM", 1},
+            {"LTRIM$", 1}, {"RTRIM$", 1}, {"ASC", 1},
+            {"STARTSWITH", 2}, {"ENDSWITH", 2}, {"REPLACE$", 3},
+            {"INSTR", 2}, {"INSTR$", 2} };
+        auto rat = reads_as_text.find(upper);
+        // INSTR and its twins of three arguments take the position first.
+        size_t first_text = (upper == "INSTR" || upper == "INSTR$" || upper == "INSTRW") &&
+                            expr.args.size() >= 3 ? 1 : 0;
         for (size_t i = 0; i < expr.args.size(); i++) {
             int hint = (i < pc_h && (pts_h[i] == f64_type || pts_h[i] == i64_type)) ? JD_TAG_F64 : -1;
             if (keeps_kind && expr.args[i] && expr.args[i]->kind == ExprKind::INDEX) hint = JD_TAG_RUNTIME;
+            // A cell read by position in a text argument keeps its kind: a
+            // cell the compiler sees as a number may hold a text. A read by
+            // a text key keeps its own path, which hands an array value on
+            // cell by cell.
+            if (rat != reads_as_text.end() && i >= first_text && i < first_text + rat->second &&
+                expr.args[i] && expr.args[i]->kind == ExprKind::INDEX) {
+                const Expr* key = expr.args[i]->right.get();
+                bool text_key = key &&
+                    (key->kind == ExprKind::LITERAL_STRING ||
+                     (key->kind == ExprKind::VARIABLE && !key->str_val.empty() &&
+                      (key->str_val.back() == '$' ||
+                       [&] { VarInfo* kv = lookup_var(key->str_val);
+                             return kv && kv->tag == JD_TAG_STR; }())));
+                if (!text_key) hint = JD_TAG_RUNTIME;
+                text_cell.resize(expr.args.size(), false);
+                text_cell[i] = !text_key;
+            }
             // An IIF arm answers whatever it holds: a cell read keeps its kind.
             if (upper == "IIF" && i > 0 && expr.args[i] && expr.args[i]->kind == ExprKind::INDEX)
                 hint = JD_TAG_RUNTIME;
@@ -18163,24 +18196,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                                                  i8_ptr_type, "map_arg");
             arg_cache[0].tag = JD_TAG_NATIVE_MAP;
         }
-        // These builtins take a number, truth value or date in a text
-        // argument as the text STR$ gives it, as the interpreter does. The
-        // value is how many leading arguments are texts.
-        static const std::unordered_map<std::string, size_t> reads_as_text = {
-            {"LEFT$", 1}, {"RIGHT$", 1}, {"MID$", 1},
-            {"LEFTW$", 1}, {"RIGHTW$", 1}, {"MIDW$", 1}, {"LENW", 1}, {"INSTRW", 2},
-            {"UCASE$", 1}, {"LCASE$", 1}, {"UPPER$", 1}, {"LOWER$", 1},
-            {"UCASE", 1}, {"LCASE", 1}, {"TRIM$", 1}, {"TRIM", 1},
-            {"LTRIM$", 1}, {"RTRIM$", 1}, {"ASC", 1},
-            {"STARTSWITH", 2}, {"ENDSWITH", 2}, {"REPLACE$", 3},
-            {"INSTR", 2}, {"INSTR$", 2} };
-        auto rat = reads_as_text.find(upper);
-        // INSTR and its twins of three arguments take the position first.
-        size_t first_text = (upper == "INSTR" || upper == "INSTR$" || upper == "INSTRW") &&
-                            arg_cache.size() >= 3 ? 1 : 0;
         if (rat != reads_as_text.end())
             for (size_t i = first_text; i < first_text + rat->second && i < arg_cache.size(); i++)
-                arg_cache[i] = scalar_text(arg_cache[i]);
+                arg_cache[i] = scalar_text(arg_cache[i], i < text_cell.size() && text_cell[i]);
     }
 
     // A string array built for this call alone, which the call only reads
@@ -21312,7 +21330,7 @@ bool LLVMCodegen::expr_yields_fresh_string(const Expr& e) const {
     return builtin_fresh_string(upper);
 }
 
-LLVMCodegen::TypedValue LLVMCodegen::scalar_text(const TypedValue& av) {
+LLVMCodegen::TypedValue LLVMCodegen::scalar_text(const TypedValue& av, bool cell) {
     LLVMValueRef s = nullptr;
     if (av.tag == JD_TAG_I64) {
         // A whole number keeps every digit; through the double the
@@ -21334,6 +21352,91 @@ LLVMCodegen::TypedValue LLVMCodegen::scalar_text(const TypedValue& av) {
         auto& fn = runtime_funcs["STR$"];
         LLVMValueRef args[] = { av.val };
         s = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "snum");
+    } else if (cell && av.tag == JD_TAG_RUNTIME && av.runtime_tag &&
+               LLVMGetTypeKind(LLVMTypeOf(av.val)) == LLVMIntegerTypeKind) {
+        // A cell whose kind only the running program knows. Every arm
+        // answers a text of its own, so the caller drops it either way: a
+        // text cell is copied, a VM value read out, a number rendered as
+        // STR$ renders it, a container or NONE taken as the empty text.
+        LLVMBasicBlockRef bb_str  = LLVMAppendBasicBlock(current_fn, "st.str");
+        LLVMBasicBlockRef bb_vmh  = LLVMAppendBasicBlock(current_fn, "st.vmh");
+        LLVMBasicBlockRef bb_int  = LLVMAppendBasicBlock(current_fn, "st.int");
+        LLVMBasicBlockRef bb_bool = LLVMAppendBasicBlock(current_fn, "st.bool");
+        LLVMBasicBlockRef bb_date = LLVMAppendBasicBlock(current_fn, "st.date");
+        LLVMBasicBlockRef bb_num  = LLVMAppendBasicBlock(current_fn, "st.num");
+        LLVMBasicBlockRef bb_none = LLVMAppendBasicBlock(current_fn, "st.none");
+        LLVMBasicBlockRef bb_end  = LLVMAppendBasicBlock(current_fn, "st.end");
+        LLVMValueRef sw = LLVMBuildSwitch(builder, av.runtime_tag, bb_none, 6);
+        LLVMAddCase(sw, LLVMConstInt(i32_type, JD_TAG_STR, 0), bb_str);
+        LLVMAddCase(sw, LLVMConstInt(i32_type, JD_TAG_VM_HANDLE, 0), bb_vmh);
+        LLVMAddCase(sw, LLVMConstInt(i32_type, JD_TAG_I64, 0), bb_int);
+        LLVMAddCase(sw, LLVMConstInt(i32_type, JD_TAG_BOOL, 0), bb_bool);
+        LLVMAddCase(sw, LLVMConstInt(i32_type, JD_TAG_DATE, 0), bb_date);
+        LLVMAddCase(sw, LLVMConstInt(i32_type, JD_TAG_F64, 0), bb_num);
+        std::vector<LLVMValueRef> vals;
+        std::vector<LLVMBasicBlockRef> from;
+        auto finish = [&](LLVMValueRef v) {
+            vals.push_back(v);
+            from.push_back(LLVMGetInsertBlock(builder));
+            LLVMBuildBr(builder, bb_end);
+        };
+        auto& own = runtime_funcs["__str_own"];
+
+        LLVMPositionBuilderAtEnd(builder, bb_str);
+        LLVMValueRef sp = LLVMBuildIntToPtr(builder, av.val, i8_ptr_type, "st_sp");
+        finish(LLVMBuildCall2(builder, own.fn_type, own.fn, &sp, 1, "st_copy"));
+
+        LLVMPositionBuilderAtEnd(builder, bb_vmh);
+        LLVMValueRef from_vm;
+        if (auto* vts = get_runtime_func("__jdrt_val_to_str")) {
+            LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+            LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+            LLVMValueRef a[] = { rt, av.val };
+            from_vm = LLVMBuildCall2(builder, vts->fn_type, vts->fn, a, 2, "st_vm");
+        } else {
+            LLVMValueRef e = LLVMBuildGlobalStringPtr(builder, "", ".st_e");
+            from_vm = LLVMBuildCall2(builder, own.fn_type, own.fn, &e, 1, "st_vm");
+        }
+        finish(from_vm);
+
+        LLVMPositionBuilderAtEnd(builder, bb_int);
+        {
+            auto& fn = runtime_funcs["__int_to_str"];
+            LLVMValueRef a[] = { av.val };
+            finish(LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 1, "st_i"));
+        }
+
+        LLVMPositionBuilderAtEnd(builder, bb_bool);
+        {
+            auto& fn = runtime_funcs["__str_bool"];
+            LLVMValueRef a[] = { av.val };
+            finish(LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 1, "st_b"));
+        }
+
+        LLVMPositionBuilderAtEnd(builder, bb_date);
+        {
+            auto& fd = runtime_funcs["__format_date_num"];
+            LLVMValueRef a[] = { pun_i64_to_f64(av.val), LLVMConstNull(i8_ptr_type),
+                LLVMConstReal(f64_type, std::numeric_limits<double>::quiet_NaN()) };
+            finish(LLVMBuildCall2(builder, fd.fn_type, fd.fn, a, 3, "st_d"));
+        }
+
+        LLVMPositionBuilderAtEnd(builder, bb_num);
+        {
+            auto& fn = runtime_funcs["STR$"];
+            LLVMValueRef a[] = { pun_i64_to_f64(av.val) };
+            finish(LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 1, "st_n"));
+        }
+
+        LLVMPositionBuilderAtEnd(builder, bb_none);
+        {
+            LLVMValueRef e = LLVMBuildGlobalStringPtr(builder, "", ".st_e");
+            finish(LLVMBuildCall2(builder, own.fn_type, own.fn, &e, 1, "st_none"));
+        }
+
+        LLVMPositionBuilderAtEnd(builder, bb_end);
+        s = LLVMBuildPhi(builder, i8_ptr_type, "st");
+        LLVMAddIncoming(s, vals.data(), from.data(), (unsigned)vals.size());
     } else {
         return av;
     }

@@ -80,5 +80,20 @@ DIM k AS INTEGER = 5
 Check("INSTR over an array with a number as needle", JOIN(INSTR(["a5", "b6", "c55"], k), ","), "1,-1,1")
 Check("STARTSWITH over an array with a number", JOIN(STARTSWITH(["12", "21"], 1), ","), STR$(TRUE) + "," + STR$(FALSE))
 
+' ---- cells whose kind only the running program knows ----
+DIM gLines = []
+SUB FillLines(text$)
+    gLines = SPLIT(text$, "|")
+ENDSUB
+FUNC LineAt$(i)
+    RETURN RTRIM$(gLines[i])
+ENDFUNC
+FillLines("  one  |two")
+Check("RTRIM$ of a text cell of a global filled in a SUB", LineAt$(0), "  one")
+DIM mixed = ["X", 5, TRUE]
+Check("LCASE$ over the cells of a mixed array", LCASE$(mixed[0]) + LCASE$(mixed[1]) + LCASE$(mixed[2]), "x5true")
+DIM rows = [[" a ", " b "], [" c ", " d "]]
+Check("TRIM$ of a row stays cell by cell", JOIN(TRIM$(rows[0]), ","), "a,b")
+
 PRINT pass; " passed, "; fail; " failed"
 IF fail > 0 THEN END 1

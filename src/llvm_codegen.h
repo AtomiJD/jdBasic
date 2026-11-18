@@ -778,8 +778,9 @@ private:
     // Coerce a TypedValue to the expected LLVM type (prevents type mismatches)
     LLVMValueRef coerce_to(TypedValue tv, LLVMTypeRef target);
     // The text STR$ gives a number, truth value or date, as a fresh owned
-    // string; any other value is answered unchanged.
-    TypedValue scalar_text(const TypedValue& av);
+    // string; with cell also a run-time-typed cell read, whose text is
+    // copied. Any other value is answered unchanged.
+    TypedValue scalar_text(const TypedValue& av, bool cell = false);
     // An array argument as the runtime takes it: the array itself, or one
     // number laid into an array of one cell.
     LLVMValueRef array_or_single(const TypedValue& tv);
