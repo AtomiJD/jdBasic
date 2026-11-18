@@ -110,12 +110,13 @@ DIM face_normals = [ _
     0, 1, 0,    0,-1, 0, _
     0, 0, 1,    0, 0,-1 ]
 
+' CCW from outside (matches voxel_world.jdb Phase 2 winding)
 DIM face_corners = [ _
-    1,0,0,  1,0,1,  1,1,1,  1,1,0, _
-    0,0,1,  0,0,0,  0,1,0,  0,1,1, _
+    1,0,1,  1,0,0,  1,1,0,  1,1,1, _
+    0,0,0,  0,0,1,  0,1,1,  0,1,0, _
     0,1,1,  1,1,1,  1,1,0,  0,1,0, _
     0,0,0,  1,0,0,  1,0,1,  0,0,1, _
-    1,0,1,  0,0,1,  0,1,1,  1,1,1, _
+    0,0,1,  1,0,1,  1,1,1,  0,1,1, _
     0,0,0,  0,1,0,  1,1,0,  1,0,0 ]
 
 DIM face_dirs = [ 1,0,0,  -1,0,0,  0,1,0,  0,-1,0,  0,0,1,  0,0,-1 ]
@@ -175,6 +176,7 @@ PRINT "mesh: "; face_count; " faces"
 
 GL.WINDOW(WIN_W, WIN_H, "voxel capture")
 GL.ENABLE("DEPTH_TEST")
+GL.ENABLE("CULL_FACE")
 DIM prog AS INTEGER = GL.SHADER(VS$, FS$)
 
 DIM vao AS INTEGER = GL.VAO()

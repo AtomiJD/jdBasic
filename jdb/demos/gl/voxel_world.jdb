@@ -1,27 +1,31 @@
-' Voxel world, Minecraft-style - Phase 1
+' Voxel world, Minecraft-style - Phase 2
 ' ---------------------------------------
-' 16x8x16 chunk, sinusoidal terrain, face-culled mesh, 3 block types.
-' Textures are procedural in the fragment shader (per-face colour, noise, light).
+' 16x8x16 chunk, procedural shader textures, face-culled mesh,
+' DIG & PLACE via mouse raycast, block-type select via 1/2/3.
 '
 ' Controls:
-'   W/A/S/D      move forward/left/back/right (horizontal, relative to yaw)
+'   W/A/S/D      move horizontally relative to yaw
 '   Space        up
 '   Left Shift   down
 '   Left/Right   yaw
 '   Up/Down      pitch
+'   1 / 2 / 3    select grass / dirt / stone for placement
+'   LMB          dig (remove the block the crosshair looks at)
+'   RMB          place the selected block on the face the crosshair hits
 '   ESC          quit
 
 OPTION "EXPLICIT"
 
 CONST WIN_W = 1024
 CONST WIN_H = 720
-CONST NX    = 16                    ' chunk size in x
-CONST NY    = 8                     ' chunk size in y (height)
-CONST NZ    = 16                    ' chunk size in z
+CONST NX = 16
+CONST NY = 8
+CONST NZ = 16
 CONST BT_AIR   = 0
 CONST BT_GRASS = 1
 CONST BT_DIRT  = 2
 CONST BT_STONE = 3
+CONST REACH = 8.0
 
 ' --------------------------- shaders ---------------------------
 
@@ -51,13 +55,13 @@ DIM FS$ AS STRING = "#version 330 core" + CHR$(10) + _
     "  float t = vType;" + CHR$(10) + _
     "  bool top    = vNormal.y >  0.5;" + CHR$(10) + _
     "  bool bottom = vNormal.y < -0.5;" + CHR$(10) + _
-    "  if (t < 1.5) {" + CHR$(10) + _          ' grass block
+    "  if (t < 1.5) {" + CHR$(10) + _
     "    if (top)         base = vec3(0.34, 0.72, 0.30);" + CHR$(10) + _
     "    else if (bottom) base = vec3(0.45, 0.30, 0.18);" + CHR$(10) + _
     "    else             base = vec3(0.47, 0.33, 0.20);" + CHR$(10) + _
-    "  } else if (t < 2.5) {" + CHR$(10) + _   ' dirt
+    "  } else if (t < 2.5) {" + CHR$(10) + _
     "    base = vec3(0.45, 0.30, 0.18);" + CHR$(10) + _
-    "  } else {" + CHR$(10) + _                ' stone
+    "  } else {" + CHR$(10) + _
     "    base = vec3(0.52, 0.52, 0.55);" + CHR$(10) + _
     "  }" + CHR$(10) + _
     "  vec2 uv;" + CHR$(10) + _
@@ -78,16 +82,24 @@ DIM FS$ AS STRING = "#version 330 core" + CHR$(10) + _
     "  FragColor = vec4(base * shade, 1.0);" + CHR$(10) + _
     "}"
 
+' Second shader: screen-space crosshair (two tiny lines in NDC).
+
+DIM CROSS_VS$ AS STRING = "#version 330 core" + CHR$(10) + _
+    "layout(location=0) in vec2 aPos;" + CHR$(10) + _
+    "void main() { gl_Position = vec4(aPos, 0.0, 1.0); }"
+
+DIM CROSS_FS$ AS STRING = "#version 330 core" + CHR$(10) + _
+    "out vec4 FragColor;" + CHR$(10) + _
+    "void main() { FragColor = vec4(1.0, 1.0, 1.0, 1.0); }"
+
 ' --------------------------- world ---------------------------
-' Flat 1-D storage: world[x + z*NX + y*NX*NZ]
-' Heightmap vectorized via IOTA.
 
 DIM N2 AS INTEGER = NX * NZ
-DIM gi = IOTA(N2) - 1                       ' 0..N2-1
-DIM xg = gi MOD NX                          ' x grid
-DIM zg = gi \ NX                            ' z grid
+DIM gi = IOTA(N2) - 1
+DIM xg = gi MOD NX
+DIM zg = gi \ NX
 DIM hd = 3.0 + 2.0 * SIN(xg * 0.35) * COS(zg * 0.3) + 1.2 * SIN(xg * 0.18 + zg * 0.25)
-DIM heights = FLOOR(hd + 2.5)               ' integer heights, biased up
+DIM heights = FLOOR(hd + 2.5)
 
 DIM world[NX * NY * NZ]
 DIM wtotal AS INTEGER = NX * NY * NZ
@@ -117,11 +129,6 @@ NEXT z
 
 PRINT "world generated: "; NX; "x"; NY; "x"; NZ
 
-' --------------------------- mesh builder ---------------------------
-' For each solid cell, for each of 6 faces, emit a quad if the neighbour
-' in that face direction is air (or out of bounds).
-' Face layout: 4 verts per face, 6 indices (2 triangles).
-
 FUNC cell_at(x_, y_, z_)
     IF x_ < 0 THEN RETURN BT_AIR
     IF x_ >= NX THEN RETURN BT_AIR
@@ -132,24 +139,31 @@ FUNC cell_at(x_, y_, z_)
     RETURN world[x_ + z_ * NX + y_ * NX * NZ]
 ENDFUNC
 
-' Per-face data: for each face (+X, -X, +Y, -Y, +Z, -Z),
-'   normal (nx,ny,nz) and 4 corner offsets relative to the cell origin.
-' Corners are given CCW when viewed from outside, so default GL front-face
-' (CCW) is correct with cull-face enabled.
+FUNC in_bounds(x_, y_, z_)
+    IF x_ < 0 THEN RETURN 0
+    IF x_ >= NX THEN RETURN 0
+    IF y_ < 0 THEN RETURN 0
+    IF y_ >= NY THEN RETURN 0
+    IF z_ < 0 THEN RETURN 0
+    IF z_ >= NZ THEN RETURN 0
+    RETURN 1
+ENDFUNC
+
+' --------------------------- mesh builder ---------------------------
+' Faces are CCW when viewed from the +normal direction, so GL front-face
+' culling (default CCW) keeps the outside visible.
 
 DIM face_normals = [ _
     1, 0, 0,   -1, 0, 0, _
     0, 1, 0,    0,-1, 0, _
     0, 0, 1,    0, 0,-1 ]
 
-' 4 corners per face (CCW from outside), 3 floats each, 12 floats per face.
-' Order: +X, -X, +Y, -Y, +Z, -Z
 DIM face_corners = [ _
-    1,0,0,  1,0,1,  1,1,1,  1,1,0, _
-    0,0,1,  0,0,0,  0,1,0,  0,1,1, _
+    1,0,1,  1,0,0,  1,1,0,  1,1,1, _
+    0,0,0,  0,0,1,  0,1,1,  0,1,0, _
     0,1,1,  1,1,1,  1,1,0,  0,1,0, _
     0,0,0,  1,0,0,  1,0,1,  0,0,1, _
-    1,0,1,  0,0,1,  0,1,1,  1,1,1, _
+    0,0,1,  1,0,1,  1,1,1,  0,1,1, _
     0,0,0,  0,1,0,  1,1,0,  1,0,0 ]
 
 DIM face_dirs = [ 1,0,0,  -1,0,0,  0,1,0,  0,-1,0,  0,0,1,  0,0,-1 ]
@@ -158,88 +172,228 @@ DIM verts[0]
 DIM idx[0]
 DIM face_count AS INTEGER = 0
 
-DIM f AS INTEGER, c AS INTEGER
-DIM nx_ AS INTEGER, ny_ AS INTEGER, nz_ AS INTEGER
-DIM cx AS DOUBLE, cy AS DOUBLE, cz AS DOUBLE
-DIM fnx AS DOUBLE, fny AS DOUBLE, fnz AS DOUBLE
-DIM dx_ AS INTEGER, dy_ AS INTEGER, dz_ AS INTEGER
-DIM here AS INTEGER, neigh AS INTEGER
-DIM base_idx AS INTEGER
+SUB build_mesh()
+    DIM mx AS INTEGER, my AS INTEGER, mz AS INTEGER, mf AS INTEGER, mc AS INTEGER
+    DIM cx AS DOUBLE, cy AS DOUBLE, cz AS DOUBLE
+    DIM fnx AS DOUBLE, fny AS DOUBLE, fnz AS DOUBLE
+    DIM mdx AS INTEGER, mdy AS INTEGER, mdz AS INTEGER
+    DIM mhere AS INTEGER, mneigh AS INTEGER, base_idx AS INTEGER
+    verts = []
+    idx = []
+    face_count = 0
+    FOR my = 0 TO NY - 1
+        FOR mz = 0 TO NZ - 1
+            FOR mx = 0 TO NX - 1
+                mhere = world[mx + mz * NX + my * NX * NZ]
+                IF mhere <> BT_AIR THEN
+                    FOR mf = 0 TO 5
+                        mdx = face_dirs[mf * 3 + 0]
+                        mdy = face_dirs[mf * 3 + 1]
+                        mdz = face_dirs[mf * 3 + 2]
+                        mneigh = cell_at(mx + mdx, my + mdy, mz + mdz)
+                        IF mneigh = BT_AIR THEN
+                            fnx = face_normals[mf * 3 + 0]
+                            fny = face_normals[mf * 3 + 1]
+                            fnz = face_normals[mf * 3 + 2]
+                            base_idx = face_count * 4
+                            FOR mc = 0 TO 3
+                                cx = mx + face_corners[mf * 12 + mc * 3 + 0]
+                                cy = my + face_corners[mf * 12 + mc * 3 + 1]
+                                cz = mz + face_corners[mf * 12 + mc * 3 + 2]
+                                PUSH verts, cx
+                                PUSH verts, cy
+                                PUSH verts, cz
+                                PUSH verts, fnx
+                                PUSH verts, fny
+                                PUSH verts, fnz
+                                PUSH verts, mhere
+                            NEXT mc
+                            PUSH idx, base_idx + 0
+                            PUSH idx, base_idx + 1
+                            PUSH idx, base_idx + 2
+                            PUSH idx, base_idx + 0
+                            PUSH idx, base_idx + 2
+                            PUSH idx, base_idx + 3
+                            face_count = face_count + 1
+                        ENDIF
+                    NEXT mf
+                ENDIF
+            NEXT mx
+        NEXT mz
+    NEXT my
+ENDSUB
 
-FOR y = 0 TO NY - 1
-    FOR z = 0 TO NZ - 1
-        FOR x = 0 TO NX - 1
-            here = world[x + z * NX + y * NX * NZ]
-            IF here <> BT_AIR THEN
-                FOR f = 0 TO 5
-                    dx_ = face_dirs[f * 3 + 0]
-                    dy_ = face_dirs[f * 3 + 1]
-                    dz_ = face_dirs[f * 3 + 2]
-                    neigh = cell_at(x + dx_, y + dy_, z + dz_)
-                    IF neigh = BT_AIR THEN
-                        fnx = face_normals[f * 3 + 0]
-                        fny = face_normals[f * 3 + 1]
-                        fnz = face_normals[f * 3 + 2]
-                        base_idx = face_count * 4
-                        FOR c = 0 TO 3
-                            cx = x + face_corners[f * 12 + c * 3 + 0]
-                            cy = y + face_corners[f * 12 + c * 3 + 1]
-                            cz = z + face_corners[f * 12 + c * 3 + 2]
-                            PUSH verts, cx
-                            PUSH verts, cy
-                            PUSH verts, cz
-                            PUSH verts, fnx
-                            PUSH verts, fny
-                            PUSH verts, fnz
-                            PUSH verts, here
-                        NEXT c
-                        PUSH idx, base_idx + 0
-                        PUSH idx, base_idx + 1
-                        PUSH idx, base_idx + 2
-                        PUSH idx, base_idx + 0
-                        PUSH idx, base_idx + 2
-                        PUSH idx, base_idx + 3
-                        face_count = face_count + 1
-                    ENDIF
-                NEXT f
-            ENDIF
-        NEXT x
-    NEXT z
-NEXT y
-
-PRINT "mesh: "; face_count; " faces, "; LEN(verts) / 7; " vertices, "; LEN(idx); " indices"
+build_mesh()
+PRINT "initial mesh: "; face_count; " faces, "; LEN(idx); " indices"
 
 ' --------------------------- GL setup ---------------------------
 
-GL.WINDOW(WIN_W, WIN_H, "jdBasic Voxel World")
+GL.WINDOW(WIN_W, WIN_H, "jdBasic Voxel World - Phase 2")
 GL.ENABLE("DEPTH_TEST")
-' CULL_FACE deliberately off for Phase 1 - winding-robust. Phase 2: fix winding + enable.
+GL.ENABLE("CULL_FACE")
 
 DIM prog AS INTEGER = GL.SHADER(VS$, FS$)
+DIM cross_prog AS INTEGER = GL.SHADER(CROSS_VS$, CROSS_FS$)
 
 DIM vao AS INTEGER = GL.VAO()
 DIM vbo AS INTEGER = GL.VBO(verts)
 DIM ebo AS INTEGER = GL.EBO(idx)
-' stride = 7 floats = 28 bytes
-GL.ATTRIB(0, 3, 7 * 4, 0)           ' aPos
-GL.ATTRIB(1, 3, 7 * 4, 3 * 4)       ' aNormal
-GL.ATTRIB(2, 1, 7 * 4, 6 * 4)       ' aType
+GL.ATTRIB(0, 3, 7 * 4, 0)
+GL.ATTRIB(1, 3, 7 * 4, 3 * 4)
+GL.ATTRIB(2, 1, 7 * 4, 6 * 4)
 
-' --------------------------- camera + input ---------------------------
+' Crosshair: two short lines in clip-space (NDC).
+DIM cross_verts = [ _
+    -0.02, 0.0,   0.02, 0.0, _
+     0.0, -0.028, 0.0,  0.028 ]
+DIM cross_vao AS INTEGER = GL.VAO()
+DIM cross_vbo AS INTEGER = GL.VBO(cross_verts)
+GL.ATTRIB(0, 2, 2 * 4, 0)
+
+SUB rebuild_gl_mesh()
+    GL.BUFFER.DELETE(vbo)
+    GL.BUFFER.DELETE(ebo)
+    GL.VAO.BIND(vao)
+    vbo = GL.VBO(verts)
+    ebo = GL.EBO(idx)
+    GL.ATTRIB(0, 3, 7 * 4, 0)
+    GL.ATTRIB(1, 3, 7 * 4, 3 * 4)
+    GL.ATTRIB(2, 1, 7 * 4, 6 * 4)
+ENDSUB
+
+' --------------------------- raycast ---------------------------
+' Amanatides-Woo voxel traversal. Writes results to globals.
+'   ray_hit = 1 on hit, 0 on miss
+'   ray_x/y/z    = hit cell coords
+'   ray_fx/fy/fz = normal of the face that was entered (= opposite step dir)
+
+DIM ray_hit AS INTEGER = 0
+DIM ray_x AS INTEGER = 0, ray_y AS INTEGER = 0, ray_z AS INTEGER = 0
+DIM ray_fx AS INTEGER = 0, ray_fy AS INTEGER = 0, ray_fz AS INTEGER = 0
+
+SUB cast_ray(ox AS DOUBLE, oy AS DOUBLE, oz AS DOUBLE, dx AS DOUBLE, dy AS DOUBLE, dz AS DOUBLE, max_t AS DOUBLE)
+    ray_hit = 0
+    DIM ix AS INTEGER = FLOOR(ox)
+    DIM iy AS INTEGER = FLOOR(oy)
+    DIM iz AS INTEGER = FLOOR(oz)
+    DIM sx AS INTEGER = 0, sy AS INTEGER = 0, sz AS INTEGER = 0
+    IF dx > 0 THEN sx = 1
+    IF dx < 0 THEN sx = -1
+    IF dy > 0 THEN sy = 1
+    IF dy < 0 THEN sy = -1
+    IF dz > 0 THEN sz = 1
+    IF dz < 0 THEN sz = -1
+
+    DIM HUGE AS DOUBLE = 1.0E30
+    DIM tmx AS DOUBLE = HUGE, tmy AS DOUBLE = HUGE, tmz AS DOUBLE = HUGE
+    DIM tdx AS DOUBLE = HUGE, tdy AS DOUBLE = HUGE, tdz AS DOUBLE = HUGE
+    IF sx = 1 THEN
+        tmx = (ix + 1.0 - ox) / dx
+        tdx = 1.0 / dx
+    ELSEIF sx = -1 THEN
+        tmx = (ix - ox) / dx
+        tdx = -1.0 / dx
+    ENDIF
+    IF sy = 1 THEN
+        tmy = (iy + 1.0 - oy) / dy
+        tdy = 1.0 / dy
+    ELSEIF sy = -1 THEN
+        tmy = (iy - oy) / dy
+        tdy = -1.0 / dy
+    ENDIF
+    IF sz = 1 THEN
+        tmz = (iz + 1.0 - oz) / dz
+        tdz = 1.0 / dz
+    ELSEIF sz = -1 THEN
+        tmz = (iz - oz) / dz
+        tdz = -1.0 / dz
+    ENDIF
+
+    DIM entry_axis AS INTEGER = -1
+    DIM entry_sign AS INTEGER = 0
+    DIM safety AS INTEGER = 0
+    DIM here AS INTEGER
+    DO
+        IF in_bounds(ix, iy, iz) = 1 THEN
+            here = cell_at(ix, iy, iz)
+            IF here <> BT_AIR THEN
+                ray_hit = 1
+                ray_x = ix
+                ray_y = iy
+                ray_z = iz
+                ray_fx = 0
+                ray_fy = 0
+                ray_fz = 0
+                IF entry_axis = 0 THEN ray_fx = -entry_sign
+                IF entry_axis = 1 THEN ray_fy = -entry_sign
+                IF entry_axis = 2 THEN ray_fz = -entry_sign
+                RETURN
+            ENDIF
+        ENDIF
+
+        IF tmx < tmy ANDALSO tmx < tmz THEN
+            IF tmx > max_t THEN RETURN
+            ix = ix + sx
+            tmx = tmx + tdx
+            entry_axis = 0
+            entry_sign = sx
+        ELSEIF tmy < tmz THEN
+            IF tmy > max_t THEN RETURN
+            iy = iy + sy
+            tmy = tmy + tdy
+            entry_axis = 1
+            entry_sign = sy
+        ELSE
+            IF tmz > max_t THEN RETURN
+            iz = iz + sz
+            tmz = tmz + tdz
+            entry_axis = 2
+            entry_sign = sz
+        ENDIF
+
+        safety = safety + 1
+        IF safety > 128 THEN RETURN
+    LOOP
+ENDSUB
+
+' --------------------------- camera + input state ---------------------------
 
 DIM cam_x AS DOUBLE = NX / 2.0
 DIM cam_y AS DOUBLE = NY + 2.0
 DIM cam_z AS DOUBLE = NZ + 4.0
-DIM yaw   AS DOUBLE = -MATH.PI * 0.75           ' look towards -x, -z (into chunk)
+DIM yaw   AS DOUBLE = -MATH.PI * 0.75
 DIM pitch AS DOUBLE = -0.45
+DIM sel_type AS INTEGER = BT_GRASS
 
 DIM keys AS MAP = {}
 DIM running AS INTEGER = 1
+
+FUNC view_dir_x()
+    RETURN SIN(yaw) * COS(pitch)
+ENDFUNC
+FUNC view_dir_y()
+    RETURN SIN(pitch)
+ENDFUNC
+FUNC view_dir_z()
+    RETURN -COS(yaw) * COS(pitch)
+ENDFUNC
 
 SUB OnKeyDown(info)
     DIM k$ AS STRING = info[0]{"key"}
     keys{k$} = 1
     IF k$ = "Escape" THEN running = 0
+    IF k$ = "1" THEN
+        sel_type = BT_GRASS
+        PRINT "selected: grass"
+    ENDIF
+    IF k$ = "2" THEN
+        sel_type = BT_DIRT
+        PRINT "selected: dirt"
+    ENDIF
+    IF k$ = "3" THEN
+        sel_type = BT_STONE
+        PRINT "selected: stone"
+    ENDIF
 ENDSUB
 
 SUB OnKeyUp(info)
@@ -247,13 +401,45 @@ SUB OnKeyUp(info)
     keys{k$} = 0
 ENDSUB
 
+SUB OnMouseDown(info)
+    DIM btn AS INTEGER = info[0]{"button"}
+    DIM ox AS DOUBLE = cam_x, oy AS DOUBLE = cam_y, oz AS DOUBLE = cam_z
+    DIM dx AS DOUBLE = view_dir_x(), dy AS DOUBLE = view_dir_y(), dz AS DOUBLE = view_dir_z()
+    cast_ray(ox, oy, oz, dx, dy, dz, REACH)
+    IF ray_hit = 0 THEN
+        PRINT "miss"
+        RETURN
+    ENDIF
+    IF btn = 1 THEN
+        ' dig
+        world[ray_x + ray_z * NX + ray_y * NX * NZ] = BT_AIR
+        PRINT "dig at "; ray_x; ","; ray_y; ","; ray_z
+        build_mesh()
+        rebuild_gl_mesh()
+    ELSEIF btn = 3 THEN
+        ' place on the hit face
+        DIM px AS INTEGER = ray_x + ray_fx
+        DIM py AS INTEGER = ray_y + ray_fy
+        DIM pz AS INTEGER = ray_z + ray_fz
+        IF in_bounds(px, py, pz) = 1 THEN
+            IF cell_at(px, py, pz) = BT_AIR THEN
+                world[px + pz * NX + py * NX * NZ] = sel_type
+                PRINT "place at "; px; ","; py; ","; pz
+                build_mesh()
+                rebuild_gl_mesh()
+            ENDIF
+        ENDIF
+    ENDIF
+ENDSUB
+
 SUB OnQuit(info)
     running = 0
 ENDSUB
 
-ON "KEYDOWN" CALL OnKeyDown@
-ON "KEYUP"   CALL OnKeyUp@
-ON "QUIT"    CALL OnQuit@
+ON "KEYDOWN"   CALL OnKeyDown@
+ON "KEYUP"     CALL OnKeyUp@
+ON "MOUSEDOWN" CALL OnMouseDown@
+ON "QUIT"      CALL OnQuit@
 
 FUNC is_down(k$)
     IF NOT MAP.EXISTS(keys, k$) THEN RETURN 0
@@ -266,20 +452,17 @@ ENDFUNC
 DIM proj = MAT4.PERSPECTIVE(65.0, WIN_W / WIN_H, 0.1, 200.0)
 
 DIM last_t AS INTEGER = TICK()
-DIM frame  AS INTEGER = 0
-DIM move_speed AS DOUBLE = 7.0          ' blocks/sec
-DIM look_speed AS DOUBLE = 1.6          ' rad/sec
+DIM move_speed AS DOUBLE = 7.0
+DIM look_speed AS DOUBLE = 1.6
 
-PRINT "world ready. WASD + Space/Shift to move, arrows to look, ESC to quit."
+PRINT "world ready. WASD + Space/Shift, arrows to look, LMB dig, RMB place, 1/2/3 select, ESC quit."
 
 DO
     DIM tnow AS INTEGER = TICK()
     DIM dt   AS DOUBLE  = (tnow - last_t) / 1000.0
     IF dt > 0.1 THEN dt = 0.1
     last_t = tnow
-    frame = frame + 1
 
-    ' look
     IF is_down("Left")  THEN yaw   = yaw   - look_speed * dt
     IF is_down("Right") THEN yaw   = yaw   + look_speed * dt
     IF is_down("Up")    THEN pitch = pitch + look_speed * dt
@@ -287,7 +470,6 @@ DO
     IF pitch >  1.4 THEN pitch =  1.4
     IF pitch < -1.4 THEN pitch = -1.4
 
-    ' forward / right vectors (yaw only; move horizontally)
     DIM fx AS DOUBLE = SIN(yaw)
     DIM fz AS DOUBLE = -COS(yaw)
     DIM rx AS DOUBLE = COS(yaw)
@@ -314,30 +496,37 @@ DO
     IF is_down("Left Shift") THEN cam_y = cam_y - mv
     IF is_down("LShift")     THEN cam_y = cam_y - mv
 
-    ' view direction
-    DIM cp AS DOUBLE = COS(pitch)
-    DIM sp AS DOUBLE = SIN(pitch)
-    DIM look_x AS DOUBLE = cam_x + SIN(yaw) * cp
-    DIM look_y AS DOUBLE = cam_y + sp
-    DIM look_z AS DOUBLE = cam_z + (-COS(yaw)) * cp
+    DIM look_x AS DOUBLE = cam_x + view_dir_x()
+    DIM look_y AS DOUBLE = cam_y + view_dir_y()
+    DIM look_z AS DOUBLE = cam_z + view_dir_z()
 
     DIM view = MAT4.LOOKAT(cam_x, cam_y, cam_z, look_x, look_y, look_z, 0, 1, 0)
     DIM mvp  = MAT4.MUL(proj, view)
 
-    ' sky gradient-ish clear
     GL.CLEAR(135, 180, 220)
     GL.USE(prog)
     GL.UNIFORM.MAT4("uMVP", mvp)
     GL.VAO.BIND(vao)
     GL.DRAW.TRIS.IDX(LEN(idx))
+
+    ' crosshair - draw without depth test so it's always visible
+    GL.DISABLE("DEPTH_TEST")
+    GL.USE(cross_prog)
+    GL.VAO.BIND(cross_vao)
+    GL.DRAW.LINES(0, 4)
+    GL.ENABLE("DEPTH_TEST")
+
     GL.FLIP()
     SLEEP 16
 LOOP WHILE running = 1
 
 GL.VAO.DELETE(vao)
+GL.VAO.DELETE(cross_vao)
 GL.BUFFER.DELETE(vbo)
 GL.BUFFER.DELETE(ebo)
+GL.BUFFER.DELETE(cross_vbo)
 GL.SHADER.DELETE(prog)
+GL.SHADER.DELETE(cross_prog)
 GL.CLOSE()
 PRINT "bye."
 END
