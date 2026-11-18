@@ -117,10 +117,25 @@ struct CompiledCall {
     ~CompiledCall() { g_guard_depth = saved; }
 };
 
+// Set while the runtime calls a compiled callback (SELECT, FILTER, REDUCE
+// and the rest). The lambda or FUNC wrapper takes it on entry: called from
+// such a loop it hands its answer back as it is, called by compiled code it
+// answers a text of its own for the caller to drop.
+static thread_local bool g_runtime_call = false;
+
+extern "C" int32_t jdb_take_runtime_call(void) {
+    bool was = g_runtime_call;
+    g_runtime_call = false;
+    return was ? 1 : 0;
+}
+
 template <class Fn, class... A>
 static double call_compiled(Fn fn, A... args) {
     CompiledCall open;
-    return fn(args...);
+    g_runtime_call = true;
+    double r = fn(args...);
+    g_runtime_call = false;
+    return r;
 }
 
 template <class F, class G>
@@ -6975,9 +6990,15 @@ void* jdb_closure_new(void* fn, int32_t n) {
     return c;
 }
 
+// A captured text belongs to the closure: it is copied, and jdb_closure_free
+// gives it back, so the function that made the closure may let go of its
+// own text locals when it returns. An array or a map is pinned by the code
+// that captures it.
 void jdb_closure_set(void* h, int32_t i, int64_t bits, int32_t tag) {
     JdbClosure* c = (JdbClosure*)h;
     if (!c || c->magic != JDB_CLOSURE_MAGIC || i < 0 || i >= c->n) return;
+    if (tag == JD_TAG_STR && bits)
+        bits = (int64_t)(intptr_t)jdb_str_dup_binary((const char*)(intptr_t)bits);
     c->bits[i] = bits;
     c->tags[i] = tag;
 }
@@ -7009,6 +7030,9 @@ void jdb_closure_free(void* p) {
     JdbClosure* c = (JdbClosure*)p;
     if (c->magic != JDB_CLOSURE_MAGIC) return;
     c->magic = 0;
+    for (int32_t i = 0; i < c->n; i++)
+        if (c->tags[i] == JD_TAG_STR && c->bits[i])
+            jdb_str_drop((char*)(intptr_t)c->bits[i]);
     free(c->bits);
     free(c->tags);
     free(c);

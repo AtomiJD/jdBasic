@@ -863,6 +863,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_closure_enter", "__closure_enter", i8_ptr_type, {i8_ptr_type}, JD_TAG_I64);
     reg("jdb_closure_leave", "__closure_leave", void_type, {}, -1);
     reg("jdb_closure_free", "__closure_free", void_type, {i8_ptr_type}, -1);
+    reg("jdb_take_runtime_call", "__take_runtime_call", i32_type, {}, JD_TAG_I64);
     reg("jdb_closure_get", "__closure_get", i64_type, {i32_type}, JD_TAG_I64);
     reg("jdb_closure_get_tag", "__closure_get_tag", i32_type, {i32_type}, JD_TAG_I64);
     // jdb_filter_fn(fn_ptr, array) -> array
@@ -4824,6 +4825,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
     build_owner_locals(program);
     scan_cell_owners(program);
     scan_param_escapes(program);
+    scan_owned_closures(program);
     scan_foreach_release(program);
     cell_owner_vars.clear();
     scan_cell_owners(program);
@@ -6578,6 +6580,14 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     auto saved_labels = std::move(label_blocks);
     label_blocks.clear();
     auto saved_owned_locals = std::move(owned_str_locals);
+    auto saved_closure_locals = std::move(owned_closure_locals);
+    auto saved_closure_slots = std::move(closure_local_slots);
+    closure_local_slots.clear();
+    owned_closure_locals.clear();
+    {
+        auto cit = owned_closure_locals_by_fn.find(fn_name);
+        if (cit != owned_closure_locals_by_fn.end()) owned_closure_locals = cit->second;
+    }
     auto saved_owned_shadow = std::move(owned_local_shadow);
     owned_str_locals.clear();
     owned_local_shadow.clear();
@@ -6936,6 +6946,9 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     // recursion_leave, ret.
     LLVMPositionBuilderAtEnd(builder, current_exit_bb);
     emit_owned_local_release();
+    // A local that owns its closure lets go of it with the frame, in
+    // whatever block scope it was declared.
+    for (LLVMValueRef slot : closure_local_slots) free_closure_in_slot(slot, false);
     rc_release_locals(scopes.size() - 1);
     emit_dispose_cleanup();
     emit_udt_free_locals();
@@ -6964,6 +6977,8 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     udt_free_locals = std::move(saved_udt_free);
     label_blocks = std::move(saved_labels);
     owned_str_locals = std::move(saved_owned_locals);
+    owned_closure_locals = std::move(saved_closure_locals);
+    closure_local_slots = std::move(saved_closure_slots);
     owned_rt_locals = std::move(saved_owned_rt);
     runtime_later_locals = std::move(saved_runtime_later);
     current_param_names = std::move(saved_param_names);
@@ -8094,6 +8109,8 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
                 // string when arr is a string-tracked array (the pre-pass
                 // provisionally sized the slot for an i64-shaped tag).
                 int old_tag = vi->tag;
+                if (rhs.tag == JD_TAG_FUNCREF && owns_closure_slot(stmt.var_name))
+                    free_closure_in_slot(vi->alloca_val);
                 vi->tag = rhs.tag;
                 rc_slot_store(vi->alloca_val, rhs.val, old_tag, rhs.tag);
                 return;
@@ -8108,6 +8125,9 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             LLVMBuildStore(builder, take_string_ownership(stmt.var_name, rhs, fresh), vi->alloca_val);
             return;
         }
+        // The slot owns its closure: the one it held goes when it takes the next.
+        if (rhs.tag == JD_TAG_FUNCREF && owns_closure_slot(stmt.var_name))
+            free_closure_in_slot(vi->alloca_val);
         rc_slot_store(vi->alloca_val, rhs.val, vi->tag, rhs.tag);
     } else {
         // $-suffix forces a string slot; coerce numeric RHS so the var
@@ -9273,13 +9293,22 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         vi->funcref_name = dim_funcref_name(rhs);
         record_stored_lambda(*vi, stmt.expr ? &*stmt.expr : nullptr, rhs);
         vi->funcref_return_tag = fr_ret_tag;
-        if (rhs.tag == JD_TAG_FUNCREF) vi->tag = JD_TAG_FUNCREF;
+        if (rhs.tag == JD_TAG_FUNCREF) {
+            // A DIM that runs again (in a loop, or on the next call) lets go
+            // of the closure the slot owned.
+            if (owns_closure_slot(stmt.var_name)) free_closure_in_slot(vi->alloca_val);
+            vi->tag = JD_TAG_FUNCREF;
+        }
         rc_slot_store(vi->alloca_val, rhs.val, vi->tag, rhs.tag);
     } else {
         VarInfo& nv = create_var(stmt.var_name, rhs.tag);
         nv.funcref_name = dim_funcref_name(rhs);
         record_stored_lambda(nv, stmt.expr ? &*stmt.expr : nullptr, rhs);
         nv.funcref_return_tag = fr_ret_tag;
+        // Compiled once, run on every pass of a loop: the slot still holds
+        // the closure the last pass gave it (and nothing on the first).
+        if (rhs.tag == JD_TAG_FUNCREF && owns_closure_slot(stmt.var_name))
+            free_closure_in_slot(nv.alloca_val);
         rc_slot_store(nv.alloca_val, rhs.val, rhs.tag, rhs.tag);
     }
 }
@@ -12308,6 +12337,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
 
             LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(ctx, lambda_fn, "entry");
             LLVMPositionBuilderAtEnd(builder, entry);
+            // Called by a runtime loop (SELECT, REDUCE, ...) or by compiled
+            // code: taken by every lambda before the body can make calls of
+            // its own, so a call the body makes never reads a stale mark.
+            LLVMValueRef from_runtime = nullptr;
+            if (auto* tk = get_runtime_func("__take_runtime_call"))
+                from_runtime = LLVMBuildICmp(builder, LLVMIntNE,
+                    LLVMBuildCall2(builder, tk->fn_type, tk->fn, nullptr, 0, "from_rt"),
+                    LLVMConstInt(i32_type, 0, 0), "from_rt_b");
 
             // The captured copies come first: a parameter sharing a name with
             // a capture has to win, and it is created after these.
@@ -12422,6 +12459,59 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             // The answer's kind goes into the return channel, as the wrapper
             // of a named FUNC puts it there, so a call through a variable
             // (f("x")) reads a text as a text and not its pointer as a number.
+            // A text a lambda held in a variable answers to compiled code is
+            // the caller's to drop: one the body did not make itself is
+            // copied first, so the caller never frees a parameter, a capture
+            // or a global. Called by a runtime loop it is handed back as it is.
+            auto copy_unless_runtime = [&](LLVMValueRef cond, LLVMValueRef bits,
+                                           const TypedValue* read) -> LLVMValueRef {
+                LLVMBasicBlockRef bb_s = LLVMAppendBasicBlock(lambda_fn, "lret.copy");
+                LLVMBasicBlockRef bb_j = LLVMAppendBasicBlock(lambda_fn, "lret.join");
+                LLVMBasicBlockRef bb_from = LLVMGetInsertBlock(builder);
+                LLVMBuildCondBr(builder, cond, bb_s, bb_j);
+                LLVMPositionBuilderAtEnd(builder, bb_s);
+                auto& own = runtime_funcs["__str_own"];
+                LLVMValueRef sp = LLVMBuildIntToPtr(builder, bits, i8_ptr_type, "lret_sp");
+                LLVMValueRef copy = LLVMBuildPtrToInt(builder,
+                    LLVMBuildCall2(builder, own.fn_type, own.fn, &sp, 1, "lret_copy"), i64_type, "lret_ci");
+                if (read) drop_read_temp(*read, false);
+                LLVMBuildBr(builder, bb_j);
+                LLVMBasicBlockRef bb_s_end = LLVMGetInsertBlock(builder);
+                LLVMPositionBuilderAtEnd(builder, bb_j);
+                LLVMValueRef phi = LLVMBuildPhi(builder, i64_type, "lret_bits");
+                LLVMValueRef vals[] = { bits, copy };
+                LLVMBasicBlockRef from[] = { bb_from, bb_s_end };
+                LLVMAddIncoming(phi, vals, from, 2);
+                return phi;
+            };
+            // A text capture is the closure's own copy and goes when the
+            // closure does: an answer that may be it is always copied, also
+            // for a runtime loop, which keeps what it is handed.
+            bool text_capture = false;
+            for (auto& cp : captured)
+                if (cp.second.tag == JD_TAG_STR || cp.second.tag == JD_TAG_RUNTIME) text_capture = true;
+            LLVMValueRef one = LLVMConstInt(LLVMInt1TypeInContext(ctx), 1, 0);
+            LLVMValueRef direct = from_runtime ? LLVMBuildNot(builder, from_runtime, "lret_direct") : one;
+            LLVMValueRef copy_cond = text_capture ? one : direct;
+            bool may_copy = text_capture || hof_mode == 0;
+            if (may_copy && body.tag == JD_TAG_STR &&
+                !(body.owned || expr_yields_fresh_string(*expr.right))) {
+                LLVMValueRef bits = LLVMBuildPtrToInt(builder, body.val, i64_type, "lret_p2i");
+                LLVMValueRef out = copy_unless_runtime(copy_cond, bits, nullptr);
+                ret_val = body.val = LLVMBuildIntToPtr(builder, out, i8_ptr_type, "lret_ptr");
+            }
+            if (may_copy && body.tag == JD_TAG_RUNTIME && body.runtime_tag &&
+                LLVMGetTypeKind(LLVMTypeOf(body.val)) == LLVMIntegerTypeKind) {
+                LLVMValueRef is_str = LLVMBuildICmp(builder, LLVMIntEQ, body.runtime_tag,
+                    LLVMConstInt(i32_type, JD_TAG_STR, 0), "lret_isstr");
+                LLVMValueRef cond = LLVMBuildAnd(builder, is_str, copy_cond, "lret_copyit");
+                TypedValue read = body;
+                body.val = copy_unless_runtime(cond, body.val, &read);
+                // Copied: the read's own text is gone. Not copied: the answer
+                // is that text, now the caller's.
+                body.fresh_ptr = nullptr;
+                body.fresh_native = nullptr;
+            }
             int ret_wire = JD_TAG_F64;
             LLVMValueRef ret_wire_dyn = nullptr;
             if (body.tag == JD_TAG_I64 || body.tag == JD_TAG_BOOL) {
@@ -12515,6 +12605,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 if (ctag == JD_TAG_RUNTIME && src.runtime_tag_alloca)
                     tagv = LLVMBuildLoad2(builder, i32_type, src.runtime_tag_alloca,
                                           "cap_rtag");
+                // jdb_closure_set copies a text for the closure; an array or
+                // map stays alive as long as anything may call it.
                 if (rc_on && rc_tag(ctag)) {
                     auto& pin = runtime_funcs["__rc_pin"];
                     LLVMBuildCall2(builder, pin.fn_type, pin.fn, &bits, 1, "");
@@ -15295,6 +15387,34 @@ LLVMValueRef LLVMCodegen::build_funcref_wrapper(const std::string& fn_name, int 
     current_fn = wrap_fn;
     LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(ctx, wrap_fn, "entry");
     LLVMPositionBuilderAtEnd(builder, entry);
+    // Called by a runtime loop or by compiled code (see the text answers
+    // below); taken before the FUNC can make calls of its own.
+    LLVMValueRef from_runtime = LLVMConstInt(LLVMInt1TypeInContext(ctx), 0, 0);
+    if (auto* tk = get_runtime_func("__take_runtime_call"))
+        from_runtime = LLVMBuildICmp(builder, LLVMIntNE,
+            LLVMBuildCall2(builder, tk->fn_type, tk->fn, nullptr, 0, "w_from_rt"),
+            LLVMConstInt(i32_type, 0, 0), "w_from_rt_b");
+    // A text answer is copied when compiled code made the call, so that
+    // caller may drop it; a runtime loop gets it as it is.
+    auto copy_for_caller = [&](LLVMValueRef bits, LLVMValueRef cond) -> LLVMValueRef {
+        LLVMBasicBlockRef bb_s = LLVMAppendBasicBlock(wrap_fn, "w.copy");
+        LLVMBasicBlockRef bb_j = LLVMAppendBasicBlock(wrap_fn, "w.join");
+        LLVMBasicBlockRef bb_from = LLVMGetInsertBlock(builder);
+        LLVMBuildCondBr(builder, cond, bb_s, bb_j);
+        LLVMPositionBuilderAtEnd(builder, bb_s);
+        auto& own = runtime_funcs["__str_own"];
+        LLVMValueRef sp = LLVMBuildIntToPtr(builder, bits, i8_ptr_type, "w_sp");
+        LLVMValueRef copy = LLVMBuildPtrToInt(builder,
+            LLVMBuildCall2(builder, own.fn_type, own.fn, &sp, 1, "w_copy"), i64_type, "w_ci");
+        LLVMBuildBr(builder, bb_j);
+        LLVMBasicBlockRef bb_s_end = LLVMGetInsertBlock(builder);
+        LLVMPositionBuilderAtEnd(builder, bb_j);
+        LLVMValueRef phi = LLVMBuildPhi(builder, i64_type, "w_bits");
+        LLVMValueRef vals[] = { bits, copy };
+        LLVMBasicBlockRef from[] = { bb_from, bb_s_end };
+        LLVMAddIncoming(phi, vals, from, 2);
+        return phi;
+    };
 
     std::vector<LLVMValueRef> inner_args;
     for (int i = 0; i < arity; i++) {
@@ -15353,6 +15473,14 @@ LLVMValueRef LLVMCodegen::build_funcref_wrapper(const std::string& fn_name, int 
         if (fi.return_tag == JD_TAG_BOOL) hof_kind = LLVMConstInt(i32_type, JD_TAG_BOOL, 0);
     } else if (fi.return_tag == JD_TAG_STR || fi.return_tag == JD_TAG_ARR ||
                fi.return_tag == JD_TAG_NATIVE_MAP || fi.return_tag == JD_TAG_FUNCREF) {
+        // A text the caller of a function reference may drop: one the FUNC
+        // does not always make fresh is copied first.
+        if (fi.return_tag == JD_TAG_STR && !fresh_string_funcs.count(fn_name)) {
+            LLVMValueRef bits = LLVMBuildPtrToInt(builder, call, i64_type, "w_p2i");
+            call = LLVMBuildIntToPtr(builder,
+                copy_for_caller(bits, LLVMBuildNot(builder, from_runtime, "w_direct")),
+                i8_ptr_type, "w_ptr");
+        }
         // Pun ptr → i64 → f64 so the value survives transit.
         LLVMValueRef as_i = LLVMBuildPtrToInt(builder, call, i64_type, "ptoi");
         ret_val = pun_i64_to_f64(as_i);
@@ -15365,6 +15493,14 @@ LLVMValueRef LLVMCodegen::build_funcref_wrapper(const std::string& fn_name, int 
         hof_kind = LLVMConstInt(i32_type, JD_TAG_VM_HANDLE, 0);
     } else if (fi.return_tag == JD_TAG_RUNTIME) {
         TypedValue r = unpack_dyn_ret(call);
+        if (!fresh_string_funcs.count(fn_name) &&
+            LLVMGetTypeKind(LLVMTypeOf(r.val)) == LLVMIntegerTypeKind) {
+            // As above: a text answer is copied for a compiled caller.
+            LLVMValueRef is_str = LLVMBuildICmp(builder, LLVMIntEQ, r.runtime_tag,
+                LLVMConstInt(i32_type, JD_TAG_STR, 0), "w_isstr");
+            r.val = copy_for_caller(r.val, LLVMBuildAnd(builder, is_str,
+                LLVMBuildNot(builder, from_runtime, "w_direct"), "w_copyit"));
+        }
         LLVMBuildStore(builder, r.runtime_tag, funcref_ret_channel());
         LLVMValueRef is_bool = LLVMBuildICmp(builder, LLVMIntEQ, r.runtime_tag,
             LLVMConstInt(i32_type, JD_TAG_BOOL, 0), "w_isbool");
@@ -15853,16 +15989,23 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 // The wrapper hands ptr-shaped results back as punned f64 bits.
                 // When the referenced FUNC's return tag is known, pun them back
                 // so the caller sees a string/array instead of a float.
+                // A text a lambda or a FUNC wrapper answers is a copy made
+                // for this call (see their epilogues): the caller drops it.
                 if (rt == JD_TAG_STR || rt == JD_TAG_ARR || rt == JD_TAG_NATIVE_MAP) {
                     LLVMValueRef as_i = pun_f64_to_i64(result);
-                    return { LLVMBuildIntToPtr(builder, as_i, i8_ptr_type, "itoptr"), rt };
+                    TypedValue out{ LLVMBuildIntToPtr(builder, as_i, i8_ptr_type, "itoptr"), rt };
+                    out.owned = rt == JD_TAG_STR;
+                    return out;
                 }
                 if (ask_channel) {
                     LLVMValueRef chan = funcref_ret_channel();
                     LLVMValueRef t = LLVMBuildLoad2(builder, i32_type, chan, "fr_rtag");
                     LLVMBuildStore(builder, LLVMConstInt(i32_type, -1, 1), chan);
                     LLVMValueRef nt = funcref_num_tag(t);
-                    return { funcref_unwire_bits(result, nt), JD_TAG_RUNTIME, nt };
+                    TypedValue out{ funcref_unwire_bits(result, nt), JD_TAG_RUNTIME, nt };
+                    out.fresh_native = LLVMBuildICmp(builder, LLVMIntEQ, nt,
+                        LLVMConstInt(i32_type, JD_TAG_STR, 0), "fr_owned");
+                    return out;
                 }
                 if (rt == JD_TAG_I64 || rt == JD_TAG_BOOL)
                     return { LLVMBuildFPToSI(builder, result, i64_type, "fr_rint"), rt };
@@ -20607,16 +20750,6 @@ LLVMValueRef LLVMCodegen::take_string_ownership(const std::string& var_name, Typ
 void LLVMCodegen::scan_owned_str_locals(const std::vector<StmtPtr>& program) {
     if (std::getenv("JDB_NO_STROWN")) return;
 
-    // A lambda compiles as its own function while the enclosing scope is
-    // still open, so any local it reaches would outlive the frame.
-    std::function<bool(const Expr&)> has_lambda = [&](const Expr& e) -> bool {
-        if (e.kind == ExprKind::LAMBDA_EXPR) return true;
-        if (e.left && has_lambda(*e.left)) return true;
-        if (e.right && has_lambda(*e.right)) return true;
-        for (auto& a : e.args) if (a && has_lambda(*a)) return true;
-        return false;
-    };
-
     auto analyse = [&](const Stmt& fn) {
         if (fn.is_async_func) return;
         std::unordered_set<std::string> candidates;
@@ -20640,11 +20773,6 @@ void LLVMCodegen::scan_owned_str_locals(const std::vector<StmtPtr>& program) {
 
         std::function<void(const Stmt&)> walk = [&](const Stmt& s) {
             if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB) { unsafe = true; return; }
-            if (s.expr && has_lambda(*s.expr)) unsafe = true;
-            if (s.loop_cond && has_lambda(*s.loop_cond)) unsafe = true;
-            for (auto& pe : s.print_exprs) if (pe && has_lambda(*pe)) unsafe = true;
-            for (auto& br : s.branches)
-                if (br.condition && has_lambda(*br.condition)) unsafe = true;
             if (s.expr) scan_calls(*s.expr);
             if (s.loop_cond) scan_calls(*s.loop_cond);
             if (s.end_expr) scan_calls(*s.end_expr);
@@ -20800,6 +20928,14 @@ bool LLVMCodegen::body_lets_escape(const std::vector<StmtPtr>& body, const std::
             }
             return;
         }
+        case ExprKind::LAMBDA_EXPR:
+            // A text capture is copied into the closure (jdb_closure_set)
+            // and the body reads that copy, not the caller's buffer. Any
+            // other kind - a function reference above all - is kept as it
+            // is, so it escapes.
+            if (escape_scan_fn && string_param(*escape_scan_fn, p)) return;
+            if (mentions(e, p)) esc = true;
+            return;
         default:
             if (mentions(e, p)) esc = true;
             return;
@@ -21461,6 +21597,160 @@ void LLVMCodegen::scan_param_escapes(const std::vector<StmtPtr>& program) {
             }
         }
     }
+}
+
+void LLVMCodegen::scan_owned_closures(const std::vector<StmtPtr>& program) {
+    if (std::getenv("JDB_NO_STROWN")) return;
+    auto is_definition = [](const Stmt& st) {
+        return st.kind == StmtKind::FUNCTION || st.kind == StmtKind::SUB;
+    };
+    // A FUNC makes a new closure on every call only when each RETURN hands
+    // back a LAMBDA written there: one that returns a parameter or a
+    // variable hands on a closure somebody else holds.
+    std::unordered_map<std::string, bool> factory;
+    for (auto& s : program) {
+        if (!s || s->kind != StmtKind::FUNCTION) continue;
+        bool any = false, all = true;
+        std::function<void(const Stmt&)> walk = [&](const Stmt& st) {
+            if (st.kind == StmtKind::RETURN) {
+                any = true;
+                if (!st.expr || st.expr->kind != ExprKind::LAMBDA_EXPR) all = false;
+            }
+            for (auto& b : st.body) if (b) walk(*b);
+            for (auto& c : st.catch_body()) if (c) walk(*c);
+            for (auto& f : st.finally_body()) if (f) walk(*f);
+            for (auto& br : st.branches)
+                for (auto& b : br.body) if (b) walk(*b);
+        };
+        for (auto& b : s->body) if (b) walk(*b);
+        factory[s->func_name] = any && all;
+    }
+    auto makes_closure = [&](const Expr& e) {
+        if (e.kind == ExprKind::LAMBDA_EXPR) return true;
+        if (e.kind != ExprKind::CALL) return false;
+        auto it = factory.find(e.func_name);
+        return it != factory.end() && it->second;
+    };
+    static const std::unordered_set<std::string> walkers = {
+        "SELECT", "FILTER", "REDUCE", "TAKE_WHILE", "DROP_WHILE" };
+
+    // A name read anywhere but as the function of a call, an argument of a
+    // walker, or an argument of a FUNC parameter that does not escape.
+    std::function<void(const Expr&, std::unordered_set<std::string>&)> scan_expr =
+        [&](const Expr& e, std::unordered_set<std::string>& bad) {
+        if (e.kind == ExprKind::VARIABLE) { bad.insert(e.str_val); return; }
+        if (e.kind == ExprKind::LAMBDA_EXPR)
+            for (auto& c : e.lambda_captures) bad.insert(c);
+        if (e.kind == ExprKind::CALL) {
+            std::string up = e.func_name;
+            std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+            auto pe = param_escapes.find(e.func_name);
+            for (size_t i = 0; i < e.args.size(); i++) {
+                if (!e.args[i]) continue;
+                const Expr& a = *e.args[i];
+                if (a.kind == ExprKind::VARIABLE) {
+                    bool borrowed = walkers.count(up) ||
+                        (pe != param_escapes.end() && i < pe->second.size() && !pe->second[i]);
+                    if (!borrowed) bad.insert(a.str_val);
+                    continue;
+                }
+                scan_expr(a, bad);
+            }
+            if (e.left) scan_expr(*e.left, bad);
+            if (e.right) scan_expr(*e.right, bad);
+            return;
+        }
+        if (e.left) scan_expr(*e.left, bad);
+        if (e.right) scan_expr(*e.right, bad);
+        for (auto& a : e.args) if (a) scan_expr(*a, bad);
+    };
+    // good: names given a new closure by an assignment counted for this
+    // scope; bad: names any other statement or read touches.
+    std::function<void(const Stmt&, bool, std::unordered_set<std::string>&,
+                       std::unordered_set<std::string>&, std::unordered_set<std::string>&)> scan_stmt =
+        [&](const Stmt& s, bool counts, std::unordered_set<std::string>& good,
+            std::unordered_set<std::string>& bad, std::unordered_set<std::string>& dimmed) {
+        bool assign = s.kind == StmtKind::DIM || s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN;
+        if (!s.var_name.empty() && !is_definition(s)) {
+            if (s.kind == StmtKind::DIM) dimmed.insert(s.var_name);
+            if (assign && counts && s.expr && makes_closure(*s.expr)) good.insert(s.var_name);
+            else bad.insert(s.var_name);
+        }
+        if (!s.label.empty() && !is_definition(s)) bad.insert(s.label);
+        for (auto& dv : s.destruct_vars()) bad.insert(dv);
+        if (s.expr) scan_expr(*s.expr, bad);
+        for (auto& pe : s.print_exprs) if (pe) scan_expr(*pe, bad);
+        for (auto& ic : s.index_chain) if (ic) scan_expr(*ic, bad);
+        if (s.loop_cond) scan_expr(*s.loop_cond, bad);
+        if (s.end_expr) scan_expr(*s.end_expr, bad);
+        if (s.step_expr) scan_expr(*s.step_expr, bad);
+        bool inner = counts && !is_definition(s);
+        for (auto& b : s.body) if (b) scan_stmt(*b, inner, good, bad, dimmed);
+        for (auto& c : s.catch_body()) if (c) scan_stmt(*c, inner, good, bad, dimmed);
+        for (auto& f : s.finally_body()) if (f) scan_stmt(*f, inner, good, bad, dimmed);
+        for (auto& br : s.branches) {
+            if (br.condition) scan_expr(*br.condition, bad);
+            for (auto& [lo, hi] : br.case_labels) {
+                if (lo) scan_expr(*lo, bad);
+                if (hi) scan_expr(*hi, bad);
+            }
+            for (auto& b : br.body) if (b) scan_stmt(*b, inner, good, bad, dimmed);
+        }
+    };
+
+    // Globals: assignments of the main program count, every read anywhere
+    // (FUNC bodies included) is checked.
+    {
+        std::unordered_set<std::string> good, bad, dimmed;
+        for (auto& s : program) if (s) scan_stmt(*s, true, good, bad, dimmed);
+        for (auto& n : good) if (!bad.count(n)) owned_closure_globals.insert(n);
+    }
+    // Locals: a name the FUNC itself DIMs, judged over its own body.
+    for (auto& s : program) {
+        if (!s || !is_definition(*s)) continue;
+        std::unordered_set<std::string> good, bad, dimmed;
+        for (auto& p : s->params()) bad.insert(p.name);
+        for (auto& b : s->body) if (b) scan_stmt(*b, true, good, bad, dimmed);
+        std::unordered_set<std::string> owned;
+        for (auto& n : good)
+            if (!bad.count(n) && dimmed.count(n) && !owned_closure_globals.count(n))
+                owned.insert(n);
+        if (!owned.empty()) owned_closure_locals_by_fn[s->func_name] = owned;
+    }
+}
+
+// The main program judges by the globals' analysis, also inside its loops;
+// a FUNC by its own locals, for a name it holds in a scope of its own.
+bool LLVMCodegen::owns_closure_slot(const std::string& name) const {
+    if (current_fn == LLVMGetNamedFunction(module, "main"))
+        return owned_closure_globals.count(name) > 0;
+    if (!owned_closure_locals.count(name)) return false;
+    for (size_t i = scopes.size(); i-- > 1; )
+        if (scopes[i].vars.count(name))
+            return !LLVMIsAGlobalVariable(scopes[i].vars.at(name).alloca_val);
+    return false;
+}
+
+// Frees the closure a slot holds; a plain function pointer, an empty slot
+// or anything that is not a closure is left alone by jdb_closure_free.
+// In a FUNC the slot is noted for its exit block (note_local).
+void LLVMCodegen::free_closure_in_slot(LLVMValueRef slot, bool note_local) {
+    if (!slot) return;
+    if (note_local && !LLVMIsAGlobalVariable(slot) &&
+        current_fn != LLVMGetNamedFunction(module, "main") &&
+        std::find(closure_local_slots.begin(), closure_local_slots.end(), slot) ==
+            closure_local_slots.end())
+        closure_local_slots.push_back(slot);
+    LLVMTypeRef ty = LLVMIsAGlobalVariable(slot) ? LLVMGlobalGetValueType(slot)
+                                                 : LLVMGetAllocatedType(slot);
+    LLVMValueRef v = LLVMBuildLoad2(builder, ty, slot, "clo_old");
+    LLVMTypeKind k = LLVMGetTypeKind(ty);
+    if (k == LLVMDoubleTypeKind) v = pun_f64_to_i64(v), k = LLVMIntegerTypeKind;
+    if (k == LLVMIntegerTypeKind) v = LLVMBuildIntToPtr(builder, v, i8_ptr_type, "clo_ptr");
+    else if (k != LLVMPointerTypeKind) return;
+    auto& cf = runtime_funcs["__closure_free"];
+    LLVMValueRef a[] = { v };
+    LLVMBuildCall2(builder, cf.fn_type, cf.fn, a, 1, "");
 }
 
 bool LLVMCodegen::string_param(const Stmt& fn, const std::string& name) {

@@ -584,6 +584,21 @@ private:
     // the caller allocated for a parameter that does not escape dies after
     // the call. Missing entries count as escaping.
     std::unordered_map<std::string, std::vector<bool>> param_escapes;
+    // Variables that own the closure they hold: every assignment hands them
+    // a new one (a LAMBDA or a FUNC answering one), and they are only called,
+    // handed to SELECT/FILTER/REDUCE/TAKE_WHILE/DROP_WHILE, or passed to a
+    // FUNC parameter that does not escape. Such a slot frees the closure it
+    // held when it takes the next one, and a local frees it when its FUNC
+    // returns.
+    std::unordered_set<std::string> owned_closure_globals;
+    std::unordered_map<std::string, std::unordered_set<std::string>> owned_closure_locals_by_fn;
+    std::unordered_set<std::string> owned_closure_locals;
+    // The slots of those locals the FUNC being generated has written, freed
+    // in its exit block whatever block scope they were declared in.
+    std::vector<LLVMValueRef> closure_local_slots;
+    void scan_owned_closures(const std::vector<StmtPtr>& program);
+    bool owns_closure_slot(const std::string& name) const;
+    void free_closure_in_slot(LLVMValueRef slot, bool note_local = true);
     void scan_param_escapes(const std::vector<StmtPtr>& program);
     std::unordered_set<std::string> fn_local_names(const Stmt& fn) const;
     bool body_lets_escape(const std::vector<StmtPtr>& body, const std::string& p);

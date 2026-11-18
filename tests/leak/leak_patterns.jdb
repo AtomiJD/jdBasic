@@ -532,6 +532,27 @@ ELSEIF pattern$ = "rowbackparam" THEN
         LeakRowBack(backgrid, i MOD 2)
         IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
     NEXT i
+ELSEIF pattern$ = "closuremake" THEN
+    FOR i = 1 TO passes
+        DIM tagger = LeakTagger("T" + STR$(i MOD 7))
+        total = total + LEN(tagger("x"))
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "closurenum" THEN
+    DIM adder = LeakAdder(1)
+    FOR i = 1 TO passes
+        adder = LeakAdder(i MOD 5)
+        total = total + adder(i)
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
+ELSEIF pattern$ = "lambdatext" THEN
+    DIM words AS MAP
+    words{"a"} = "apple"
+    DIM pick = LAMBDA word$ -> words{word$}
+    FOR i = 1 TO passes
+        total = total + LEN(pick("a"))
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
 ELSE
     FOR i = 1 TO passes
         total = total + i * 0.5
@@ -660,3 +681,12 @@ ENDFUNC
 SUB OnLeakPing(args AS ARRAY)
     total = total + LEN(args)
 ENDSUB
+
+' Closure factories: a text and a number captured from the call.
+FUNC LeakTagger(tag$)
+    RETURN LAMBDA USE(tag$) r$ -> "[" + tag$ + "] " + r$
+ENDFUNC
+
+FUNC LeakAdder(k)
+    RETURN LAMBDA USE(k) x -> x + k
+ENDFUNC

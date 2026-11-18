@@ -102,5 +102,38 @@ FUNC LocalSquare()
 ENDFUNC
 Check("a FUNC local named like a closure global", STR$(LocalSquare()) + " " + STR$(Square(4)), "9 16")
 
+' A closure captured by another closure stays alive when the variable that
+' held it takes a new one.
+FUNC Compose(fn)
+    RETURN LAMBDA USE(fn) x -> fn(x) * 2
+ENDFUNC
+DIM inner = Adder(1)
+DIM twiceInner = Compose(inner)
+inner = Adder(100)
+FOR i = 1 TO 300
+    filler = APPEND(filler, [i])
+NEXT i
+Check("a closure inside a closure after its variable moved on", STR$(twiceInner(1)) + " " + STR$(inner(1)), "4 101")
+
+' A closure answering its captured text into SELECT, directly and through
+' another lambda: the cells keep the text after the closure has gone.
+FUNC MakeSay(said$)
+    RETURN LAMBDA USE(said$) v -> said$
+ENDFUNC
+FUNC SayAll(arr)
+    DIM say = MakeSay("in")
+    RETURN SELECT(say, arr)
+ENDFUNC
+DIM say = MakeSay("a")
+DIM viaLambda = SELECT(LAMBDA x -> say(x), [1, 2])
+DIM direct = SELECT(say, [1, 2])
+say = MakeSay("zz")
+DIM inFunc = SayAll([1, 2])
+FOR i = 1 TO 300
+    filler = APPEND(filler, ["f" + STR$(i)])
+NEXT i
+DIM seen$ = JOIN(viaLambda, ",") + " " + JOIN(direct, ",") + " " + JOIN(inFunc, ",") + " " + say(0)
+Check("SELECT cells of a captured text outlive the closure", seen$, "a,a a,a in,in zz")
+
 PRINT pass; " passed, "; fail; " failed"
 IF fail > 0 THEN END 1
