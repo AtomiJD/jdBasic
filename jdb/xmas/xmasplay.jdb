@@ -246,7 +246,10 @@ FUNC LoadBg(art_dir$, id$)
     TRY
         IF FILE.EXISTS(path$ + ".rgba") THEN
             DIM raw$ = BINREADER$(path$ + ".rgba")
+            IF LEN(raw$) < 8 THEN RETURN NONE
             DIM size = UNPACK("<II", raw$)
+            IF size[0] < 1 ORELSE size[1] < 1 ORELSE size[0] > 4096 ORELSE size[1] > 4096 THEN RETURN NONE
+            IF LEN(raw$) < 8 + size[0] * size[1] * 4 THEN RETURN NONE
             DIM spr = SPRITE.CREATE(size[0], size[1])
             SPRITE.SETBUFFER spr, UNPACK(STR$(size[0] * size[1] * 4) + "B", raw$, 8)
             DIM img = GFX.NEWTARGET(size[0], size[1], TRUE)
@@ -257,10 +260,27 @@ FUNC LoadBg(art_dir$, id$)
             SPRITE.DELETE spr
             RETURN [img, size[0], size[1]]
         ENDIF
-        IF FILE.EXISTS(path$) THEN RETURN [GFX.LOADIMAGE(path$), 1024, 1536]
+        IF FILE.EXISTS(path$) THEN
+            DIM wh = JpegSize(path$)
+            IF ISNONE(wh) THEN RETURN NONE
+            RETURN [GFX.LOADIMAGE(path$), wh[0], wh[1]]
+        ENDIF
     CATCH
         RETURN NONE
     ENDTRY
+    RETURN NONE
+ENDFUNC
+
+' [width, height] from the frame header of a JPEG, NONE when there is none.
+FUNC JpegSize(path$)
+    DIM b$ = BINREADER$(path$)
+    DIM at = 2
+    DO WHILE at + 9 < LEN(b$)
+        IF BYTEAT(b$, at) <> 255 THEN RETURN NONE
+        DIM kind = BYTEAT(b$, at + 1)
+        IF kind >= 192 ANDALSO kind <= 195 THEN RETURN [BYTEAT(b$, at + 7) * 256 + BYTEAT(b$, at + 8), BYTEAT(b$, at + 5) * 256 + BYTEAT(b$, at + 6)]
+        at = at + 2 + BYTEAT(b$, at + 2) * 256 + BYTEAT(b$, at + 3)
+    LOOP
     RETURN NONE
 ENDFUNC
 
