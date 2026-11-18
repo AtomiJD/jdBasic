@@ -2,7 +2,9 @@
 ' Multi-level undo, find/replace with whole-word and wrap-around, go to
 ' line, word wrap, zoom, spell check, tab width, dark mode, printing,
 ' recent files, and files kept in their own encoding and line endings.
-' Watches the open file for changes made by other programs. Markdown files
+' Watches the open file for changes made by other programs and offers to
+' reload it. Dark mode, word wrap, spell check and the font are kept in the
+' registry under HKCU\Software\jdTexti. Markdown files
 ' open next to their rendered view: both panes are editable and kept in
 ' step, and an edit in the view changes only the Markdown it reached.
 '
@@ -24,6 +26,10 @@ DIM CODE_BACK AS INTEGER = $F0F0F0
 DIM MAX_RECENT AS INTEGER = 8
 DIM DARK_BACK AS INTEGER = $1E1E1E
 DIM DARK_FORE AS INTEGER = $D4D4D4
+DIM REG_KEY AS STRING = "Software\jdTexti"
+' the predefined HKEY 0x80000001, sign-extended as Windows passes it
+DIM HKEY_CURRENT_USER AS INTEGER = -2147483647
+DIM REG_SZ AS INTEGER = 1
 
 DIM frm AS DOUBLE = 0
 DIM txt AS DOUBLE = 0
@@ -34,6 +40,9 @@ DIM txtRepl AS DOUBLE = 0
 DIM chkCase AS DOUBLE = 0
 DIM chkWord AS DOUBLE = 0
 DIM chkWrap AS DOUBLE = 0
+DIM chkRegex AS DOUBLE = 0
+' length of the last hit FIND_FROM answered
+DIM hit_len AS INTEGER = 0
 DIM optUp AS DOUBLE = 0
 DIM lblRepl AS DOUBLE = 0
 DIM btnRepl AS DOUBLE = 0
@@ -48,7 +57,8 @@ DIM file_eol AS STRING = CRLF
 DIM file_mixed AS INTEGER = 0
 DIM disk_lines AS ARRAY = []
 DIM disk_ends AS ARRAY = []
-DIM file_mtime AS STRING = ""
+' mtime and size of the file as last read or written; "" when it is gone
+DIM file_stamp AS STRING = ""
 DIM file_ro AS INTEGER = 0
 DIM font_face AS STRING = "Consolas"
 DIM font_size AS INTEGER = 11
@@ -64,6 +74,7 @@ DIM doc_chars AS INTEGER = 0
 DIM recent AS ARRAY = []
 DIM quitting AS INTEGER = 0
 DIM disk_prompt AS INTEGER = 0
+DIM app_active AS INTEGER = 1
 DIM client_w AS INTEGER = 760
 DIM client_h AS INTEGER = 500
 
@@ -261,11 +272,57 @@ FUNC MIXED_BODY$(body AS STRING)
     RETURN JOIN(out, "")
 ENDFUNC
 
+FUNC DISK_STAMP$(st AS OBJECT)
+    RETURN st{"mtime"} + "|" + STR$(st{"size"})
+ENDFUNC
+
 SUB REMEMBER_DISK()
     DIM st AS OBJECT = FILE.STAT(file_path)
-    file_mtime = st{"mtime"}
+    file_stamp = DISK_STAMP$(st)
     file_ro = 0
     IF st{"readonly"} THEN file_ro = 1
+ENDSUB
+
+' ── settings (registry) ─────────────────────────────────────────
+' Every value is kept as text (REG_SZ). SHRegGetPathA reads into a MAX_PATH
+' buffer and needs no size pointer, which DECLARE cannot pass.
+
+DECLARE FUNC RegSetKeyValueA LIB "advapi32.dll" ALIAS "RegSetKeyValueA" (hkey AS INTEGER, subkey AS STRING, value_name AS STRING, kind AS INTEGER, data AS STRING, n_bytes AS INTEGER) AS INTEGER
+DECLARE FUNC SHRegGetPathA LIB "shlwapi.dll" ALIAS "SHRegGetPathA" (hkey AS INTEGER, subkey AS STRING, value_name AS STRING, buf AS RETURN, flags AS INTEGER) AS ARRAY
+
+FUNC REG_GET$(item_name AS STRING, fallback AS STRING)
+    DIM got AS ARRAY = SHRegGetPathA(HKEY_CURRENT_USER, REG_KEY, item_name, 260, 0)
+    IF got[0] <> 0 THEN RETURN fallback
+    RETURN got[1]
+ENDFUNC
+
+FUNC REG_GET_INT(item_name AS STRING, fallback AS INTEGER) AS INTEGER
+    RETURN CINT(VAL(REG_GET$(item_name, STR$(fallback))))
+ENDFUNC
+
+SUB REG_PUT(item_name AS STRING, v AS STRING)
+    DIM rc AS INTEGER = RegSetKeyValueA(HKEY_CURRENT_USER, REG_KEY, item_name, REG_SZ, v, LEN(v) + 1)
+ENDSUB
+
+SUB LOAD_SETTINGS()
+    dark_on = REG_GET_INT("DarkMode", dark_on)
+    wrap_on = REG_GET_INT("WordWrap", wrap_on)
+    spell_on = REG_GET_INT("SpellCheck", spell_on)
+    font_face = REG_GET$("FontName", font_face)
+    font_size = REG_GET_INT("FontSize", font_size)
+    font_bold = REG_GET_INT("FontBold", font_bold)
+    font_italic = REG_GET_INT("FontItalic", font_italic)
+    IF font_size < 1 THEN font_size = 11
+ENDSUB
+
+SUB SAVE_SETTINGS()
+    REG_PUT("DarkMode", STR$(dark_on))
+    REG_PUT("WordWrap", STR$(wrap_on))
+    REG_PUT("SpellCheck", STR$(spell_on))
+    REG_PUT("FontName", font_face)
+    REG_PUT("FontSize", STR$(font_size))
+    REG_PUT("FontBold", STR$(font_bold))
+    REG_PUT("FontItalic", STR$(font_italic))
 ENDSUB
 
 ' ── Markdown ────────────────────────────────────────────────────
@@ -811,7 +868,7 @@ SUB NEW_DOC()
     file_path = ""
     file_enc = "utf-8"
     file_eol = CRLF
-    file_mtime = ""
+    file_stamp = ""
     REMEMBER_LINES("")
     file_ro = 0
     doc_chars = 0
@@ -820,17 +877,35 @@ SUB NEW_DOC()
     UPDATE_STATUS()
 ENDSUB
 
-' Another program changed or replaced the file since it was loaded or saved.
+' Another program changed, replaced or deleted the file since it was loaded
+' or saved. A reload keeps the caret where it was.
 SUB CHECK_DISK()
-    IF file_path = "" ORELSE disk_prompt THEN RETURN
-    IF NOT FILE.EXISTS(file_path) THEN RETURN
-    DIM st AS OBJECT = FILE.STAT(file_path)
-    IF st{"mtime"} = file_mtime THEN RETURN
-    file_mtime = st{"mtime"}
+    IF file_path = "" ORELSE disk_prompt ORELSE quitting THEN RETURN
+    IF NOT FILE.EXISTS(file_path) THEN
+        IF file_stamp = "" THEN RETURN
+        file_stamp = ""
+        disk_prompt = 1
+        MSGBOX(DOC_NAME$() + " was deleted or moved by another program." + CRLF + "The text stays here; save it to keep it.", 48, APP_NAME)
+        FORM.SET(txt, "MODIFIED", TRUE)
+        UPDATE_TITLE()
+        disk_prompt = 0
+        RETURN
+    ENDIF
+    DIM stamp AS STRING = DISK_STAMP$(FILE.STAT(file_path))
+    IF stamp = file_stamp THEN RETURN
+    file_stamp = stamp
     disk_prompt = 1
     DIM ask AS STRING = DOC_NAME$() + " was changed by another program." + CRLF + CRLF + "Reload it?"
     IF FORM.GET(txt, "MODIFIED") THEN ask = ask + " Your changes here would be lost."
-    IF MSGBOX(ask, 4 + 32, APP_NAME) = 6 THEN LOAD_DOC(file_path)
+    IF MSGBOX(ask, 4 + 32, APP_NAME) = 6 THEN
+        DIM keep AS INTEGER = CINT(FORM.GET(txt, "SELSTART"))
+        LOAD_DOC(file_path)
+        DIM n_text AS INTEGER = LEN(FORM.GET(txt, "TEXT"))
+        IF keep > n_text THEN keep = n_text
+        FORM.SET(txt, "SELSTART", keep)
+        MD_FOLLOW()
+        UPDATE_STATUS()
+    ENDIF
     disk_prompt = 0
 ENDSUB
 
@@ -842,7 +917,73 @@ FUNC NEXT_HIT(hay AS STRING, needle AS STRING, start_at AS INTEGER) AS INTEGER
     RETURN CINT(TEXTX.FINDWORD(hay, needle, start_at))
 ENDFUNC
 
+' The search text as a pattern for REGEX: "Match case" off adds (?i),
+' "whole word" puts \b around it.
+FUNC RX_PATTERN$(needle AS STRING)
+    DIM pat AS STRING = needle
+    IF FORM.GET(chkWord, "CHECKED") THEN pat = "\b(?:" + pat + ")\b"
+    IF NOT FORM.GET(chkCase, "CHECKED") THEN pat = "(?i)" + pat
+    RETURN pat
+ENDFUNC
+
+' Every non-empty match of pat in hay as [start, length, replacement],
+' start and length in bytes, the units of SELSTART; replacement is repl
+' with $1, $2 and $& filled in from that match within the whole text.
+' REGEX.REPLACE$ writes each match as M1 match M3 replacement M2, and the
+' pieces between the markers give the positions.
+FUNC RX_HITS(hay AS STRING, pat AS STRING, repl AS STRING) AS ARRAY
+    DIM M1 AS STRING = CHR$(1)
+    DIM M2 AS STRING = CHR$(2)
+    DIM M3 AS STRING = CHR$(3)
+    DIM hits AS ARRAY = []
+    DIM both AS STRING = hay + repl
+    IF INSTR(both, M1) >= 0 ORELSE INSTR(both, M2) >= 0 ORELSE INSTR(both, M3) >= 0 THEN RETURN hits
+    DIM marked AS STRING = ""
+    TRY
+        marked = REGEX.REPLACE$(pat, hay, M1 + "$&" + M3 + repl + M2)
+    CATCH
+        RETURN hits
+    ENDTRY
+    DIM pieces AS ARRAY = SPLIT(marked, M1)
+    DIM at AS INTEGER = LEN(pieces[0])
+    DIM i AS INTEGER = 0
+    FOR i = 1 TO LEN(pieces) - 1
+        DIM piece AS STRING = pieces[i]
+        DIM cut AS INTEGER = INSTR(piece, M3)
+        DIM cut_end AS INTEGER = INSTR(piece, M2)
+        IF cut > 0 THEN PUSH(hits, [at, cut, MID$(piece, cut + 1, cut_end - cut - 1)])
+        at = at + cut + LEN(piece) - cut_end - 1
+    NEXT
+    RETURN hits
+ENDFUNC
+
+FUNC RX_FIND_FROM(needle AS STRING, upward AS INTEGER) AS INTEGER
+    DIM hits AS ARRAY = RX_HITS(FORM.GET(ED(), "TEXT"), RX_PATTERN$(needle), "")
+    IF LEN(hits) = 0 THEN RETURN -1
+    DIM wrap_around AS INTEGER = FORM.GET(chkWrap, "CHECKED")
+    DIM sel_start AS INTEGER = FORM.GET(ED(), "SELSTART")
+    DIM after_sel AS INTEGER = sel_start + FORM.GET(ED(), "SELLENGTH")
+    DIM pick AS INTEGER = -1
+    DIM i AS INTEGER = 0
+    IF upward THEN
+        FOR i = 0 TO LEN(hits) - 1
+            IF hits[i][0] < sel_start THEN pick = i
+        NEXT
+        IF pick < 0 ANDALSO wrap_around THEN pick = LEN(hits) - 1
+    ELSE
+        FOR i = LEN(hits) - 1 TO 0 STEP -1
+            IF hits[i][0] >= after_sel THEN pick = i
+        NEXT
+        IF pick < 0 ANDALSO wrap_around THEN pick = 0
+    ENDIF
+    IF pick < 0 THEN RETURN -1
+    hit_len = CINT(hits[pick][1])
+    RETURN CINT(hits[pick][0])
+ENDFUNC
+
 FUNC FIND_FROM(needle AS STRING, upward AS INTEGER) AS INTEGER
+    hit_len = LEN(needle)
+    IF FORM.GET(chkRegex, "CHECKED") THEN RETURN RX_FIND_FROM(needle, upward)
     DIM hay AS STRING = FORM.GET(ED(), "TEXT")
     IF NOT FORM.GET(chkCase, "CHECKED") THEN
         hay = UCASE$(hay)
@@ -879,7 +1020,7 @@ SUB FIND_IN(upward AS INTEGER)
         RETURN
     ENDIF
     FORM.SET(ED(), "SELSTART", hit)
-    FORM.SET(ED(), "SELLENGTH", LEN(needle))
+    FORM.SET(ED(), "SELLENGTH", hit_len)
     UPDATE_STATUS()
 ENDSUB
 
@@ -923,9 +1064,18 @@ SUB MAIN_LOAD(e)
     UPDATE_STATUS()
 ENDSUB
 
+SUB MAIN_ACTIVATE(e)
+    app_active = 1
+    CHECK_DISK()
+ENDSUB
+
+SUB MAIN_DEACTIVATE(e)
+    app_active = 0
+ENDSUB
+
 SUB MAIN_RESIZE(e)
-    client_w = e[0]{"width"}
-    client_h = e[0]{"height"}
+    client_w = CINT(e[0]{"width"})
+    client_h = CINT(e[0]{"height"})
     LAYOUT()
 ENDSUB
 
@@ -1027,9 +1177,11 @@ SUB TMRSYNC_TICK(e)
     ENDIF
 ENDSUB
 
-' Ctrl+wheel zooms inside the control; the status bar follows it here.
+' Ctrl+wheel zooms inside the control; the status bar follows it here. A
+' change on disk while the window is in front is noticed here too.
 SUB TMRZOOM_TICK(e)
     IF quitting THEN RETURN
+    IF app_active THEN CHECK_DISK()
     DIM z AS INTEGER = CINT(FORM.GET(txt, "ZOOM"))
     IF z <> zoom_pct THEN
         zoom_pct = z
@@ -1294,6 +1446,7 @@ SUB MNUWRAP_CLICK(e)
     wrap_on = 1 - wrap_on
     FORM.SET(txt, "WORDWRAP", wrap_on)
     MENU_CHECKS()
+    SAVE_SETTINGS()
 ENDSUB
 
 SUB MNUFONT_CLICK(e)
@@ -1307,6 +1460,7 @@ SUB MNUFONT_CLICK(e)
     IF parts[2] = "1" THEN font_bold = 1
     IF parts[3] = "1" THEN font_italic = 1
     APPLY_FONT()
+    SAVE_SETTINGS()
 ENDSUB
 
 SUB SET_TAB_WIDTH(n AS INTEGER)
@@ -1332,6 +1486,7 @@ SUB MNUSPELL_CLICK(e)
     FORM.SET(txt, "SPELLCHECK", spell_on)
     FORM.SET(mdv, "SPELLCHECK", spell_on)
     MENU_CHECKS()
+    SAVE_SETTINGS()
 ENDSUB
 
 ' ── View / Help ─────────────────────────────────────────────────
@@ -1360,6 +1515,7 @@ SUB MNUDARK_CLICK(e)
     FORM.SET(frm, "DARKMODE", dark_on)
     APPLY_COLORS()
     MENU_CHECKS()
+    SAVE_SETTINGS()
 ENDSUB
 
 SUB MNUABOUT_CLICK(e)
@@ -1548,9 +1704,39 @@ ENDSUB
 SUB BTNREPLACE_CLICK(e)
     DIM needle AS STRING = FORM.GET(txtFind, "TEXT")
     IF needle = "" THEN RETURN
-    IF SELECTION_MATCHES(needle) THEN FORM.SET(ED(), "SELTEXT", FORM.GET(txtRepl, "TEXT"))
+    DIM repl AS STRING = FORM.GET(txtRepl, "TEXT")
+    IF FORM.GET(chkRegex, "CHECKED") THEN
+        ' only a hit that starts and ends where the selection does is replaced
+        DIM hits AS ARRAY = RX_HITS(FORM.GET(ED(), "TEXT"), RX_PATTERN$(needle), repl)
+        DIM sel_start AS INTEGER = FORM.GET(ED(), "SELSTART")
+        DIM sel_len AS INTEGER = FORM.GET(ED(), "SELLENGTH")
+        DIM i AS INTEGER = 0
+        FOR i = 0 TO LEN(hits) - 1
+            IF CINT(hits[i][0]) = sel_start ANDALSO CINT(hits[i][1]) = sel_len THEN
+                DIM with_text AS STRING = hits[i][2]
+                FORM.SET(ED(), "SELTEXT", with_text)
+                EXITFOR
+            ENDIF
+        NEXT
+    ELSEIF SELECTION_MATCHES(needle) THEN
+        FORM.SET(ED(), "SELTEXT", repl)
+    ENDIF
     FIND_IN(FORM.GET(optUp, "CHECKED"))
 ENDSUB
+
+FUNC RX_REPLACE_ALL$(src AS STRING, hits AS ARRAY)
+    DIM rebuilt AS STRING = ""
+    DIM done_to AS INTEGER = 0
+    DIM i AS INTEGER = 0
+    FOR i = 0 TO LEN(hits) - 1
+        DIM at AS INTEGER = CINT(hits[i][0])
+        DIM n_hit AS INTEGER = CINT(hits[i][1])
+        DIM with_text AS STRING = hits[i][2]
+        rebuilt = rebuilt + MID$(src, done_to, at - done_to) + with_text
+        done_to = at + n_hit
+    NEXT
+    RETURN rebuilt + MID$(src, done_to, LEN(src) - done_to)
+ENDFUNC
 
 ' Rebuilds the text and swaps it in through SELTEXT, so one Undo restores it.
 SUB BTNREPLACEALL_CLICK(e)
@@ -1559,26 +1745,32 @@ SUB BTNREPLACEALL_CLICK(e)
     MD_FLUSH()
     DIM src AS STRING = FORM.GET(txt, "TEXT")
     DIM repl AS STRING = FORM.GET(txtRepl, "TEXT")
-    DIM hay AS STRING = src
-    IF NOT FORM.GET(chkCase, "CHECKED") THEN
-        hay = UCASE$(src)
-        needle = UCASE$(needle)
-    ENDIF
     DIM rebuilt AS STRING = ""
-    DIM done_to AS INTEGER = 0
     DIM hits AS INTEGER = 0
-    DIM hit AS INTEGER = NEXT_HIT(hay, needle, 0)
-    DO WHILE hit >= 0
-        rebuilt = rebuilt + MID$(src, done_to, hit - done_to) + repl
-        done_to = hit + LEN(needle)
-        hits = hits + 1
-        hit = NEXT_HIT(hay, needle, done_to)
-    LOOP
+    IF FORM.GET(chkRegex, "CHECKED") THEN
+        DIM rx_hits AS ARRAY = RX_HITS(src, RX_PATTERN$(needle), repl)
+        hits = LEN(rx_hits)
+        rebuilt = RX_REPLACE_ALL$(src, rx_hits)
+    ELSE
+        DIM hay AS STRING = src
+        IF NOT FORM.GET(chkCase, "CHECKED") THEN
+            hay = UCASE$(src)
+            needle = UCASE$(needle)
+        ENDIF
+        DIM done_to AS INTEGER = 0
+        DIM hit AS INTEGER = NEXT_HIT(hay, needle, 0)
+        DO WHILE hit >= 0
+            rebuilt = rebuilt + MID$(src, done_to, hit - done_to) + repl
+            done_to = hit + LEN(needle)
+            hits = hits + 1
+            hit = NEXT_HIT(hay, needle, done_to)
+        LOOP
+        rebuilt = rebuilt + MID$(src, done_to, LEN(src) - done_to)
+    ENDIF
     IF hits = 0 THEN
         MSGBOX("Cannot find " + CHR$(34) + FORM.GET(txtFind, "TEXT") + CHR$(34), 64, APP_NAME)
         RETURN
     ENDIF
-    rebuilt = rebuilt + MID$(src, done_to, LEN(src) - done_to)
     FORM.SET(txt, "SELSTART", 0)
     FORM.SET(txt, "SELLENGTH", LEN(src))
     FORM.SET(txt, "SELTEXT", rebuilt)
@@ -1598,15 +1790,16 @@ ENDSUB
 ' ── build the windows ───────────────────────────────────────────
 
 LOAD_RECENT()
+LOAD_SETTINGS()
 frm = FORM.CREATE("Untitled - " + APP_NAME, client_w, client_h, "MAIN")
 
 txt = FORM.RICHTEXT(frm, "txt", 0, 0, client_w, client_h - SB_HEIGHT)
 FORM.SET(txt, "PLAINTEXT", TRUE)
 FORM.SET(txt, "MAXLENGTH", 0)
-FORM.SET(txt, "WORDWRAP", FALSE)
+FORM.SET(txt, "WORDWRAP", wrap_on)
 FORM.SET(txt, "HIDESELECTION", FALSE)
 FORM.SET(txt, "ACCEPTSTAB", TRUE)
-FORM.SET(txt, "SPELLCHECK", TRUE)
+FORM.SET(txt, "SPELLCHECK", spell_on)
 FORM.SET(txt, "DROPFILES", TRUE)
 FORM.SET(frm, "DROPFILES", TRUE)
 APPLY_FONT()
@@ -1614,7 +1807,7 @@ FORM.SET(txt, "TABWIDTH", tab_w)
 mdv = FORM.RICHTEXT(frm, "mdv", 0, 0, client_w, client_h - SB_HEIGHT)
 FORM.SET(mdv, "MAXLENGTH", 0)
 FORM.SET(mdv, "HIDESELECTION", FALSE)
-FORM.SET(mdv, "SPELLCHECK", TRUE)
+FORM.SET(mdv, "SPELLCHECK", spell_on)
 FORM.SET(mdv, "VISIBLE", FALSE)
 mdprint = FORM.RICHTEXT(frm, "mdprint", 0, 0, client_w, client_h - SB_HEIGHT)
 FORM.SET(mdprint, "MAXLENGTH", 0)
@@ -1642,7 +1835,7 @@ BUILD_MENU()
 FORM.TIMER(frm, "tmrZoom", 400)
 FORM.TIMER(frm, "tmrSync", 250)
 
-dlg = FORM.CREATE("Find", 430, 150, "FINDDLG")
+dlg = FORM.CREATE("Find", 430, 174, "FINDDLG")
 FORM.SET(dlg, "BORDERSTYLE", 3)
 FORM.SET(dlg, "OWNER", frm)
 FORM.LABEL(dlg, "lblFind", "Fi&nd what:", 10, 14, 80, 18)
@@ -1653,6 +1846,8 @@ chkCase = FORM.CHECKBOX(dlg, "chkCase", "Match &case", 10, 72, 130, 20)
 chkWord = FORM.CHECKBOX(dlg, "chkWord", "Match &whole word", 10, 96, 130, 20)
 chkWrap = FORM.CHECKBOX(dlg, "chkWrap", "Wrap ar&ound", 10, 120, 130, 20)
 FORM.SET(chkWrap, "CHECKED", TRUE)
+chkRegex = FORM.CHECKBOX(dlg, "chkRegex", "Regular e&xpression", 10, 144, 150, 20)
+FORM.SET(chkRegex, "TOOLTIP", "ECMAScript syntax; $1, $2 and $& in Replace with")
 FORM.FRAME(dlg, "fraDir", "Direction", 160, 72, 152, 52)
 optUp = FORM.RADIO(dlg, "optUp", "&Up", 172, 94, 60, 20, TRUE)
 DIM optDown AS DOUBLE = FORM.RADIO(dlg, "optDown", "&Down", 238, 94, 66, 20)
@@ -1660,7 +1855,10 @@ FORM.SET(optDown, "CHECKED", TRUE)
 FORM.BUTTON(dlg, "btnFindNext", "&Find Next", 326, 9, 94, 26)
 btnRepl = FORM.BUTTON(dlg, "btnReplace", "&Replace", 326, 39, 94, 26)
 btnAll = FORM.BUTTON(dlg, "btnReplaceAll", "Replace &All", 326, 69, 94, 26)
-FORM.BUTTON(dlg, "btnCancel", "Cancel", 326, 115, 94, 26)
+FORM.BUTTON(dlg, "btnCancel", "Cancel", 326, 139, 94, 26)
+
+IF dark_on THEN FORM.SET(frm, "DARKMODE", TRUE)
+APPLY_COLORS()
 
 DIM args AS ARRAY = OS.ARGS()
 IF LEN(args) > 1 THEN LOAD_DOC(args[1])
