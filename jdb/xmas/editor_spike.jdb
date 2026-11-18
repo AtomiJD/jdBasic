@@ -182,17 +182,21 @@ DO WHILE running
             IF GUI.BUTTON("- letzte Szene") THEN scenes = TAKE(LEN(scenes) - 1, scenes)
         ENDIF
         doc{"s"} = scenes
-        GUI.SEPARATOR_TEXT("Vorschau")
-        IF GUI.BUTTON("Von vorn") THEN t_story = ms_now
-        GUI.SAME_LINE
-        IF NOT music_on ANDALSO GUI.BUTTON("Musik an") THEN
+        GUI.SEPARATOR_TEXT("Musik")
+        DIM song = GUI.COMBO("Lied", doc{"m"}, SELECT(LAMBDA r -> r[1], XMASPLAY.MUSICS()))
+        DIM play_now = song <> doc{"m"} ANDALSO music_on
+        doc{"m"} = song
+        IF NOT music_on ANDALSO GUI.BUTTON("Musik an") THEN play_now = TRUE
+        IF play_now THEN
             music_on = TRUE
             TRY
-                XMASPLAY.MUSIC()
+                XMASPLAY.MUSIC(song)
             CATCH
                 copied$ = "Musik: " + ERRMSG$
             ENDTRY
         ENDIF
+        GUI.SEPARATOR_TEXT("Vorschau")
+        IF GUI.BUTTON("Von vorn") THEN t_story = ms_now
         GUI.SEPARATOR_TEXT("Teilen")
         link$ = play_url$ + XMASPLAY.ENCODE$(story)
         IF GUI.BUTTON("Link kopieren") THEN
