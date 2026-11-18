@@ -167,6 +167,28 @@ DO WHILE running
                         cast[ci] = picked$
                         GUI.POP_ID
                     NEXT ci
+                    IF LEN(cast) < XMASPLAY.MAX_CAST ANDALSO GUI.BUTTON("+ Figur") THEN
+                        DIM id$ = ""
+                        FOR EACH id$ IN cast_ids
+                            IF FIND_IN_ARRAY(cast, id$) < 0 THEN
+                                cast = APPEND(cast, [id$])
+                                EXITFOR
+                            ENDIF
+                        NEXT id$
+                    ENDIF
+                    IF LEN(cast) > 1 THEN
+                        GUI.SAME_LINE
+                        IF GUI.BUTTON("- Figur") THEN
+                            ' the last figure leaves; its bubbles go to the first
+                            cast = TAKE(LEN(cast) - 1, cast)
+                            DIM kept = []
+                            DIM ln = NONE
+                            FOR EACH ln IN sc{"l"}
+                                kept = APPEND(kept, [[IIF(ln[0] >= LEN(cast), 0, ln[0]), ln[1]]])
+                            NEXT ln
+                            sc{"l"} = kept
+                        ENDIF
+                    ENDIF
                     sc{"c"} = cast
                     DIM who_names = SELECT(LAMBDA c -> cast_names[FIND_IN_ARRAY(cast_ids, c)], cast)
                     GUI.SEPARATOR_TEXT("Sprechblasen")
