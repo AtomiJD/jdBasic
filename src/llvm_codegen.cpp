@@ -17277,7 +17277,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             out.fresh_container = true;
             return out;
         }
-        if (expr.args[0]->kind != ExprKind::INDEX) call_arg_preset[expr.args[0].get()] = target;
+        if (expr.args[0]->kind != ExprKind::INDEX || target.tag == JD_TAG_STR) call_arg_preset[expr.args[0].get()] = target;
         else drop_read_temp(target);
     }
 
@@ -17295,7 +17295,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             out.fresh_container = true;
             return out;
         }
-        if (expr.args[0]->kind != ExprKind::INDEX) call_arg_preset[expr.args[0].get()] = src;
+        if (expr.args[0]->kind != ExprKind::INDEX || src.tag == JD_TAG_STR) call_arg_preset[expr.args[0].get()] = src;
         else drop_read_temp(src);
     }
 
@@ -17327,7 +17327,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 out.fresh_container = true;
                 return out;
             }
-            if (expr.args[0]->kind != ExprKind::INDEX) call_arg_preset[expr.args[0].get()] = src;
+            if (expr.args[0]->kind != ExprKind::INDEX || src.tag == JD_TAG_STR) call_arg_preset[expr.args[0].get()] = src;
             else drop_read_temp(src);
         }
     }
@@ -17354,7 +17354,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             out.fresh_container = true;
             return out;
         }
-        if (expr.args[0]->kind != ExprKind::INDEX) call_arg_preset[expr.args[0].get()] = src;
+        if (expr.args[0]->kind != ExprKind::INDEX || src.tag == JD_TAG_STR) call_arg_preset[expr.args[0].get()] = src;
         else drop_read_temp(src);
     }
 
@@ -19149,6 +19149,15 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                     (arg_cache[i].owned || expr_yields_fresh_string(*expr.args[i])) &&
                     LLVMGetTypeKind(LLVMTypeOf(arg_cache[i].val)) == LLVMPointerTypeKind)
                     native_drops.push_back(arg_cache[i].val);
+        // A read of run-time kind that made a text of its own for this call
+        // (a key read on a map hands out a copy) goes with it as well.
+        std::vector<TypedValue> read_drops;
+        if (!std::getenv("JDB_NO_STROWN") && builtin_reads_args(upper) &&
+            (rf.return_tag != JD_TAG_STR || builtin_fresh_string(upper)))
+            for (size_t i = 0; i < expr.args.size() && i < param_count; i++)
+                if (arg_cache[i].tag == JD_TAG_RUNTIME &&
+                    (arg_cache[i].fresh_ptr || arg_cache[i].fresh_native))
+                    read_drops.push_back(arg_cache[i]);
         // An array or text made from a VM value for this call goes back to
         // the bridge afterwards, when the builtin only reads its arguments
         // and answers something that cannot share their cells: a number, a
@@ -19168,6 +19177,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 LLVMValueRef d[] = { p };
                 LLVMBuildCall2(builder, drop.fn_type, drop.fn, d, 1, "");
             }
+            for (const TypedValue& tv : read_drops) drop_read_temp(tv, false);
             if (!frees_conversions) return;
             auto& afree = runtime_funcs["__jdrt_free_hof_array"];
             LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
