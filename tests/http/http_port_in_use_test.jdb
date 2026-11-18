@@ -52,6 +52,25 @@ IF ARG_AT$(1) = "--child" THEN
         ENDIF
         END 0
     ENDIF
+    IF what$ = "http-localhost" THEN
+        IF HTTP.SERVER.START(child_port, "localhost") THEN
+            PRINT "START on localhost answered TRUE while 127.0.0.1 is taken"
+            HTTP.SERVER.STOP
+            END 1
+        ENDIF
+        END 0
+    ENDIF
+    IF what$ = "tcp-localhost" OR what$ = "tcp-specific" THEN
+        DIM bind_host$ AS STRING = "127.0.0.1"
+        IF what$ = "tcp-localhost" THEN bind_host$ = "localhost"
+        DIM hsock = NET.LISTEN(child_port, bind_host$)
+        IF hsock <> 0 THEN
+            PRINT "NET.LISTEN on "; bind_host$; " opened a port in use"
+            NET.CLOSE(hsock)
+            END 1
+        ENDIF
+        END 0
+    ENDIF
     END 99
 ENDIF
 
@@ -121,6 +140,25 @@ Ok("the first server still answers", r{"status"} = 200 ANDALSO body$ = "pong")
 IF OS.FEATURE("NET") THEN
     code = RUN_CHILD("tcp", port)
     Ok("NET.LISTEN in a second process fails on the port (child exit " + STR$(code) + ")", code = 0)
+ENDIF
+
+' "localhost" names ::1 and 127.0.0.1: the first address being taken
+' refuses the bind, it does not fall back to the next one.
+code = RUN_CHILD("http-localhost", port)
+Ok("START on localhost in a second process gets FALSE (child exit " + STR$(code) + ")", code = 0)
+IF OS.FEATURE("NET") THEN
+    code = RUN_CHILD("tcp-localhost", port)
+    Ok("NET.LISTEN on localhost in a second process fails (child exit " + STR$(code) + ")", code = 0)
+
+    ' A listener on every address keeps a second process off a more
+    ' specific one of the same port.
+    DIM wide_sock = NET.LISTEN(0, "0.0.0.0")
+    Ok("NET.LISTEN on 0.0.0.0 opens a socket", wide_sock <> 0)
+    IF wide_sock <> 0 THEN
+        code = RUN_CHILD("tcp-specific", NET.PORT(wide_sock))
+        Ok("NET.LISTEN on 127.0.0.1 in a second process fails under 0.0.0.0 (child exit " + STR$(code) + ")", code = 0)
+        NET.CLOSE(wide_sock)
+    ENDIF
 ENDIF
 
 HTTP.SERVER.STOP

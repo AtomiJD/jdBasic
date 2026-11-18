@@ -2674,7 +2674,7 @@ PRINT "There are " + LEN(Topics) + " help topics available."
 * **`HTTP.GETCOOKIE$(name$)`**: Returns the stored cookie value, or empty string if the key is unknown.
 * **`HTTP.DELETE$(url$)`**: Performs an HTTP DELETE request and returns the response body. Status is available via `HTTP.STATUSCODE()`.
 * **`HTTP.REQUEST(method$, url$ [, body$ [, content_type$]]) -> map`**: Generic HTTP call. Returns a map with `status`, `body`, and `headers`. A header name the server sends more than once (several `Set-Cookie` lines) maps to an array of its values in arrival order; every other header is a string. Unlike the shortcut forms this does not throw on HTTP-level errors (4xx/5xx), only on transport failure. `method$` accepts `GET`, `DELETE`, `HEAD`, `POST`, `PUT`, `PATCH`.
-* **`HTTP.SERVER.START(port [, host$])`**: Starts a non-blocking HTTP server on the specified port, returning `TRUE` on success. `host$` defaults to `"127.0.0.1"` (loopback only); pass `"0.0.0.0"` to expose the server to the LAN.
+* **`HTTP.SERVER.START(port [, host$])`**: Starts a non-blocking HTTP server on the specified port, returning `TRUE` on success. `host$` defaults to `"127.0.0.1"` (loopback only); pass `"0.0.0.0"` to expose the server to the LAN. A port another program holds, on any address of `host$`, answers `FALSE` (see [TCP and UDP Sockets](#tcp-and-udp-sockets-net)).
 * **`HTTP.SERVER.STOP`**: Stops the running HTTP server.
 * **`HTTP.SERVER.LOG(on)`**: Writes one line per request (method, path and the start of the body) to the console while `on` is `TRUE`. Off by default, because a request body can hold a password from a form; `JDBASIC_HTTP_LOG=1` in the environment turns it on from the start.
 * **`HTTP.SERVER.ON_GET(path$, handler@)`**: Registers a `jdBasic` function to handle incoming `GET` requests for a specific URL path. Every builtin that takes a handler takes it as a funcref, `Name@`; the name as a string still works for one release and `--lint` names the funcref.
@@ -2689,6 +2689,8 @@ PRINT "There are " + LEN(Topics) + " help topics available."
 Raw sockets for protocols that are not HTTP: line protocols, game servers, device control, broadcasts. Available when built with the `NET` flag; `OS.FEATURE("NET")` checks it. The unit needs no external library.
 
 A socket is an integer handle, `0` means the call failed and `NET.ERROR$()` says why. Every call that waits takes `timeout_ms`; `-1` waits until something happens. Strings carry bytes, so `CHR$(0)` and binary payloads pass unchanged. IPv4 and IPv6 host names both resolve.
+
+A port that another program holds makes `NET.LISTEN` and `NET.UDP` return `0`. A socket they open keeps every other program off its address and port, and one on `"0.0.0.0"` also off a single address such as `"127.0.0.1"` of that port. A host name with several addresses, such as `"localhost"` (`::1` and `127.0.0.1`), binds the first one and fails when any of them is taken on the port. `HTTP.SERVER.START` follows the same rules and answers `FALSE`.
 
 * **`NET.CONNECT(host$, port, [timeout_ms]) -> handle`**: Opens a TCP connection. `timeout_ms` defaults to `5000`. Returns `0` when the host does not answer or refuses.
 * **`NET.LISTEN(port, [bind$]) -> handle`**: Opens a listening TCP socket. `bind$` defaults to `"0.0.0.0"` (every interface); `"127.0.0.1"` keeps it local. Port `0` lets the system pick one, `NET.PORT` reads it back.

@@ -289,39 +289,84 @@ Sock* stream_sock(const std::vector<Value>& args, const char* fn) {
     return s;
 }
 
+bool is_wildcard(const addrinfo* ai) {
+    if (ai->ai_family == AF_INET)
+        return ((const sockaddr_in*)ai->ai_addr)->sin_addr.s_addr == htonl(INADDR_ANY);
+    if (ai->ai_family == AF_INET6) {
+        static const unsigned char zero[16] = {};
+        return memcmp(&((const sockaddr_in6*)ai->ai_addr)->sin6_addr, zero, 16) == 0;
+    }
+    return false;
+}
+
+// A socket bound to the address of ai, listening when it is a stream, or
+// BAD_SOCK with err set. opened tells whether the system could open a socket
+// of the address family at all.
+sock_t bind_one(const addrinfo* ai, bool& opened, std::string& err) {
+    sock_t fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+    opened = fd != BAD_SOCK;
+    if (!opened) {
+        err = code_text(last_code());
+        return BAD_SOCK;
+    }
+#if defined(_WIN32)
+    // No other socket may bind the port while this one holds it, also
+    // not one with SO_REUSEADDR or one on a more specific address.
+    int excl = 1;
+    setsockopt(fd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char*)&excl, sizeof(excl));
+#else
+    // A listener may bind over TIME_WAIT sockets of an earlier run but
+    // not a port that is listened on. On UDP the option would let two
+    // sockets share the port, so a UDP port in use fails as on Windows.
+    if (ai->ai_socktype == SOCK_STREAM) {
+        int on = 1;
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&on, sizeof(on));
+    }
+#endif
+    if (bind(fd, ai->ai_addr, (addr_len_t)ai->ai_addrlen) != 0 ||
+        (ai->ai_socktype == SOCK_STREAM && listen(fd, SOMAXCONN) != 0)) {
+        err = code_text(last_code());
+        close_fd(fd);
+        return BAD_SOCK;
+    }
+    return fd;
+}
+
 // Binds a listening or UDP socket to host:port; 0 on failure with the error set.
+// The socket is bound to the first address of the name this system can open
+// a socket for. A name with more addresses, such as "localhost" (::1 and
+// 127.0.0.1), fails when another of them is taken on the port, so a client
+// that picks that address does not reach a different program.
 sock_t bound_socket(const std::string& host, int64_t port, int socktype, const char* fn) {
     addrinfo* res = resolve(host, port, socktype, true);
     if (!res) return BAD_SOCK;
     std::string err = "no address for " + host;
-    for (addrinfo* ai = res; ai; ai = ai->ai_next) {
-        sock_t fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
-        if (fd == BAD_SOCK) {
-            err = code_text(last_code());
-            continue;
-        }
-#if !defined(_WIN32)
-        // A listener may bind over TIME_WAIT sockets of an earlier run but
-        // not a port that is listened on. On UDP the option would let two
-        // sockets share the port, so a UDP port in use fails as on Windows.
-        if (socktype == SOCK_STREAM) {
-            int on = 1;
-            setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&on, sizeof(on));
-        }
-#endif
-        if (bind(fd, ai->ai_addr, (addr_len_t)ai->ai_addrlen) != 0 ||
-            (socktype == SOCK_STREAM && listen(fd, SOMAXCONN) != 0)) {
-            err = code_text(last_code());
+    sock_t fd = BAD_SOCK;
+    bool opened = false;
+    addrinfo* ai = res;
+    while (ai && !opened) {
+        fd = bind_one(ai, opened, err);
+        ai = ai->ai_next;
+    }
+    for (; fd != BAD_SOCK && port != 0 && ai; ai = ai->ai_next) {
+        if (is_wildcard(ai)) continue;
+        std::string probe_err;
+        sock_t probe = bind_one(ai, opened, probe_err);
+        if (probe != BAD_SOCK) {
+            close_fd(probe);
+        } else if (opened) {
+            err = probe_err;
             close_fd(fd);
-            continue;
+            fd = BAD_SOCK;
         }
-        set_nonblocking(fd);
-        freeaddrinfo(res);
-        return fd;
     }
     freeaddrinfo(res);
-    set_error(std::string(fn) + " " + host + ":" + std::to_string(port) + ": " + err);
-    return BAD_SOCK;
+    if (fd == BAD_SOCK) {
+        set_error(std::string(fn) + " " + host + ":" + std::to_string(port) + ": " + err);
+        return BAD_SOCK;
+    }
+    set_nonblocking(fd);
+    return fd;
 }
 
 void close_all() {

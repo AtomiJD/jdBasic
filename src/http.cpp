@@ -18,6 +18,7 @@
 #include <vector>
 #include <mutex>
 #include <cstdlib>
+#include <cstring>
 #include <thread>
 #include <atomic>
 #include <memory>
@@ -275,6 +276,72 @@ static void shutdown_server_locked() {
 }
 
 // ── Register HTTP natives ────────────────────────────────────
+
+static bool is_wildcard_addr(const addrinfo* ai) {
+    if (ai->ai_family == AF_INET)
+        return reinterpret_cast<const sockaddr_in*>(ai->ai_addr)->sin_addr.s_addr == htonl(INADDR_ANY);
+    if (ai->ai_family == AF_INET6) {
+        static const unsigned char zero[16] = {};
+        return std::memcmp(&reinterpret_cast<const sockaddr_in6*>(ai->ai_addr)->sin6_addr, zero, 16) == 0;
+    }
+    return false;
+}
+
+// Whether a TCP socket of the family of ai can be opened (opened) and bound
+// to its address (the result), with the options the server socket gets.
+static bool can_bind(const addrinfo* ai, bool& opened) {
+    socket_t s = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+    opened = s != INVALID_SOCKET;
+    if (!opened) return false;
+    int on = 1;
+#ifdef _WIN32
+    setsockopt(s, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, reinterpret_cast<const char*>(&on), sizeof(on));
+#else
+    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&on), sizeof(on));
+#endif
+    bool ok = bind(s, ai->ai_addr, static_cast<socklen_t>(ai->ai_addrlen)) == 0 &&
+              listen(s, 1) == 0;
+    httplib::detail::close_socket(s);
+    return ok;
+}
+
+// The address START hands httplib: the numeric form of the first address of
+// host this system can open a TCP socket for, so httplib binds that one and
+// does not move on to the next address when it is taken. Empty when another
+// address of a name such as "localhost" (::1 and 127.0.0.1) is taken on the
+// port; host itself when it does not resolve.
+static std::string bind_address(const std::string& host, int port) {
+    addrinfo hints{};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_PASSIVE;
+    addrinfo* res = nullptr;
+    if (getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints, &res) != 0 || !res)
+        return host;
+    std::string out = host;
+    addrinfo* ai = res;
+    bool opened = false;
+    for (; ai; ai = ai->ai_next) {
+        socket_t s = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+        if (s == INVALID_SOCKET) continue;
+        httplib::detail::close_socket(s);
+        char text[NI_MAXHOST] = {};
+        if (getnameinfo(ai->ai_addr, static_cast<socklen_t>(ai->ai_addrlen), text, sizeof(text),
+                        nullptr, 0, NI_NUMERICHOST) == 0)
+            out = text;
+        ai = ai->ai_next;
+        break;
+    }
+    for (; port != 0 && ai; ai = ai->ai_next) {
+        if (is_wildcard_addr(ai)) continue;
+        if (!can_bind(ai, opened) && opened) {
+            out.clear();
+            break;
+        }
+    }
+    freeaddrinfo(res);
+    return out;
+}
 
 void register_http_builtins(VM& vm) {
     g_server_vm = &vm;
@@ -752,7 +819,8 @@ void register_http_builtins(VM& vm) {
 
         // Bind and listen on the calling thread, so a port that is taken
         // answers FALSE here and leaves no server behind.
-        if (!g_server->bind_to_port(host, port)) {
+        std::string bind_host = bind_address(host, port);
+        if (bind_host.empty() || !g_server->bind_to_port(bind_host, port)) {
             g_server.reset();
             return Value::make_bool(false);
         }
