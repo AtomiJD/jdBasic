@@ -137,6 +137,10 @@ Check(NOT ISNONE(br), "brackets inside a bubble are text, not nesting")
 DIM gap = {"f": "a", "t": "b", "s": [{"b": "room", "c": ["santa"], "l": [[0, "  "], [0, ""]], "a": "dance"}, {"b": "snow", "c": ["lina"], "l": [[0, "hallo"]], "a": "hug"}]}
 DIM gp = XMASPLAY.DECODE(XMASPLAY.ENCODE$(gap))
 Check(NOT ISNONE(gp) ANDALSO LEN(gp{"s"}) = 1 ANDALSO gp{"s"}[0]{"b"} = "snow", "a scene without text is dropped")
+DIM trio = {"f": "a", "t": "b", "s": [{"b": "room", "c": ["pip", "rudi", "pino"], "l": [[2, "hallo"]], "a": "dance"}]}
+DIM tr = XMASPLAY.DECODE(XMASPLAY.ENCODE$(trio))
+Check(NOT ISNONE(tr) ANDALSO JSON.STRINGIFY$(tr{"s"}[0]{"c"}) = JSON.STRINGIFY$(["pip", "rudi", "pino"]), "every known figure keeps its place in the cast")
+Check(NOT ISNONE(tr) ANDALSO tr{"s"}[0]{"l"}[0][0] = 2, "a bubble keeps its third speaker")
 Check(ISNONE(XMASPLAY.DECODE("2" + REPEAT$("A", 2100))), "an overlong code is refused")
 Check(ISNONE(XMASPLAY.DECODE("")), "an empty code")
 Check(ISNONE(XMASPLAY.DECODE("9abc")), "an unknown version")

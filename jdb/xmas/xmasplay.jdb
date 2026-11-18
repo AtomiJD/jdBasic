@@ -92,11 +92,11 @@ ENDFUNC
 
 ' What a story may name, with its German and English label.
 EXPORT FUNC BACKGROUNDS()
-    RETURN [["room", "Kaminzimmer", "Fireside room"], ["snow", "Winternacht im Dorf", "Winter night in the village"]]
+    RETURN [["room", "Kaminzimmer", "Fireside room"], ["snow", "Winternacht im Dorf", "Winter night in the village"], ["workshop", "Weihnachtswerkstatt", "Santa's workshop"], ["forest", "Winterwald", "Winter forest"]]
 ENDFUNC
 
 EXPORT FUNC CASTS()
-    RETURN [["santa", "Weihnachtsmann", "Santa"], ["lina", "Lina", "Lina"]]
+    RETURN [["santa", "Weihnachtsmann", "Santa"], ["lina", "Lina", "Lina"], ["rudi", "Rudi (Rentier)", "Rudi (reindeer)"], ["pip", "Pip (Wichtel)", "Pip (elf)"], ["pino", "Pino (Pinguin)", "Pino (penguin)"]]
 ENDFUNC
 
 EXPORT FUNC ACTIONS()
@@ -128,7 +128,14 @@ FUNC CleanScene(sc)
     IF FIND_IN_ARRAY(Ids(BACKGROUNDS()), b$) < 0 THEN b$ = "room"
     DIM known = Ids(CASTS())
     DIM cast = []
-    IF ISARR(sc{"c"} ?? NONE) THEN cast = TAKE(MAX_CAST, UNIQUE(FILTER(LAMBDA c -> ISSTR(c) ANDALSO FIND_IN_ARRAY(known, c) >= 0, sc{"c"})))
+    IF ISARR(sc{"c"} ?? NONE) THEN
+        DIM member = NONE
+        FOR EACH member IN sc{"c"}
+            IF ISSTR(member) ANDALSO LEN(cast) < MAX_CAST THEN
+                IF FIND_IN_ARRAY(known, member) >= 0 ANDALSO FIND_IN_ARRAY(cast, member) < 0 THEN cast = APPEND(cast, member)
+            ENDIF
+        NEXT member
+    ENDIF
     IF LEN(cast) = 0 THEN cast = ["santa", "lina"]
     DIM lines = []
     IF ISARR(sc{"l"} ?? NONE) THEN
@@ -291,6 +298,15 @@ ENDFUNC
 ' The rig of a figure: pivots of its parts, joints in the torso's own
 ' coordinates, eyes, mouth and pigtails in the head's.
 FUNC CastDef(name$)
+    IF name$ = "rudi" THEN
+        RETURN {"piv": {"torso": [85, 158], "head": [130, 252], "arm": [22, 12], "leg": [26, 6]}, "joint": {"head": [85, 14], "arm_l": [34, 46], "arm_r": [136, 46], "leg_l": [60, 156], "leg_r": [110, 156]}, "eyes": [[100, 165], [160, 165]], "eye": [15, 20], "iris": [90, 55, 30], "mouth": [130, 240], "tails": [], "nose": [130, 204]}
+    ENDIF
+    IF name$ = "pip" THEN
+        RETURN {"piv": {"torso": [85, 156], "head": [130, 238], "arm": [22, 12], "leg": [26, 6]}, "joint": {"head": [85, 12], "arm_l": [42, 40], "arm_r": [128, 40], "leg_l": [62, 156], "leg_r": [108, 156]}, "eyes": [[100, 168], [160, 168]], "eye": [15, 21], "iris": [60, 170, 90], "mouth": [130, 214], "tails": []}
+    ENDIF
+    IF name$ = "pino" THEN
+        RETURN {"piv": {"torso": [85, 166], "head": [125, 226], "arm": [21, 10], "leg": [30, 8]}, "joint": {"head": [85, 16], "arm_l": [24, 62], "arm_r": [146, 62], "leg_l": [60, 166], "leg_r": [110, 166]}, "eyes": [[98, 156], [152, 156]], "eye": [15, 20], "iris": [70, 110, 190], "mouth": [125, 203], "tails": []}
+    ENDIF
     IF name$ = "lina" THEN
         RETURN {"piv": {"torso": [85, 160], "head": [130, 228], "arm": [23, 14], "leg": [26, 6], "tail": [36, 13]}, "joint": {"head": [85, 12], "arm_l": [40, 40], "arm_r": [130, 40], "leg_l": [62, 158], "leg_r": [108, 158]}, "eyes": [[100, 160], [160, 160]], "eye": [17, 23], "iris": [40, 160, 165], "mouth": [130, 207], "tails": [[42, 116], [218, 116]]}
     ENDIF
@@ -300,19 +316,8 @@ ENDFUNC
 ' The cast, the room's pictures and the effects; needs an open SCREEN.
 EXPORT FUNC LOADPARTS(art_dir$)
     DIM cast = {}
-    DIM names = ["santa", "lina"]
-    DIM n = 0
-    FOR n = 0 TO LEN(names) - 1
-        DIM c = CastDef(names[n])
-        DIM img = {}
-        img{"torso"} = LoadPart(art_dir$, names[n] + "_torso")
-        img{"head"} = LoadPart(art_dir$, names[n] + "_head")
-        img{"arm"} = LoadPart(art_dir$, names[n] + "_arm")
-        img{"leg"} = LoadPart(art_dir$, names[n] + "_leg")
-        IF LEN(c{"tails"}) > 0 THEN img{"tail"} = LoadPart(art_dir$, names[n] + "_tail")
-        c{"img"} = img
-        cast{names[n]} = c
-    NEXT n
+    cast{"santa"} = LoadFigure(art_dir$, "santa")
+    cast{"lina"} = LoadFigure(art_dir$, "lina")
     DIM room = {}
     room{"tree"} = LoadPart(art_dir$, "room_tree")
     room{"fireplace"} = LoadPart(art_dir$, "room_fireplace")
@@ -324,15 +329,34 @@ ENDFUNC
 
 ' The parts with the painted backgrounds the story's scenes use loaded; a
 ' background is loaded once, the first time a story asks for it.
-EXPORT FUNC USEBGS(parts, story)
+EXPORT FUNC PREPARE(parts, story)
     DIM room = parts{"room"}
+    DIM cast = parts{"cast"}
     DIM sc = NONE
     FOR EACH sc IN story{"s"}
         DIM key$ = "bg_" + sc{"b"}
         IF NOT MAP.EXISTS(room, key$) THEN room{key$} = LoadBg(parts{"art"}, sc{"b"})
+        DIM who$ = ""
+        FOR EACH who$ IN sc{"c"}
+            IF NOT MAP.EXISTS(cast, who$) THEN cast{who$} = LoadFigure(parts{"art"}, who$)
+        NEXT who$
     NEXT sc
     parts{"room"} = room
+    parts{"cast"} = cast
     RETURN parts
+ENDFUNC
+
+' A figure's rig with its pictures.
+FUNC LoadFigure(art_dir$, name$)
+    DIM c = CastDef(name$)
+    DIM img = {}
+    img{"torso"} = LoadPart(art_dir$, name$ + "_torso")
+    img{"head"} = LoadPart(art_dir$, name$ + "_head")
+    img{"arm"} = LoadPart(art_dir$, name$ + "_arm")
+    img{"leg"} = LoadPart(art_dir$, name$ + "_leg")
+    IF LEN(c{"tails"}) > 0 THEN img{"tail"} = LoadPart(art_dir$, name$ + "_tail")
+    c{"img"} = img
+    RETURN c
 ENDFUNC
 
 ' ---------------------------------------------------------------- the figures
@@ -424,6 +448,13 @@ SUB DrawFigure(c, pose)
     j = TorsoPoint(c, pose, piv{"torso"})
     DrawPart(img{"torso"}, piv{"torso"}, j[0], j[1], tilt, sc)
     DrawPart(img{"head"}, piv{"head"}, hj[0], hj[1], head_ang, sc)
+    IF MAP.EXISTS(c, "nose") THEN
+        DIM np = PartPoint(hj[0], hj[1], piv{"head"}, head_ang, sc, c{"nose"})
+        DIM glow = 0.5 + 0.5 * SIN((pose{"t"} ?? 0) * 4)
+        CIRCLE np[0], np[1], (16 + 3 * glow) * sc, TRUE, 232 + 23 * glow, 52 + 70 * glow, 74 + 50 * glow
+        CIRCLE np[0] - 5 * sc, np[1] - 5 * sc, 5 * sc, TRUE, 255, 255, 255
+        IF glow > 0.92 THEN Sparkle(np[0] + 18 * sc, np[1] - 16 * sc, 9 * sc, 3)
+    ENDIF
     FOR i = 0 TO 1
         DIM ep = PartPoint(hj[0], hj[1], piv{"head"}, head_ang, sc, c{"eyes"}[i])
         DrawEye(ep[0], ep[1], c{"eye"}[0] * sc, c{"eye"}[1] * sc, c{"iris"}, pose{"eyes"})
@@ -764,12 +795,20 @@ ENDSUB
 
 FUNC IdlePose(x, y, sc, t, seed)
     DIM bob = ABS(SIN(t * 2.6 + seed)) * 6
-    RETURN {"x": x, "y": y - bob, "scale": sc, "tilt": SIN(t * 1.5 + seed) * 2, "head": SIN(t * 1.9 + seed) * 4, "arm_l": 14 + SIN(t * 1.3 + seed) * 4, "arm_r": -14 - SIN(t * 1.4 + seed) * 4, "leg_l": 0, "leg_r": 0, "mouth": 0, "laugh": FALSE, "eyes": IIF(((INT(t * 1000) + INT(seed * 977)) MOD 3400) < 130, "blink", "open"), "tail": SIN(t * 2.4 + seed) * 6}
+    RETURN {"x": x, "y": y - bob, "scale": sc, "tilt": SIN(t * 1.5 + seed) * 2, "head": SIN(t * 1.9 + seed) * 4, "arm_l": 14 + SIN(t * 1.3 + seed) * 4, "arm_r": -14 - SIN(t * 1.4 + seed) * 4, "leg_l": 0, "leg_r": 0, "mouth": 0, "laugh": FALSE, "eyes": IIF(((INT(t * 1000) + INT(seed * 977)) MOD 3400) < 130, "blink", "open"), "tail": SIN(t * 2.4 + seed) * 6, "t": t}
 ENDFUNC
 
 FUNC BaseScale(name$)
     IF name$ = "lina" THEN RETURN 0.88
+    IF name$ = "rudi" THEN RETURN 0.9
+    IF name$ = "pip" ORELSE name$ = "pino" THEN RETURN 0.84
     RETURN 0.95
+ENDFUNC
+
+' How far a figure with short legs stands lower, so its feet reach the floor.
+FUNC Sink(name$)
+    IF name$ = "pino" THEN RETURN 44
+    RETURN 0
 ENDFUNC
 
 ' Where the figures of a scene stand: [x, y, scale factor] for one to three.
@@ -782,9 +821,63 @@ ENDFUNC
 SUB Backdrop(room, b$, t)
     IF b$ = "snow" THEN
         DrawSnowland(room, t)
+    ELSEIF b$ = "workshop" ANDALSO NOT ISNONE(room{"bg_workshop"} ?? NONE) THEN
+        DrawWorkshop(room, t)
+    ELSEIF b$ = "forest" ANDALSO NOT ISNONE(room{"bg_forest"} ?? NONE) THEN
+        DrawForest(room, t)
+    ELSEIF b$ = "forest" THEN
+        DrawSnowland(room, t)
     ELSE
         DrawRoom(room, t)
     ENDIF
+ENDSUB
+
+' The toy workshop: snow in the round window, the garland's lights blink,
+' the toys on the shelves sparkle.
+SUB DrawWorkshop(room, t)
+    DrawBg(room{"bg_workshop"})
+    DIM i = 0
+    FOR i = 0 TO 15
+        DIM a = i * 2.39
+        DIM d = ((i * 37 + INT(t * 30 * (1 + i MOD 3))) MOD 170) - 85
+        DIM wx = 592 + COS(a) * (i MOD 5) * 14 + SIN(t + i) * 4
+        DIM wy = 208 + d
+        IF (wx - 592) * (wx - 592) + (wy - 208) * (wy - 208) < 78 * 78 THEN CIRCLE wx, wy, 1.5 + i MOD 2, TRUE, 255, 255, 255
+    NEXT i
+    FOR i = 0 TO 13
+        DrawLight(26 + i * 50, 92 + SIN(i * 1.3) * 6, i, t)
+    NEXT i
+    FOR i = 0 TO 9
+        DIM tw = (t * 0.8 + i * 0.29) - INT(t * 0.8 + i * 0.29)
+        IF tw < 0.4 THEN Sparkle((i * 151 + 60) MOD FW, 150 + (i * 89) MOD 400, 11 * SIN(tw / 0.4 * MATH.PI), 3)
+    NEXT i
+ENDSUB
+
+' The forest clearing: stars twinkle, the lanterns glimmer, now and then a
+' shooting star, and snow falls.
+SUB DrawForest(room, t)
+    DrawBg(room{"bg_forest"})
+    DIM i = 0
+    FOR i = 0 TO 9
+        DIM tw = (t * 0.9 + i * 0.31) - INT(t * 0.9 + i * 0.31)
+        IF tw < 0.5 THEN Sparkle(170 + (i * 137) MOD 420, 30 + (i * 71) MOD 300, 10 * SIN(tw * MATH.PI * 2), 2)
+    NEXT i
+    DIM lanterns = [[99, 337], [47, 546], [659, 554], [550, 467]]
+    FOR i = 0 TO LEN(lanterns) - 1
+        IF (INT(t * 3) + i * 2) MOD 5 = 0 THEN Sparkle(lanterns[i][0] + 16, lanterns[i][1] - 18, 8, 2)
+    NEXT i
+    DIM fly = t / 7 - INT(t / 7)
+    IF fly < 0.12 THEN
+        DIM sx = 560 - fly / 0.12 * 380
+        DIM sy = 60 + fly / 0.12 * 140
+        GFX.STROKE sx, sy, sx + 60, sy - 22, 3, 255, 250, 220
+        CIRCLE sx, sy, 3, TRUE, 255, 255, 255
+    ENDIF
+    FOR i = 0 TO 59
+        DIM fx = (i * 97 + INT(t * 20 * (1 + i MOD 3) + SIN(t + i) * 12)) MOD FW
+        DIM fy = (i * 53 + INT(t * 50 * (1 + i MOD 2))) MOD FH
+        CIRCLE fx, fy, 2 + i MOD 3, TRUE, 255, 255, 255
+    NEXT i
 ENDSUB
 
 FUNC Dance(p, beat)
@@ -931,7 +1024,7 @@ FUNC ScenePoses(sc, t)
     DIM poses = []
     DIM k = 0
     FOR k = 0 TO LEN(cast) - 1
-        DIM p = IdlePose(slots[k][0], slots[k][1], BaseScale(cast[k]) * slots[k][2], t, k * 1.7)
+        DIM p = IdlePose(slots[k][0], slots[k][1] + Sink(cast[k]) * slots[k][2], BaseScale(cast[k]) * slots[k][2], t, k * 1.7)
         p{"head"} = p{"head"} + IIF(slots[k][0] < FW / 2, 5, IIF(slots[k][0] > FW / 2, -5, 0))
         poses = APPEND(poses, p)
     NEXT k

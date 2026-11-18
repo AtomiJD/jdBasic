@@ -4,16 +4,30 @@ art/lina_head.rgbz
 art/lina_leg.rgbz
 art/lina_tail.rgbz
 art/lina_torso.rgbz
+art/pino_arm.rgbz
+art/pino_head.rgbz
+art/pino_leg.rgbz
+art/pino_torso.rgbz
+art/pip_arm.rgbz
+art/pip_head.rgbz
+art/pip_leg.rgbz
+art/pip_torso.rgbz
 art/room_cat.rgbz
 art/room_fireplace.rgbz
 art/room_presents.rgbz
 art/room_tree.rgbz
+art/rudi_arm.rgbz
+art/rudi_head.rgbz
+art/rudi_leg.rgbz
+art/rudi_torso.rgbz
 art/santa_arm.rgbz
 art/santa_head.rgbz
 art/santa_leg.rgbz
 art/santa_torso.rgbz
 art/bg_room.jpg 540x960
 art/bg_snow.jpg 540x960
+art/bg_workshop.jpg 540x960
+art/bg_forest.jpg 540x960
 raster.jdb
 xml.jdb
 img.jdb

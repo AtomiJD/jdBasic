@@ -34,7 +34,7 @@ SCREEN XMASPLAY.FW, XMASPLAY.FH, "Xmas spike"
 SETFONT font$, 30
 
 DIM t_load = TICK()
-DIM parts = XMASPLAY.USEBGS(XMASPLAY.LOADPARTS(art_dir$), story)
+DIM parts = XMASPLAY.PREPARE(XMASPLAY.LOADPARTS(art_dir$), story)
 DIM load_ms = TICK() - t_load
 
 DIM started = FALSE

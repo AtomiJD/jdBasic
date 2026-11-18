@@ -119,7 +119,7 @@ DIM frames = 0
 DO WHILE running
     DIM ms_now = TICK()
     DIM story = Playable(doc)
-    parts = XMASPLAY.USEBGS(parts, story)
+    parts = XMASPLAY.PREPARE(parts, story)
     DIM st = (ms_now - t_story) / 1000
     IF st > XMASPLAY.LENGTH(story) + 6 THEN
         t_story = ms_now
