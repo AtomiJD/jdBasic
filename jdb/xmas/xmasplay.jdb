@@ -315,9 +315,20 @@ EXPORT FUNC LOADPARTS(art_dir$)
     room{"presents"} = LoadPart(art_dir$, "room_presents")
     room{"cat"} = LoadPart(art_dir$, "room_cat")
     room{"heart"} = LoadPart(art_dir$, "fx_heart")
-    room{"bg_room"} = LoadBg(art_dir$, "room")
-    room{"bg_snow"} = LoadBg(art_dir$, "snow")
-    RETURN {"cast": cast, "room": room}
+    RETURN {"cast": cast, "room": room, "art": art_dir$}
+ENDFUNC
+
+' The parts with the painted backgrounds the story's scenes use loaded; a
+' background is loaded once, the first time a story asks for it.
+EXPORT FUNC USEBGS(parts, story)
+    DIM room = parts{"room"}
+    DIM sc = NONE
+    FOR EACH sc IN story{"s"}
+        DIM key$ = "bg_" + sc{"b"}
+        IF NOT MAP.EXISTS(room, key$) THEN room{key$} = LoadBg(parts{"art"}, sc{"b"})
+    NEXT sc
+    parts{"room"} = room
+    RETURN parts
 ENDFUNC
 
 ' ---------------------------------------------------------------- the figures
@@ -496,7 +507,7 @@ ENDSUB
 
 SUB DrawRoom(room, t)
     DIM i = 0
-    DIM painted = NOT ISNONE(room{"bg_room"})
+    DIM painted = NOT ISNONE(room{"bg_room"} ?? NONE)
     IF painted THEN
         DrawBg(room{"bg_room"})
         ' snow falling past the painted window
@@ -623,7 +634,7 @@ SUB Lantern(x, y, t)
 ENDSUB
 
 SUB DrawSnowland(room, t)
-    IF NOT ISNONE(room{"bg_snow"}) THEN
+    IF NOT ISNONE(room{"bg_snow"} ?? NONE) THEN
         DrawBg(room{"bg_snow"})
         DIM s = 0
         FOR s = 0 TO 11
