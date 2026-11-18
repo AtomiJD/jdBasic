@@ -15220,10 +15220,16 @@ static bool builds_fresh_texts(const Expr* e) {
 
 LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     std::string name = expr.func_name;
-    // A value left over from an earlier generation of this call (its own
-    // path returned before the general one) belongs to other code.
-    if (!call_arg_preset.empty())
-        for (const auto& a : expr.args) call_arg_preset.erase(a.get());
+    // A preset lives only while this call is generated: whichever path
+    // returns, what the general path did not take is gone with it.
+    struct PresetScope {
+        std::unordered_map<const Expr*, TypedValue>& presets;
+        const Expr& call;
+        ~PresetScope() {
+            if (!presets.empty())
+                for (const auto& a : call.args) presets.erase(a.get());
+        }
+    } _presets{ call_arg_preset, expr };
     // An argument is its own scope: the enclosing index step asked for a
     // container, and an argument that reads a field would otherwise be
     // taken for the base of that step and rejected as a scalar.
@@ -17217,7 +17223,6 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             out.fresh_flat = true;
             return out;
         }
-        call_arg_preset[expr.args[0].get()] = av;
         // A number already is the epoch the date wants; it only needs saying
         // that it is one.
         if (av.tag == JD_TAG_I64 || jd_is_f64_tag(av.tag))
@@ -17272,7 +17277,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             out.fresh_container = true;
             return out;
         }
-        call_arg_preset[expr.args[0].get()] = target;
+        if (expr.args[0]->kind != ExprKind::INDEX) call_arg_preset[expr.args[0].get()] = target;
     }
 
     // RESHAPE of a native array runs in the runtime; a shape given as one
@@ -17289,7 +17294,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             out.fresh_container = true;
             return out;
         }
-        call_arg_preset[expr.args[0].get()] = src;
+        if (expr.args[0]->kind != ExprKind::INDEX) call_arg_preset[expr.args[0].get()] = src;
     }
 
     // ROTATE and SHIFT of a native array run in the runtime; the shift vector
@@ -17320,7 +17325,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 out.fresh_container = true;
                 return out;
             }
-            call_arg_preset[expr.args[0].get()] = src;
+            if (expr.args[0]->kind != ExprKind::INDEX) call_arg_preset[expr.args[0].get()] = src;
         }
     }
 
@@ -17346,7 +17351,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             out.fresh_container = true;
             return out;
         }
-        call_arg_preset[expr.args[0].get()] = src;
+        if (expr.args[0]->kind != ExprKind::INDEX) call_arg_preset[expr.args[0].get()] = src;
     }
 
     if (upper == "ROUND" && expr.args.size() == 2) {
@@ -17471,7 +17476,6 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 return out;
             }
         }
-        call_arg_preset[expr.args[0].get()] = av;
         // Non-array: wrap the scalar length in a 1-element array.
         LLVMValueRef len_i64;
         if (av.tag == JD_TAG_STR) {
