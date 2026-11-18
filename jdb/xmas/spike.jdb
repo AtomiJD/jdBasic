@@ -36,13 +36,31 @@ FUNC EncodeStory$(story)
     RETURN "1" + B64Url$(CODEC.DEFLATE$(JSON.STRINGIFY$(story), 9, "raw"))
 ENDFUNC
 
+CONST MAX_CODE = 2048
+CONST MAX_LINES = 12
+CONST MAX_LINE = 80
+CONST MAX_NAME = 30
+
+' A text of at most n characters from a decoded value, "" for anything but a text.
+FUNC CleanText$(v, n)
+    IF NOT ISSTR(v) THEN RETURN ""
+    RETURN LEFTW$(TRIM$(v), n)
+ENDFUNC
+
+' The story a link carries, held to the editor's limits, or NONE.
 FUNC DecodeStory(code$)
-    IF LEFT$(code$, 1) <> "1" THEN RETURN NONE
+    IF LEFT$(code$, 1) <> "1" ORELSE LEN(code$) > MAX_CODE THEN RETURN NONE
+    DIM raw = NONE
     TRY
-        RETURN JSON.PARSE(CODEC.INFLATE$(UnB64Url$(MID$(code$, 1)), "raw"))
+        raw = JSON.PARSE(CODEC.INFLATE$(UnB64Url$(MID$(code$, 1)), "raw"))
     CATCH
         RETURN NONE
     ENDTRY
+    IF NOT ISMAP(raw) THEN RETURN NONE
+    IF NOT ISARR(raw{"lines"} ?? NONE) THEN RETURN NONE
+    DIM lines = FILTER(LAMBDA s -> s <> "", SELECT(LAMBDA v -> CleanText$(v, MAX_LINE), TAKE(MAX_LINES, raw{"lines"})))
+    IF LEN(lines) = 0 THEN RETURN NONE
+    RETURN {"lines": lines, "from": CleanText$(raw{"from"} ?? "", MAX_NAME), "to": CleanText$(raw{"to"} ?? "", MAX_NAME)}
 ENDFUNC
 
 FUNC UrlParams()
