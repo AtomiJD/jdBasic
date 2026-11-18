@@ -17278,6 +17278,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             return out;
         }
         if (expr.args[0]->kind != ExprKind::INDEX) call_arg_preset[expr.args[0].get()] = target;
+        else drop_read_temp(target);
     }
 
     // RESHAPE of a native array runs in the runtime; a shape given as one
@@ -17295,6 +17296,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             return out;
         }
         if (expr.args[0]->kind != ExprKind::INDEX) call_arg_preset[expr.args[0].get()] = src;
+        else drop_read_temp(src);
     }
 
     // ROTATE and SHIFT of a native array run in the runtime; the shift vector
@@ -17326,6 +17328,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 return out;
             }
             if (expr.args[0]->kind != ExprKind::INDEX) call_arg_preset[expr.args[0].get()] = src;
+            else drop_read_temp(src);
         }
     }
 
@@ -17352,6 +17355,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             return out;
         }
         if (expr.args[0]->kind != ExprKind::INDEX) call_arg_preset[expr.args[0].get()] = src;
+        else drop_read_temp(src);
     }
 
     if (upper == "ROUND" && expr.args.size() == 2) {
