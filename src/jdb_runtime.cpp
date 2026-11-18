@@ -7075,7 +7075,7 @@ void jdb_hof_set_ret(int32_t tag) { g_hof_ret_tag = tag; g_hof_ret_depth = g_hof
 // A runtime-typed lambda answer as the f64 slot of the call, with its tag reported.
 double jdb_hof_ret_tagged(int64_t bits, int32_t tag) {
     if (tag == JD_TAG_I64 || tag == JD_TAG_BOOL) {
-        jdb_hof_set_ret(JD_TAG_F64);
+        jdb_hof_set_ret(tag == JD_TAG_BOOL ? JD_TAG_BOOL : JD_TAG_F64);
         return (double)bits;
     }
     jdb_hof_set_ret(tag);

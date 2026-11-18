@@ -1048,7 +1048,7 @@ PRINT FILTER(LAMBDA w -> LEN(w) = 3, ["pdf", "docx"])  ' [pdf]
 PRINT REDUCE(LAMBDA acc$, r -> acc$ + r{"n"}, rows, "")  ' ab
 ```
 
-Inside a `FUNC`, a lambda reads the function's locals through `USE(...)`, as in the interpreter: `FILTER(LAMBDA USE(lim) x -> x > lim, nums)`. Under `-c` each closure carries its own copy of the captured values, so the `MakeAdder` example above compiles and `Add5` and `Add100` answer 15 and 110. A capture may be a number, a string, an array or a map, and a lambda built once per loop iteration keeps the value that iteration gave it.
+Inside a `FUNC`, a lambda reads the function's locals through `USE(...)`, as in the interpreter: `FILTER(LAMBDA USE(lim) x -> x > lim, nums)`. Under `-c` each closure carries its own copy of the captured values, so the `MakeAdder` example above compiles and `Add5` and `Add100` answer 15 and 110. A capture may be a number, a string, an array or a map, and a lambda built once per loop iteration keeps the value that iteration gave it. A closure a `FUNC` returns is a function reference like any other: it can be handed to `SELECT`, `FILTER` or `REDUCE`, passed to a `FUNC` that calls it, and what it answers keeps its kind, a truth value included (`PRINT JOIN(SELECT(MakeAdder(5), [1, 2]), ",")` prints `6,7`).
 
 ### Function as operators
 

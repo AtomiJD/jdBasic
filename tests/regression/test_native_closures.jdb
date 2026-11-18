@@ -1,0 +1,106 @@
+' A closure a FUNC returns (LAMBDA USE over its parameters or locals) works
+' as a function reference: called directly, handed to SELECT, FILTER and
+' REDUCE, passed to a FUNC that calls it, and what it answers keeps its kind.
+'
+'   jdbasic tests/regression/test_native_closures.jdb
+'   jdbasic -c tests/regression/test_native_closures.jdb
+
+OPTION "EXPLICIT"
+
+DIM pass AS INTEGER = 0
+DIM fail AS INTEGER = 0
+
+SUB Check(what$, got$, want$)
+    IF got$ = want$ THEN
+        pass = pass + 1
+    ELSE
+        fail = fail + 1
+        PRINT "FAIL "; what$; ": got '"; got$; "', want '"; want$; "'"
+    ENDIF
+ENDSUB
+
+FUNC Above(limit)
+    RETURN LAMBDA USE(limit) x -> x > limit
+ENDFUNC
+
+FUNC Adder(k)
+    RETURN LAMBDA USE(k) x -> x + k
+ENDFUNC
+
+FUNC MakeTag(n)
+    DIM tag$ = "T" + STR$(n)
+    RETURN LAMBDA USE(tag$) r$ -> "[" + tag$ + "] " + r$
+ENDFUNC
+
+FUNC MakeContains(term$)
+    RETURN LAMBDA USE(term$) r$ -> INSTR(r$, term$) >= 0
+ENDFUNC
+
+FUNC MakePick(base)
+    DIM names = ["alpha" + STR$(base), "beta" + STR$(base)]
+    RETURN LAMBDA USE(names) i -> names[i]
+ENDFUNC
+
+FUNC CountWhere(pred, items)
+    RETURN LEN(FILTER(pred, items))
+ENDFUNC
+
+FUNC Apply(fn, v)
+    RETURN fn(v)
+ENDFUNC
+
+FUNC IsEven(n)
+    RETURN n MOD 2 = 0
+ENDFUNC
+
+DIM big = Above(5)
+Check("a closure called directly", STR$(big(7)), STR$(TRUE))
+Check("a closure handed to FILTER", JOIN(FILTER(big, [3, 6, 9]), ","), "6,9")
+Check("a closure handed to SELECT answers truth values", JOIN(SELECT(big, [3, 6]), ","), STR$(FALSE) + "," + STR$(TRUE))
+
+DIM add3 = Adder(3)
+DIM add10 = Adder(10)
+Check("two closures of one factory keep their own values", STR$(add3(1)) + " " + STR$(add10(1)), "4 11")
+Check("a numeric closure in SELECT", JOIN(SELECT(add10, [1, 2]), ","), "11,12")
+Check("a numeric closure in SELECT and REDUCE", STR$(REDUCE(LAMBDA a, b -> a + b, SELECT(add3, [1, 2, 3]), 0)), "15")
+
+DIM tag = MakeTag(7)
+Check("a closure over a local text", tag("x"), "[T7] x")
+Check("a text closure in SELECT", JOIN(SELECT(tag, ["a", "b"]), "|"), "[T7] a|[T7] b")
+
+DIM words = ["battery ok", "screen", "battery low"]
+DIM hasBattery = MakeContains("battery")
+Check("a closure global passed to a FUNC that filters", STR$(CountWhere(hasBattery, words)), "2")
+Check("a closure answer passed back through a FUNC", STR$(Apply(hasBattery, "my battery")), STR$(TRUE))
+
+DIM pick = MakePick(4)
+DIM filler = []
+DIM i AS INTEGER
+FOR i = 1 TO 500
+    filler = APPEND(filler, [i, i + 1])
+NEXT i
+Check("a closure over a local array after the FUNC returned", pick(0) + " " + pick(1), "alpha4 beta4")
+
+DIM even = IsEven@
+Check("a named FUNC answering a truth value through a variable", STR$(even(4)) + " " + STR$(even(3)), STR$(TRUE) + " " + STR$(FALSE))
+Check("SELECT of a named FUNC answering truth values", JOIN(SELECT(IsEven@, [1, 2]), ","), STR$(FALSE) + "," + STR$(TRUE))
+
+' A closure or a funcref called inside a SELECT lambda that answers a number
+' leaves the number cells numbers.
+DIM lens = SELECT(LAMBDA s$ -> LEN(tag(s$)), ["x", "yy"])
+Check("SELECT of lengths of what a text closure answers", JOIN(lens, ",") + " " + STR$(SUM(lens)), "6,7 13")
+DIM picks = SELECT(LAMBDA x -> IIF(even(x), 10, 20), [1, 2])
+Check("SELECT of numbers picked by a truth-value funcref", JOIN(picks, ",") + " " + STR$(SUM(picks)), "20,10 30")
+
+' A local of a FUNC named like a closure global stays a number.
+FUNC Square(n)
+    RETURN n * n
+ENDFUNC
+FUNC LocalSquare()
+    DIM big = 3
+    RETURN Square(big)
+ENDFUNC
+Check("a FUNC local named like a closure global", STR$(LocalSquare()) + " " + STR$(Square(4)), "9 16")
+
+PRINT pass; " passed, "; fail; " failed"
+IF fail > 0 THEN END 1

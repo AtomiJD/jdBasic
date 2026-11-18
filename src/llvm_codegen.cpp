@@ -1766,6 +1766,18 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                         it->second.tags[i] = JD_TAG_FUNCREF;
                         continue;
                     }
+                    // A LAMBDA, or a variable holding one (a closure a FUNC
+                    // returned), is a function pointer the same way.
+                    if (e.args[i] && (e.args[i]->kind == ExprKind::LAMBDA_EXPR ||
+                        (e.args[i]->kind == ExprKind::VARIABLE && [&] {
+                            VarInfo* fv = lookup_var(e.args[i]->str_val);
+                            if (fv) return fv->tag == JD_TAG_FUNCREF;
+                            auto pit = pre_var_tags.find(e.args[i]->str_val);
+                            return pit != pre_var_tags.end() && pit->second == JD_TAG_FUNCREF;
+                        }()))) {
+                        it->second.tags[i] = JD_TAG_FUNCREF;
+                        continue;
+                    }
                     // Remember what each call site confidently passes. An
                     // untyped parameter takes its LLVM type from whichever
                     // site is seen first, and a later site of the other kind
@@ -3539,6 +3551,76 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         }
     }
 
+    // A global filled with a closure holds a function reference: a LAMBDA,
+    // or a call to a FUNC every RETURN of which hands back a LAMBDA. A FUNC
+    // of the main program handed such a global takes the function reference
+    // in that parameter, so the analysis below sees what `fn(x)` through it
+    // answers. Statements inside FUNC and SUB bodies are left out: a local
+    // there may carry the same name.
+    {
+        auto is_factory = [&](const std::string& fname) {
+            auto dit = decls.find(fname);
+            if (dit == decls.end() || !dit->second.stmt) return false;
+            bool any = false, all = true;
+            std::function<void(const Stmt&)> walk = [&](const Stmt& st) {
+                if (st.kind == StmtKind::RETURN && st.expr) {
+                    any = true;
+                    if (st.expr->kind != ExprKind::LAMBDA_EXPR) all = false;
+                }
+                for (auto& b : st.body) if (b) walk(*b);
+                for (auto& c : st.catch_body()) if (c) walk(*c);
+                for (auto& f : st.finally_body()) if (f) walk(*f);
+                for (auto& br : st.branches)
+                    for (auto& b : br.body) if (b) walk(*b);
+            };
+            for (auto& b : dit->second.stmt->body) if (b) walk(*b);
+            return any && all;
+        };
+        auto is_definition = [](const Stmt& st) {
+            return st.kind == StmtKind::FUNCTION || st.kind == StmtKind::SUB;
+        };
+        std::unordered_set<std::string> funcref_globals;
+        for (auto& s : program) {
+            if (!s || is_definition(*s) || s->var_name.empty() || !s->expr) continue;
+            if (s->kind != StmtKind::DIM && s->kind != StmtKind::LET &&
+                s->kind != StmtKind::ASSIGN) continue;
+            const Expr& x = *s->expr;
+            if (x.kind == ExprKind::LAMBDA_EXPR ||
+                (x.kind == ExprKind::CALL && is_factory(x.func_name)))
+                funcref_globals.insert(s->var_name);
+        }
+        if (!funcref_globals.empty()) {
+            std::function<void(const Expr&)> scan_expr = [&](const Expr& e) {
+                if (e.kind == ExprKind::CALL) {
+                    auto it = decls.find(e.func_name);
+                    if (it != decls.end())
+                        for (size_t i = 0; i < e.args.size() && i < it->second.tags.size(); i++)
+                            if (e.args[i] && e.args[i]->kind == ExprKind::VARIABLE &&
+                                funcref_globals.count(e.args[i]->str_val) &&
+                                it->second.tags[i] == JD_TAG_F64)
+                                it->second.tags[i] = JD_TAG_FUNCREF;
+                }
+                if (e.left) scan_expr(*e.left);
+                if (e.right) scan_expr(*e.right);
+                for (auto& a : e.args) if (a) scan_expr(*a);
+            };
+            std::function<void(const Stmt&)> scan_stmt = [&](const Stmt& s) {
+                if (is_definition(s)) return;
+                if (s.expr) scan_expr(*s.expr);
+                for (auto& pe : s.print_exprs) if (pe) scan_expr(*pe);
+                if (s.loop_cond) scan_expr(*s.loop_cond);
+                for (auto& b : s.body) if (b) scan_stmt(*b);
+                for (auto& c : s.catch_body()) if (c) scan_stmt(*c);
+                for (auto& f : s.finally_body()) if (f) scan_stmt(*f);
+                for (auto& br : s.branches) {
+                    if (br.condition) scan_expr(*br.condition);
+                    for (auto& b : br.body) if (b) scan_stmt(*b);
+                }
+            };
+            for (auto& s : program) if (s) scan_stmt(*s);
+        }
+    }
+
     // Return kinds and argument tags decide each other: a tagged argument
     // makes a parameter tagged, and a parameter's kind decides what the
     // body hands back. Two rounds settle the pair.
@@ -3664,11 +3746,22 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                     return 0;
                 }
                 case ExprKind::CALL: {
+                    // A call through a parameter that holds a function
+                    // reference answers what that function answers, which
+                    // only the running program knows - unless an earlier
+                    // phase typed this FUNC from the named functions it is
+                    // handed.
+                    {
+                        auto lk = local_kind.find(e.func_name);
+                        if (lk != local_kind.end() && lk->second == JD_TAG_FUNCREF &&
+                            decl.return_tag == JD_TAG_F64)
+                            return JD_TAG_RUNTIME;
+                    }
                     auto cit = decls.find(e.func_name);
                     if (cit != decls.end()) {
                         int t = cit->second.return_tag;
                         if (t == JD_TAG_RUNTIME || t == JD_TAG_STR || t == JD_TAG_ARR ||
-                            t == JD_TAG_NATIVE_MAP) return t;
+                            t == JD_TAG_NATIVE_MAP || t == JD_TAG_FUNCREF) return t;
                         return t == -1 ? 0 : JD_TAG_F64;
                     }
                     if (is_handle_returner(e.func_name)) return JD_TAG_VM_HANDLE;
@@ -3702,6 +3795,9 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 }
                 case ExprKind::UNARY:
                     return JD_TAG_F64;
+                // A closure: the FUNC hands back a function to call later.
+                case ExprKind::LAMBDA_EXPR:
+                    return JD_TAG_FUNCREF;
                 default:
                     return 0;
             }
@@ -3778,6 +3874,11 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         else if (any_answer && !unknown_answer && kinds.size() == 1 &&
                  kinds[0] == JD_TAG_STR && decl.return_tag == JD_TAG_F64)
             decl.return_tag = JD_TAG_STR;
+        // Every answer a LAMBDA: the FUNC answers a function reference (a
+        // closure when the lambda takes values with USE).
+        else if (any_answer && !unknown_answer && kinds.size() == 1 &&
+                 kinds[0] == JD_TAG_FUNCREF && decl.return_tag == JD_TAG_F64)
+            decl.return_tag = JD_TAG_FUNCREF;
     }
 
     // Return tags are final here, so the names that hold a value of a kind
@@ -3952,7 +4053,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         LLVMTypeRef ret_type;
         if (decl.return_tag == -1) ret_type = void_type;
         else if (decl.return_tag == JD_TAG_STR || decl.return_tag == JD_TAG_ARR ||
-                 decl.return_tag == JD_TAG_NATIVE_MAP) ret_type = i8_ptr_type;
+                 decl.return_tag == JD_TAG_NATIVE_MAP || decl.return_tag == JD_TAG_FUNCREF)
+            ret_type = i8_ptr_type;
         else if (decl.return_tag == JD_TAG_VM_HANDLE || decl.return_tag == JD_TAG_BOOL ||
                  decl.return_tag == JD_TAG_I64) ret_type = i64_type;
         else if (decl.return_tag == JD_TAG_RUNTIME) ret_type = dyn_ret_ty();
@@ -12243,7 +12345,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             // or a string picked out of an array keeps its kind in the result.
             TypedValue body;
             {
-                bool cell_body = hof_mode != 0 && expr.right->kind == ExprKind::INDEX;
+                bool cell_body = expr.right->kind == ExprKind::INDEX;
                 ScopedLeafTag _lt(this, cell_body ? JD_TAG_RUNTIME : m_want_leaf_tag);
                 body = codegen_expr(*expr.right);
             }
@@ -12255,7 +12357,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     LLVMValueRef a[] = { LLVMConstInt(i32_type, (unsigned)tag, 0) };
                     LLVMBuildCall2(builder, set_ret->fn_type, set_ret->fn, a, 1, "");
                 };
-                if (body.tag == JD_TAG_STR || body.tag == JD_TAG_ARR ||
+                if (body.tag == JD_TAG_BOOL) {
+                    report(body.tag);
+                } else if (body.tag == JD_TAG_STR || body.tag == JD_TAG_ARR ||
                     body.tag == JD_TAG_NATIVE_MAP) {
                     report(body.tag);
                 } else if (body.tag == JD_TAG_VM_HANDLE) {
@@ -12267,6 +12371,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     LLVMValueRef a[] = { body.val, body.runtime_tag };
                     ret_val = LLVMBuildCall2(builder, rt->fn_type, rt->fn, a, 2, "lret_t");
                     body.tag = JD_TAG_F64;
+                } else {
+                    // A number reports too: a closure the body called may
+                    // have left its own kind in the record.
+                    report(JD_TAG_F64);
                 }
             }
             // Lambda is declared as returning f64. Comparison ops (=, <,
@@ -12282,7 +12390,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             LLVMValueRef ret_wire_dyn = nullptr;
             if (body.tag == JD_TAG_I64 || body.tag == JD_TAG_BOOL) {
                 ret_val = LLVMBuildSIToFP(builder, ret_val, f64_type, "itof");
-                ret_wire = body.tag == JD_TAG_I64 ? JD_TAG_I64 : JD_TAG_F64;
+                ret_wire = body.tag;
             } else if (body.tag == JD_TAG_STR || body.tag == JD_TAG_ARR ||
                        body.tag == JD_TAG_NATIVE_MAP) {
                 // A string/array/map body is a pointer; pun its bits into the
@@ -12305,6 +12413,30 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             }
             LLVMBuildStore(builder, ret_wire_dyn ? ret_wire_dyn : LLVMConstInt(i32_type, ret_wire, 0),
                            funcref_ret_channel());
+            // A lambda held in a variable (a closure a FUNC returned) can
+            // still be handed to SELECT or FILTER, which read the kind of its
+            // answer from their own record; outside such a call the record is
+            // not read. Every answer reports, a number as F64, so what a
+            // closure called inside the body left there does not stand.
+            if (hof_mode == 0) {
+                auto* set_ret = get_runtime_func("__hof_set_ret");
+                LLVMValueRef kind = nullptr;
+                if (ret_wire_dyn) {
+                    LLVMValueRef is_bool = LLVMBuildICmp(builder, LLVMIntEQ, ret_wire_dyn,
+                        LLVMConstInt(i32_type, JD_TAG_BOOL, 0), "lret_isbool");
+                    kind = LLVMBuildSelect(builder, is_bool, ret_wire_dyn,
+                                           funcref_wire_tag(ret_wire_dyn), "lret_kind");
+                } else if (ret_wire == JD_TAG_STR || ret_wire == JD_TAG_ARR ||
+                           ret_wire == JD_TAG_NATIVE_MAP || ret_wire == JD_TAG_VM_HANDLE ||
+                           ret_wire == JD_TAG_BOOL)
+                    kind = LLVMConstInt(i32_type, (unsigned)ret_wire, 0);
+                else
+                    kind = LLVMConstInt(i32_type, JD_TAG_F64, 0);
+                if (set_ret && kind) {
+                    LLVMValueRef a[] = { kind };
+                    LLVMBuildCall2(builder, set_ret->fn_type, set_ret->fn, a, 1, "");
+                }
+            }
             LLVMBuildRet(builder, ret_val);
 
             // Restore state - position builder back at the EXACT block we were in
@@ -14928,12 +15060,15 @@ LLVMValueRef LLVMCodegen::funcref_take_arg_tag(unsigned idx, LLVMValueRef bits) 
     return funcref_num_tag(LLVMBuildSelect(builder, unset, from_loop, t, "fr_tag2"));
 }
 
-// As funcref_wire_tag, but an integer keeps its tag: it crossed the wire
-// as the double of its value.
+// As funcref_wire_tag, but an integer or truth value keeps its tag: it
+// crossed the wire as the double of its value.
 LLVMValueRef LLVMCodegen::funcref_num_tag(LLVMValueRef t) {
     LLVMValueRef is_int = LLVMBuildICmp(builder, LLVMIntEQ, t,
         LLVMConstInt(i32_type, JD_TAG_I64, 0), "fr_isint");
-    return LLVMBuildSelect(builder, is_int, t, funcref_wire_tag(t), "fr_ntag");
+    LLVMValueRef is_bool = LLVMBuildICmp(builder, LLVMIntEQ, t,
+        LLVMConstInt(i32_type, JD_TAG_BOOL, 0), "fr_isbool");
+    LLVMValueRef intish = LLVMBuildOr(builder, is_int, is_bool, "fr_intish");
+    return LLVMBuildSelect(builder, intish, t, funcref_wire_tag(t), "fr_ntag");
 }
 
 // The i64 slot of a runtime-typed value from its wire double and the tag
@@ -14942,7 +15077,10 @@ LLVMValueRef LLVMCodegen::funcref_unwire_bits(LLVMValueRef f64v, LLVMValueRef ta
     LLVMValueRef is_int = LLVMBuildICmp(builder, LLVMIntEQ, tag,
         LLVMConstInt(i32_type, JD_TAG_I64, 0), "fr_isint");
     LLVMValueRef as_int = LLVMBuildFPToSI(builder, f64v, i64_type, "fr_f2i");
-    return LLVMBuildSelect(builder, is_int, as_int, pun_f64_to_i64(f64v), "fr_ubits");
+    LLVMValueRef is_bool = LLVMBuildICmp(builder, LLVMIntEQ, tag,
+        LLVMConstInt(i32_type, JD_TAG_BOOL, 0), "fr_isbool");
+    LLVMValueRef intish = LLVMBuildOr(builder, is_int, is_bool, "fr_intish");
+    return LLVMBuildSelect(builder, intish, as_int, pun_f64_to_i64(f64v), "fr_ubits");
 }
 
 // A pointer-shaped tag names what the punned bits hold; every other value
@@ -15167,34 +15305,43 @@ LLVMValueRef LLVMCodegen::build_funcref_wrapper(const std::string& fn_name, int 
     // The result's tag goes into the channel for a caller that cannot
     // know the function at compile time.
     LLVMValueRef ret_val;
+    // The kind goes into SELECT's record as well, a number as F64, so
+    // what a closure the FUNC called left there does not stand.
+    LLVMValueRef hof_kind = LLVMConstInt(i32_type, JD_TAG_F64, 0);
     if (fi.return_tag == -1) {
         ret_val = LLVMConstReal(f64_type, 0.0);
         LLVMBuildStore(builder, LLVMConstInt(i32_type, JD_TAG_F64, 0), funcref_ret_channel());
     } else if (fi.return_tag == JD_TAG_I64 || fi.return_tag == JD_TAG_BOOL) {
         ret_val = LLVMBuildSIToFP(builder, call, f64_type, "itof");
-        int wire = fi.return_tag == JD_TAG_I64 ? JD_TAG_I64 : JD_TAG_F64;
-        LLVMBuildStore(builder, LLVMConstInt(i32_type, wire, 0), funcref_ret_channel());
+        LLVMBuildStore(builder, LLVMConstInt(i32_type, fi.return_tag, 0), funcref_ret_channel());
+        if (fi.return_tag == JD_TAG_BOOL) hof_kind = LLVMConstInt(i32_type, JD_TAG_BOOL, 0);
     } else if (fi.return_tag == JD_TAG_STR || fi.return_tag == JD_TAG_ARR ||
-               fi.return_tag == JD_TAG_NATIVE_MAP) {
+               fi.return_tag == JD_TAG_NATIVE_MAP || fi.return_tag == JD_TAG_FUNCREF) {
         // Pun ptr → i64 → f64 so the value survives transit.
         LLVMValueRef as_i = LLVMBuildPtrToInt(builder, call, i64_type, "ptoi");
         ret_val = pun_i64_to_f64(as_i);
         LLVMBuildStore(builder, LLVMConstInt(i32_type, fi.return_tag, 0), funcref_ret_channel());
+        if (fi.return_tag != JD_TAG_FUNCREF)
+            hof_kind = LLVMConstInt(i32_type, fi.return_tag, 0);
     } else if (fi.return_tag == JD_TAG_VM_HANDLE) {
         ret_val = pun_i64_to_f64(call);
         LLVMBuildStore(builder, LLVMConstInt(i32_type, JD_TAG_VM_HANDLE, 0), funcref_ret_channel());
+        hof_kind = LLVMConstInt(i32_type, JD_TAG_VM_HANDLE, 0);
     } else if (fi.return_tag == JD_TAG_RUNTIME) {
         TypedValue r = unpack_dyn_ret(call);
         LLVMBuildStore(builder, r.runtime_tag, funcref_ret_channel());
-        // A runtime loop (SELECT, FILTER, ...) reads the kind from its own
-        // record, so the answer's kind goes there too.
-        auto* set_ret = get_runtime_func("__hof_set_ret");
-        LLVMValueRef sr[] = { funcref_wire_tag(r.runtime_tag) };
-        LLVMBuildCall2(builder, set_ret->fn_type, set_ret->fn, sr, 1, "");
+        LLVMValueRef is_bool = LLVMBuildICmp(builder, LLVMIntEQ, r.runtime_tag,
+            LLVMConstInt(i32_type, JD_TAG_BOOL, 0), "w_isbool");
+        hof_kind = LLVMBuildSelect(builder, is_bool, r.runtime_tag,
+                                   funcref_wire_tag(r.runtime_tag), "w_kind");
         ret_val = funcref_wire_bits(r);
     } else {
         ret_val = call;
         LLVMBuildStore(builder, LLVMConstInt(i32_type, JD_TAG_F64, 0), funcref_ret_channel());
+    }
+    if (auto* set_ret = get_runtime_func("__hof_set_ret")) {
+        LLVMValueRef sr[] = { hof_kind };
+        LLVMBuildCall2(builder, set_ret->fn_type, set_ret->fn, sr, 1, "");
     }
     LLVMBuildRet(builder, ret_val);
 
@@ -15681,8 +15828,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                     LLVMValueRef nt = funcref_num_tag(t);
                     return { funcref_unwire_bits(result, nt), JD_TAG_RUNTIME, nt };
                 }
-                if (rt == JD_TAG_I64)
-                    return { LLVMBuildFPToSI(builder, result, i64_type, "fr_rint"), JD_TAG_I64 };
+                if (rt == JD_TAG_I64 || rt == JD_TAG_BOOL)
+                    return { LLVMBuildFPToSI(builder, result, i64_type, "fr_rint"), rt };
                 return { result, JD_TAG_F64 };
         };
         // A holder that carries a function by name (the shape a funcref
