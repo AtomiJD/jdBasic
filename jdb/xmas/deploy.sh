@@ -24,6 +24,7 @@ deploy_spike() {
     $SCP ../../wasm/jdbasic.js ../../wasm/jdbasic.wasm "$HOST:~/$stage/"
     mark=$(sha256sum ../../wasm/jdbasic.wasm ../../wasm/jdbasic.js | sha256sum | cut -c1-12)
     page=$(mktemp)
+    trap 'rm -f "$page"' EXIT
     sed -e "s|<script src=\"jdbasic.js\"></script>|<script src=\"jdbasic.js?v=$mark\"></script>|" \
         -e "s|^    createJdBasic({\$|    createJdBasic({\n      locateFile: (file) => file + '?v=$mark',|" \
         ../../wasm/index.html > "$page"
