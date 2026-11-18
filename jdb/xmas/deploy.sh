@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Push the story cards to the Hostinger box, as a sub-path of vvss.jdbasic.tech.
-#   XMAS_HOST=user@address ./deploy.sh spike     the spike under /xmas/spike/
+#   XMAS_HOST=user@address ./deploy.sh spike     the spike and the editor spike under /xmas/spike/
 #
 # Static files only: nginx serves /var/www/vvss as it is. The runtime page is
 # wasm/index.html with one mark on jdbasic.js and jdbasic.wasm, so a browser
@@ -18,7 +18,7 @@ SITE=https://vvss.jdbasic.tech
 deploy_spike() {
     local dest=/var/www/vvss/xmas/spike stage=xmas_stage mark page
     $SSH "rm -rf ~/$stage && mkdir -p ~/$stage/art"
-    $SCP spike.jdb assets.txt "$HOST:~/$stage/"
+    $SCP spike.jdb editor_spike.jdb xmasplay.jdb assets.txt "$HOST:~/$stage/"
     $SCP art/*.rgbz "$HOST:~/$stage/art/"
     $SCP ../../lib/raster.jdb ../../lib/xml.jdb ../../lib/img.jdb ../../lib/ttf.jdb "$HOST:~/$stage/"
     $SCP ../../wasm/jdbasic.js ../../wasm/jdbasic.wasm "$HOST:~/$stage/"
@@ -43,6 +43,7 @@ deploy_spike() {
     curl -s -m 15 -o /dev/null -w "art %{http_code}  " "${url}art/santa_head.rgbz"
     curl -s -m 15 -o /dev/null -w "vendor %{http_code}\n" "${url}vendor/xterm/xterm.js"
     echo "${url}?prog=spike&fs=1&assets=assets.txt"
+    echo "${url}?prog=editor_spike&fs=1&assets=assets.txt"
 }
 
 case "$1" in

@@ -268,11 +268,17 @@
     // Monaco loads asynchronously and grabs focus when its editor is created,
     // so a single focus() right after load doesn't stick. Re-assert focus a few
     // times (and once Monaco has settled) so typing works on a fresh page.
-    function focusTerm(){ if(!editorOpen && !running){ try{ term.focus(); }catch(e){} } }
+    // An open graphics window keeps the keys: its program reads them through SDL.
+    const gfxOpen = ()=> document.getElementById('gfx-overlay').classList.contains('open');
+    function focusTerm(){ if(!editorOpen && !running && !gfxOpen()){ try{ term.focus(); }catch(e){} } }
+    document.addEventListener('focusin', (e)=>{
+      if (gfxOpen() && e.target && e.target.closest && e.target.closest('#term'))
+        setTimeout(()=>{ try{ document.getElementById('canvas').focus(); }catch(e){} }, 0);
+    }, true);
     [0,60,300,900].forEach(ms=> setTimeout(focusTerm, ms));
     // Safety net: typing anywhere outside the overlays focuses the terminal.
     document.addEventListener('keydown', (e)=>{
-      if(editorOpen||running) return;
+      if(editorOpen||running||gfxOpen()) return;
       if(e.target && e.target.closest && e.target.closest('#editor-overlay,#gfx-overlay,button,input')) return;
       focusTerm();
     }, true);
@@ -695,7 +701,11 @@
         box.addEventListener(t, (e)=>{ e.stopPropagation(); if (t === 'keydown' && e.key === 'Escape') answer({ok:false}); });
       field.addEventListener('input', showCount);
       setInterval(()=>{
-        if (asking || !Mod) return;
+        if (!Mod) return;
+        // A program puts text on the clipboard by writing /clipboard_set.txt.
+        const clip = readMaybe('/clipboard_set.txt');
+        if (clip !== null) { try { Mod.FS.unlink('/clipboard_set.txt'); } catch(e){} copyText(clip); }
+        if (asking) return;
         const raw = readMaybe('/input_request.json');
         if (raw === null) return;
         let req = {};

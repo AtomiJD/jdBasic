@@ -1,0 +1,154 @@
+' Spike for the editor of the Christmas story cards: an ImGui panel on the
+' left to type the greeting, on the right the player of xmasplay.jdb in a
+' portrait frame, scaled down, exactly as the phone will show it.
+' Desktop: run from jdb/xmas. Browser: the runtime page with ?prog=editor_spike.
+OPTION "EXPLICIT"
+
+IMPORT XMASPLAY
+
+DIM on_web = OS.GETOS$() = "WEB"
+DIM art_dir$ = IIF(on_web, "/art/", "art/")
+DIM font$ = "/jdbasic_default.ttf"
+IF NOT on_web THEN font$ = PATH.DIRNAME$(OS.SELF$()) + "/jdbasic_default.ttf"
+DIM play_url$ = "https://vvss.jdbasic.tech/xmas/spike/?prog=spike&fs=1&assets=assets.txt&s="
+
+CONST WIN_W = 1280
+CONST WIN_H = 820
+CONST PANEL_W = 560
+CONST PREVIEW_SCALE = 0.6
+CONST MAX_BUBBLES = 4
+
+' The largest whole factor at which the window fits the primary display
+' (2 on 4K); SCREEN scales drawing and ImGui fonts by it, the sizes handed
+' to GUI calls are raw pixels and are multiplied here. A browser scales the
+' canvas itself.
+FUNC UiScale()
+    IF on_web THEN RETURN 1
+    DIM w = 1920
+    DIM h = 1080
+    FOR EACH d IN GFX.DISPLAYS()
+        IF d{"primary"} THEN
+            w = d{"w"}
+            h = d{"h"}
+        ENDIF
+    NEXT d
+    RETURN MAX([1, INT(MIN([w / WIN_W, (h - 80) / WIN_H]))])
+ENDFUNC
+DIM ui = UiScale()
+
+SCREEN WIN_W, WIN_H, "Xmas editor spike", ui
+SETFONT font$, 30
+GUI.THEME "DARK"
+
+DIM parts = XMASPLAY.LOADPARTS(art_dir$)
+DIM frame_img = GFX.NEWTARGET(XMASPLAY.FW, XMASPLAY.FH, TRUE)
+DIM pw = XMASPLAY.FW * PREVIEW_SCALE
+DIM ph = XMASPLAY.FH * PREVIEW_SCALE
+DIM px = PANEL_W + (WIN_W - PANEL_W - pw) / 2
+DIM py = (WIN_H - ph) / 2
+
+DIM demo = XMASPLAY.DEMO()
+DIM from$ = demo{"from"}
+DIM to$ = demo{"to"}
+DIM bubbles = demo{"lines"}
+DIM link$ = ""
+DIM copied$ = ""
+DIM music_on = FALSE
+DIM running = TRUE
+
+' The story as the panel holds it, without empty bubbles.
+FUNC CurrentStory(from_name$, to_name$, texts)
+    DIM kept = FILTER(LAMBDA s -> TRIM$(s) <> "", texts)
+    IF LEN(kept) = 0 THEN kept = ["..."]
+    RETURN {"lines": kept, "from": from_name$, "to": to_name$}
+ENDFUNC
+
+' Seconds since the preview last started over; it starts over after the end card.
+DIM t_start = TICK()
+DIM t_story = TICK()
+
+SUB OnQuit(info)
+    running = FALSE
+ENDSUB
+ON "QUIT" CALL OnQuit@
+
+DIM shot_dir$ = GETENV$("XMAS_SHOTS")
+DIM frames = 0
+
+DO WHILE running
+    DIM ms_now = TICK()
+    DIM story = CurrentStory(from$, to$, bubbles)
+    DIM st = (ms_now - t_story) / 1000
+    IF st > XMASPLAY.LENGTH(story) + 4 THEN
+        t_story = ms_now
+        st = 0
+    ENDIF
+
+    GFX.TARGET frame_img
+    XMASPLAY.FRAME(parts, story, (ms_now - t_start) / 1000, st)
+    GFX.TARGET
+
+    CLS 24, 20, 28
+    GFX.DRAWIMAGE_EX(frame_img, px, py, pw, ph, 0)
+
+    ' the size in the id makes ImGui take the size given here
+    DIM flags = GUI.FLAG("NO_TITLEBAR") + GUI.FLAG("NO_RESIZE") + GUI.FLAG("NO_MOVE") + GUI.FLAG("NO_COLLAPSE") + GUI.FLAG("NO_SAVED_SETTINGS")
+    IF GUI.BEGIN("##panel" + STR$(ui), 0, 0, PANEL_W * ui, WIN_H * ui, TRUE, flags) THEN
+        GUI.SEPARATOR_TEXT("Weihnachtsgruß")
+        from$ = XMASPLAY.CLEANTEXT$(GUI.INPUT$("Von", from$), XMASPLAY.MAX_NAME)
+        to$ = XMASPLAY.CLEANTEXT$(GUI.INPUT$("Für", to$), XMASPLAY.MAX_NAME)
+        GUI.SEPARATOR_TEXT("Sprechblasen")
+        DIM i = 0
+        FOR i = 0 TO LEN(bubbles) - 1
+            GUI.PUSH_ID(i)
+            GUI.SET_NEXT_ITEM_WIDTH((PANEL_W - 90) * ui)
+            DIM typed$ = GUI.INPUT$("##bubble", bubbles[i])
+            IF LENW(typed$) > XMASPLAY.MAX_LINE THEN typed$ = LEFTW$(typed$, XMASPLAY.MAX_LINE)
+            IF typed$ <> bubbles[i] THEN
+                bubbles[i] = typed$
+                t_story = ms_now - (i * XMASPLAY.PER_LINE) * 1000
+            ENDIF
+            GUI.SAME_LINE
+            GUI.TEXT(STR$(LENW(bubbles[i])) + "/" + STR$(XMASPLAY.MAX_LINE))
+            GUI.POP_ID
+        NEXT i
+        IF LEN(bubbles) < MAX_BUBBLES ANDALSO GUI.BUTTON("+ Sprechblase") THEN bubbles = APPEND(bubbles, "")
+        IF LEN(bubbles) > 1 THEN
+            IF LEN(bubbles) < MAX_BUBBLES THEN GUI.SAME_LINE
+            IF GUI.BUTTON("- letzte") THEN bubbles = TAKE(LEN(bubbles) - 1, bubbles)
+        ENDIF
+        GUI.SEPARATOR_TEXT("Vorschau")
+        IF GUI.BUTTON("Von vorn") THEN t_story = ms_now
+        GUI.SAME_LINE
+        IF NOT music_on ANDALSO GUI.BUTTON("Musik an") THEN
+            music_on = TRUE
+            TRY
+                XMASPLAY.MUSIC()
+            CATCH
+                copied$ = "Musik: " + ERRMSG$
+            ENDTRY
+        ENDIF
+        GUI.SEPARATOR_TEXT("Teilen")
+        link$ = play_url$ + XMASPLAY.ENCODE$(story)
+        IF GUI.BUTTON("Link kopieren") THEN
+            IF on_web THEN
+                TXTWRITER "/clipboard_set.txt", link$
+            ELSE
+                CLIPBOARD.SET link$
+            ENDIF
+            copied$ = "kopiert, " + STR$(LEN(link$)) + " Zeichen"
+        ENDIF
+        GUI.SAME_LINE
+        GUI.TEXT(copied$)
+        GUI.TEXT_WRAPPED(link$)
+    ENDIF
+    GUI.END
+
+    frames = frames + 1
+    IF shot_dir$ <> "" ANDALSO frames = 120 THEN
+        GFX.SAVE_SCREENSHOT(shot_dir$ + "/xmas_editor.png")
+        running = FALSE
+    ENDIF
+    SCREENFLIP
+    SLEEP 1
+LOOP

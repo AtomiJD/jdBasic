@@ -1,0 +1,325 @@
+' The player of the Christmas story cards: the story code of a link, the
+' puppet, the room, the speech bubbles and the music. Everything draws in a
+' portrait frame of 720 x 1280 on the current target.
+EXPORT MODULE XMASPLAY
+
+IMPORT RASTER
+
+EXPORT DIM FW = 720
+EXPORT DIM FH = 1280
+EXPORT DIM MAX_CODE = 2048
+EXPORT DIM MAX_LINES = 12
+EXPORT DIM MAX_LINE = 80
+EXPORT DIM MAX_NAME = 30
+EXPORT DIM PER_LINE = 5.5
+
+' ---------------------------------------------------------------- story code
+
+FUNC B64Url$(raw$)
+    DIM s$ = REPLACE$(REPLACE$(CODEC.BASE64_ENCODE$(raw$), "+", "-"), "/", "_")
+    DO WHILE ENDSWITH(s$, "=")
+        s$ = LEFT$(s$, LEN(s$) - 1)
+    LOOP
+    RETURN s$
+ENDFUNC
+
+FUNC UnB64Url$(code$)
+    DIM s$ = REPLACE$(REPLACE$(code$, "-", "+"), "_", "/")
+    DO WHILE LEN(s$) MOD 4 <> 0
+        s$ = s$ + "="
+    LOOP
+    RETURN CODEC.BASE64_DECODE$(s$)
+ENDFUNC
+
+EXPORT FUNC ENCODE$(story)
+    RETURN "1" + B64Url$(CODEC.DEFLATE$(JSON.STRINGIFY$(story), 9, "raw"))
+ENDFUNC
+
+' A text of at most n characters from a decoded value, "" for anything but a text.
+EXPORT FUNC CLEANTEXT$(v, n)
+    IF NOT ISSTR(v) THEN RETURN ""
+    RETURN LEFTW$(TRIM$(v), n)
+ENDFUNC
+
+' The story a link carries, held to the editor's limits, or NONE.
+EXPORT FUNC DECODE(code$)
+    IF LEFT$(code$, 1) <> "1" ORELSE LEN(code$) > MAX_CODE THEN RETURN NONE
+    DIM raw = NONE
+    TRY
+        raw = JSON.PARSE(CODEC.INFLATE$(UnB64Url$(MID$(code$, 1)), "raw"))
+    CATCH
+        RETURN NONE
+    ENDTRY
+    IF NOT ISMAP(raw) THEN RETURN NONE
+    IF NOT ISARR(raw{"lines"} ?? NONE) THEN RETURN NONE
+    DIM lines = FILTER(LAMBDA s -> s <> "", SELECT(LAMBDA v -> CLEANTEXT$(v, MAX_LINE), TAKE(MAX_LINES, raw{"lines"})))
+    IF LEN(lines) = 0 THEN RETURN NONE
+    RETURN {"lines": lines, "from": CLEANTEXT$(raw{"from"} ?? "", MAX_NAME), "to": CLEANTEXT$(raw{"to"} ?? "", MAX_NAME)}
+ENDFUNC
+
+EXPORT FUNC DEMO()
+    RETURN {"lines": ["Ho ho ho! Fröhliche Weihnachten, liebe Oma!", "Ich habe dir etwas ganz Besonderes mitgebracht. Schau mal!"], "from": "Achim", "to": "Oma"}
+ENDFUNC
+
+' Seconds from the first bubble to the end card.
+EXPORT FUNC LENGTH(story)
+    RETURN LEN(story{"lines"}) * PER_LINE
+ENDFUNC
+
+' ---------------------------------------------------------------- pictures
+
+' A part as a smooth GFX image, from its baked .rgbz (tools/bake.jdb) or
+' else from its SVG; [image, width, height].
+FUNC LoadPart(art_dir$, name$)
+    DIM w = 0
+    DIM h = 0
+    DIM pixels = []
+    IF FILE.EXISTS(art_dir$ + name$ + ".rgbz") THEN
+        DIM raw$ = CODEC.INFLATE$(BINREADER$(art_dir$ + name$ + ".rgbz"), "raw")
+        DIM size = UNPACK("<II", raw$)
+        w = size[0]
+        h = size[1]
+        pixels = UNPACK(STR$(w * h * 4) + "B", raw$, 8)
+    ELSE
+        DIM px = RASTER.RENDER(TXTREADER$(art_dir$ + name$ + ".svg"), {"scale": 1, "background": "none"})
+        w = px{"width"}
+        h = px{"height"}
+        pixels = px{"pixels"}
+    ENDIF
+    DIM spr = SPRITE.CREATE(w, h)
+    SPRITE.SETBUFFER spr, pixels
+    DIM img = GFX.NEWTARGET(w, h, TRUE)
+    GFX.TARGET img, TRUE
+    SPRITE.POS spr, 0, 0
+    SPRITE.DRAW spr
+    GFX.TARGET
+    SPRITE.DELETE spr
+    RETURN [img, w, h]
+ENDFUNC
+
+' The puppet's parts; needs an open SCREEN.
+EXPORT FUNC LOADPARTS(art_dir$)
+    DIM parts = {}
+    parts{"torso"} = LoadPart(art_dir$, "santa_torso")
+    parts{"head"} = LoadPart(art_dir$, "santa_head")
+    parts{"arm"} = LoadPart(art_dir$, "santa_arm")
+    parts{"leg"} = LoadPart(art_dir$, "santa_leg")
+    RETURN parts
+ENDFUNC
+
+' ---------------------------------------------------------------- the puppet
+
+' Parts with their pivot; joints in the torso's own coordinates.
+FUNC Piv(name$)
+    DIM p = {"torso": [110, 215], "head": [100, 200], "arm": [35, 22], "leg": [40, 10]}
+    RETURN p{name$}
+ENDFUNC
+
+FUNC Joint(name$)
+    DIM j = {"head": [110, 22], "arm_l": [50, 46], "arm_r": [170, 46], "leg_l": [78, 200], "leg_r": [142, 200]}
+    RETURN j{name$}
+ENDFUNC
+
+' A point of the torso in frame coordinates.
+FUNC TorsoPoint(pose, p)
+    DIM r = RADIANS(pose{"tilt"})
+    DIM piv = Piv("torso")
+    DIM dx = (p[0] - piv[0]) * pose{"scale"}
+    DIM dy = (p[1] - piv[1]) * pose{"scale"}
+    RETURN [pose{"x"} + dx * COS(r) - dy * SIN(r), pose{"y"} + dx * SIN(r) + dy * COS(r)]
+ENDFUNC
+
+' A local point of a part turned by ang around its pivot at the joint.
+FUNC PartPoint(jx, jy, piv, ang, sc, p)
+    DIM r = RADIANS(ang)
+    DIM dx = (p[0] - piv[0]) * sc
+    DIM dy = (p[1] - piv[1]) * sc
+    RETURN [jx + dx * COS(r) - dy * SIN(r), jy + dx * SIN(r) + dy * COS(r)]
+ENDFUNC
+
+SUB DrawPart(part, piv, jx, jy, ang, sc)
+    DIM w = part[1] * sc
+    DIM h = part[2] * sc
+    DIM c = PartPoint(jx, jy, piv, ang, sc, [part[1] / 2, part[2] / 2])
+    GFX.DRAWIMAGE_EX(part[0], c[0] - w / 2, c[1] - h / 2, w, h, ang)
+ENDSUB
+
+SUB DrawPuppet(parts, pose)
+    DIM sc = pose{"scale"}
+    DIM j = TorsoPoint(pose, Joint("leg_l"))
+    DrawPart(parts{"leg"}, Piv("leg"), j[0], j[1], pose{"tilt"} + pose{"leg_l"}, sc)
+    j = TorsoPoint(pose, Joint("leg_r"))
+    DrawPart(parts{"leg"}, Piv("leg"), j[0], j[1], pose{"tilt"} + pose{"leg_r"}, sc)
+    j = TorsoPoint(pose, Piv("torso"))
+    DrawPart(parts{"torso"}, Piv("torso"), j[0], j[1], pose{"tilt"}, sc)
+    DIM hj = TorsoPoint(pose, Joint("head"))
+    DIM head_ang = pose{"tilt"} + pose{"head"}
+    DIM head_piv = Piv("head")
+    DrawPart(parts{"head"}, head_piv, hj[0], hj[1], head_ang, sc)
+    ' eyes and mouth are drawn, so they can blink and talk
+    DIM eye_h = IIF(pose{"blink"}, 1, 7) * sc
+    DIM eye_pt = PartPoint(hj[0], hj[1], head_piv, head_ang, sc, [84, 113])
+    DRAWCOLOR 40, 30, 30
+    ELLIPSE eye_pt[0], eye_pt[1], 5 * sc, eye_h, TRUE
+    eye_pt = PartPoint(hj[0], hj[1], head_piv, head_ang, sc, [116, 113])
+    ELLIPSE eye_pt[0], eye_pt[1], 5 * sc, eye_h, TRUE
+    DIM m = PartPoint(hj[0], hj[1], head_piv, head_ang, sc, [100, 158])
+    DRAWCOLOR 120, 30, 40
+    ELLIPSE m[0], m[1], 11 * sc, MAX([2, 9 * pose{"mouth"}]) * sc, TRUE
+    j = TorsoPoint(pose, Joint("arm_l"))
+    DrawPart(parts{"arm"}, Piv("arm"), j[0], j[1], pose{"tilt"} + pose{"arm_l"}, sc)
+    j = TorsoPoint(pose, Joint("arm_r"))
+    DrawPart(parts{"arm"}, Piv("arm"), j[0], j[1], pose{"tilt"} + pose{"arm_r"}, sc)
+ENDSUB
+
+' ---------------------------------------------------------------- room and bubble
+
+SUB DrawRoom(t)
+    RECT 0, 0, FW, FH, TRUE, 74, 38, 40
+    DIM i = 0
+    FOR i = 0 TO 11
+        RECT i * 60, 0, 30, 900, TRUE, 82, 44, 46
+    NEXT i
+    RECT 0, 900, FW, FH - 900, TRUE, 92, 58, 38
+    FOR i = 0 TO 7
+        RECT 0, 900 + i * 48, FW, 3, TRUE, 70, 42, 28
+    NEXT i
+    ' window with the night outside
+    RECT 440, 160, 220, 300, TRUE, 230, 220, 200
+    RECT 452, 172, 196, 276, TRUE, 20, 32, 70
+    DIM f = 0
+    FOR f = 0 TO 24
+        DIM fx = 452 + (f * 97 + INT(t * 20 * (1 + f MOD 3))) MOD 196
+        DIM fy = 172 + (f * 53 + INT(t * 40 * (1 + f MOD 2))) MOD 276
+        CIRCLE fx, fy, 2 + f MOD 2, TRUE, 255, 255, 255
+    NEXT f
+    RECT 547, 172, 6, 276, TRUE, 230, 220, 200
+    ' fireplace with a fire
+    RECT 40, 560, 330, 340, TRUE, 150, 140, 135
+    RECT 20, 540, 370, 36, TRUE, 120, 90, 70
+    RECT 100, 640, 210, 260, TRUE, 30, 20, 20
+    DIM flick = SIN(t * 9) * 8
+    DRAWCOLOR 240, 120, 30
+    ELLIPSE 205, 840 - flick, 70, 70 + flick, TRUE
+    DRAWCOLOR 255, 200, 60
+    ELLIPSE 205, 860, 40, 40 - flick / 2, TRUE
+    ' garland
+    FOR i = 0 TO 13
+        CIRCLE 30 + i * 26, 548 + INT(SIN(i) * 4), 9, TRUE, 30, 110, 50
+        IF i MOD 2 = 0 THEN CIRCLE 30 + i * 26, 562, 5, TRUE, 230, 40, 40
+    NEXT i
+ENDSUB
+
+FUNC Wrap(text$, max_w)
+    DIM words = SPLIT(text$, " ")
+    DIM rows = []
+    DIM cur$ = ""
+    DIM i = 0
+    FOR i = 0 TO LEN(words) - 1
+        DIM probe$ = IIF(cur$ = "", words[i], cur$ + " " + words[i])
+        IF GFX.TEXTSIZE(probe$)[0] > max_w ANDALSO cur$ <> "" THEN
+            rows = APPEND(rows, cur$)
+            cur$ = words[i]
+        ELSE
+            cur$ = probe$
+        ENDIF
+    NEXT i
+    IF cur$ <> "" THEN rows = APPEND(rows, cur$)
+    RETURN rows
+ENDFUNC
+
+' A bubble whose text has typed n_chars characters, its tail towards (tx, ty).
+SUB DrawBubble(text$, n_chars, tx, ty)
+    DIM bw = 600
+    DIM rows = Wrap(text$, bw - 60)
+    DIM bh = 40 + LEN(rows) * 44
+    DIM bx = (FW - bw) / 2
+    DIM by = MAX([40, ty - 70 - bh])
+    DIM root_x = CLAMP(tx + 40, bx + 70, bx + bw - 70)
+    DIM root_y = by + bh - 12
+    DIM seg = 0
+    FOR seg = 0 TO 9
+        DIM f0 = seg / 10
+        DIM f1 = (seg + 1) / 10
+        GFX.STROKE LERP(root_x, tx, f0), LERP(root_y, ty, f0), LERP(root_x, tx, f1), LERP(root_y, ty, f1), 34 - seg * 3, 255, 255, 255
+    NEXT seg
+    ROUNDED_RECT bx, by, bw, bh, 28, TRUE, 255, 255, 255
+    DIM remaining = n_chars
+    DIM i = 0
+    FOR i = 0 TO LEN(rows) - 1
+        IF remaining <= 0 THEN EXITFOR
+        DIM shown$ = LEFTW$(rows[i], remaining)
+        TEXT bx + 30, by + 22 + i * 44, shown$, 40, 30, 30
+        remaining = remaining - LENW(rows[i]) - 1
+    NEXT i
+ENDSUB
+
+' ---------------------------------------------------------------- one frame
+
+' One frame of the story: t counts seconds since the program started (idle
+' motion), st seconds since the story started, below 0 while it waits for
+' the tap.
+EXPORT SUB FRAME(parts, story, t, st)
+    DrawRoom(t)
+    DIM ms_now = INT(t * 1000)
+    DIM pose = {"x": 380, "y": 1020, "scale": 1.0, "tilt": SIN(t * 1.6) * 2, "head": SIN(t * 2.1) * 4, "arm_l": 8 + SIN(t * 1.3) * 3, "arm_r": -8, "leg_l": 0, "leg_r": 0, "mouth": 0, "blink": (ms_now MOD 3200) < 120}
+    DIM lines = story{"lines"}
+    IF st < 0 THEN
+        DrawPuppet(parts, pose)
+        ROUNDED_RECT 160, 1110, 400, 90, 30, TRUE, 200, 30, 40
+        DIM call$ = "Tippen!"
+        IF story{"to"} <> "" THEN call$ = "Für " + story{"to"} + ": tippen!"
+        TEXT 220, 1138, call$, 255, 255, 255
+        RETURN
+    ENDIF
+    DIM idx = INT(st / PER_LINE)
+    IF idx < LEN(lines) THEN
+        DIM local_t = st - idx * PER_LINE
+        DIM n_chars = INT(local_t * 22)
+        IF n_chars < LENW(lines[idx]) THEN pose{"mouth"} = ABS(SIN(local_t * 14))
+        IF idx = 0 THEN pose{"arm_r"} = -140 + SIN(local_t * 8) * 20
+        DrawPuppet(parts, pose)
+        DIM neck = TorsoPoint(pose, Joint("head"))
+        DrawBubble(lines[idx], n_chars, neck[0], neck[1] - 190)
+    ELSE
+        ' the happy end: a jump with both arms up
+        pose{"y"} = pose{"y"} - ABS(SIN(st * 5)) * 60
+        pose{"arm_l"} = 150 + SIN(st * 10) * 10
+        pose{"arm_r"} = -150 - SIN(st * 10) * 10
+        pose{"leg_l"} = 10 * SIN(st * 10)
+        pose{"leg_r"} = -10 * SIN(st * 10)
+        pose{"mouth"} = 0.8
+        DrawPuppet(parts, pose)
+        TEXT 120, 160, "Von " + story{"from"} + " für " + story{"to"}, 255, 240, 200
+    ENDIF
+ENDSUB
+
+' ---------------------------------------------------------------- music
+
+' Stille Nacht (Franz Xaver Gruber, 1818), one bar of 6/8 per cycle in
+' twelve sixteenths, C major.
+EXPORT SUB MUSIC()
+    SOUND.INIT
+    SOUND.RESET
+    SOUND.MASTER "FIXED", 0.32
+    SOUND.REVERB 0.7, 0.4, 0.8, 0.3
+    SOUND.BPM 92
+    SOUND.VOICE 0, "TRIANGLE", 0.03, 0.4, 0.6, 0.6
+    SOUND.UNISON 0, 3, 0.12, 0.6
+    SOUND.OSC2 0, "SINE", -12, 0.35
+    SOUND.FILTER 0, 2200
+    SOUND.LFO 0, 5.2, 0.12
+    SOUND.REVERBSEND 0, 0.45
+    SOUND.VOICE 1, "SINE", 0.01, 0.3, 0.6, 0.5
+    SOUND.VOICE 2, "SINE", 1.0, 0.5, 0.8, 1.8
+    SOUND.UNISON 2, 3, 0.15, 0.8
+    SOUND.REVERBSEND 2, 0.6
+    DIM bars = ["g4@3 a4 g4@2 e4@6", "g4@3 a4 g4@2 e4@6", "d5@4 d5@2 b4@6", "c5@4 c5@2 g4@6", "a4@4 a4@2 c5@3 b4 a4@2", "g4@3 a4 g4@2 e4@6", "a4@4 a4@2 c5@3 b4 a4@2", "g4@3 a4 g4@2 e4@6", "d5@4 d5@2 f5@3 d5 b4@2", "c5@12", "e5@12", "c5@3 g4 e4@2 g4@3 f4 d4@2", "c4@12", "~@12"]
+    DIM mel$ = "[[" + JOIN(bars, "] [") + "]]/" + STR$(LEN(bars))
+    SOUND.SEQ 0, mel$, "VOICE"
+    SOUND.SEQ 1, "<c2 c2 g1 c2 f1 c2 f1 c2 g1 c2 c2 g1 c2 c2>", "VOICE"
+    SOUND.SEQ 2, "<C C G7 C F C F C G7 C C G7 C C>", "VOICE"
+    SOUND.GAIN 0, 0.32
+    SOUND.GAIN 1, 0.35
+    SOUND.GAIN 2, 0.14
+ENDSUB
