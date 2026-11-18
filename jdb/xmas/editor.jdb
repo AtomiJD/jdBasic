@@ -1,7 +1,8 @@
-' Spike for the editor of the Christmas story cards: an ImGui panel on the
-' left to type the greeting, on the right the player of xmasplay.jdb in a
-' portrait frame, scaled down, exactly as the phone will show it.
-' Desktop: run from jdb/xmas. Browser: the runtime page with ?prog=editor_spike.
+' The editor of the Christmas story cards: an ImGui panel on the left to
+' build the greeting scene by scene, on the right the player of
+' xmasplay.jdb in a portrait frame, scaled down, exactly as the phone will
+' show it. German or English after the browser (XMAS_LANG on the desktop).
+' Desktop: run from jdb/xmas. Browser: the runtime page with ?prog=editor.
 OPTION "EXPLICIT"
 
 IMPORT XMASPLAY
@@ -10,7 +11,53 @@ DIM on_web = OS.GETOS$() = "WEB"
 DIM art_dir$ = IIF(on_web, "/art/", "art/")
 DIM font$ = "/jdbasic_default.ttf"
 IF NOT on_web THEN font$ = PATH.DIRNAME$(OS.SELF$()) + "/jdbasic_default.ttf"
-DIM play_url$ = "https://vvss.jdbasic.tech/xmas/spike/?prog=spike&fs=1&assets=assets.txt&s="
+DIM play_url$ = "https://vvss.jdbasic.tech/xmas/?s="
+
+FUNC UrlParams()
+    IF NOT on_web ORELSE NOT FILE.EXISTS("/url_params.json") THEN RETURN {}
+    RETURN JSON.PARSE(TXTREADER$("/url_params.json"))
+ENDFUNC
+DIM url_params = UrlParams()
+DIM lang$ = LCASE$(LEFT$(GETENV$("XMAS_LANG") + ("" + (url_params{"__lang"} ?? "de")), 2))
+IF lang$ <> "de" THEN lang$ = "en"
+' the column of the catalog tables that holds the names in this language
+DIM name_col = IIF(lang$ = "de", 1, 2)
+
+' The editor's own words in German or English.
+FUNC T$(key$)
+    DIM de = {"title": "Weihnachtsgruß", "from": "Von", "to": "Für", "scene": "Szene", "place": "Ort", "action": "Aktion", "figure": "Figur", "add_fig": "+ Figur", "del_fig": "- Figur", "bubbles": "Sprechblasen", "add_line": "+ Sprechblase", "del_line": "- letzte", "add_scene": "+ Szene", "del_scene": "- letzte Szene", "music": "Musik", "song": "Lied", "style": "Stil", "play": "Musik an", "preview": "Vorschau", "restart": "Von vorn", "share": "Teilen", "copy": "Link kopieren", "copied": "kopiert", "chars": "Zeichen"}
+    DIM en = {"title": "Christmas greeting", "from": "From", "to": "For", "scene": "Scene", "place": "Place", "action": "Action", "figure": "Figure", "add_fig": "+ Figure", "del_fig": "- Figure", "bubbles": "Speech bubbles", "add_line": "+ Bubble", "del_line": "- Last", "add_scene": "+ Scene", "del_scene": "- Last scene", "music": "Music", "song": "Song", "style": "Style", "play": "Music on", "preview": "Preview", "restart": "Restart", "share": "Share", "copy": "Copy link", "copied": "copied", "chars": "characters"}
+    IF lang$ = "en" THEN RETURN en{key$}
+    RETURN de{key$}
+ENDFUNC
+
+' A Christmas look for the panel: fir green, berry red buttons, cream text.
+CONST THEME_COLORS = 13
+SUB PushTheme()
+    GUI.PUSH_STYLE_COLOR(GUI.COL("WINDOWBG"), [20, 52, 38, 255])
+    GUI.PUSH_STYLE_COLOR(GUI.COL("TEXT"), [255, 246, 228, 255])
+    GUI.PUSH_STYLE_COLOR(GUI.COL("FRAMEBG"), [34, 82, 58, 255])
+    GUI.PUSH_STYLE_COLOR(GUI.COL("FRAMEBGHOVERED"), [46, 104, 74, 255])
+    GUI.PUSH_STYLE_COLOR(GUI.COL("FRAMEBGACTIVE"), [56, 120, 86, 255])
+    GUI.PUSH_STYLE_COLOR(GUI.COL("BUTTON"), [196, 40, 56, 255])
+    GUI.PUSH_STYLE_COLOR(GUI.COL("BUTTONHOVERED"), [224, 64, 78, 255])
+    GUI.PUSH_STYLE_COLOR(GUI.COL("BUTTONACTIVE"), [240, 96, 100, 255])
+    GUI.PUSH_STYLE_COLOR(GUI.COL("HEADER"), [196, 40, 56, 255])
+    GUI.PUSH_STYLE_COLOR(GUI.COL("HEADERHOVERED"), [224, 64, 78, 255])
+    GUI.PUSH_STYLE_COLOR(GUI.COL("HEADERACTIVE"), [240, 96, 100, 255])
+    GUI.PUSH_STYLE_COLOR(GUI.COL("CHECKMARK"), [255, 214, 70, 255])
+    GUI.PUSH_STYLE_COLOR(GUI.COL("TITLEBG"), [20, 52, 38, 255])
+ENDSUB
+
+' Column k of a catalog table.
+FUNC Column(table, k)
+    DIM out = []
+    DIM row = NONE
+    FOR EACH row IN table
+        out = APPEND(out, [row[k]])
+    NEXT row
+    RETURN out
+ENDFUNC
 
 CONST WIN_W = 1280
 CONST WIN_H = 820
@@ -35,7 +82,7 @@ FUNC UiScale()
 ENDFUNC
 DIM ui = UiScale()
 
-SCREEN WIN_W, WIN_H, "Xmas editor spike", ui
+SCREEN WIN_W, WIN_H, T$("title"), ui
 SETFONT font$, 30
 GUI.THEME "DARK"
 
@@ -46,18 +93,18 @@ DIM ph = XMASPLAY.FH * PREVIEW_SCALE
 DIM px = PANEL_W + (WIN_W - PANEL_W - pw) / 2
 DIM py = (WIN_H - ph) / 2
 
-DIM doc = XMASPLAY.DEMO()
+DIM doc = XMASPLAY.CLEAN(XMASPLAY.DEMOFOR(lang$))
 DIM link$ = ""
 DIM copied$ = ""
 DIM music_on = FALSE
 DIM running = TRUE
 
 DIM bg_ids = SELECT(LAMBDA r -> r[0], XMASPLAY.BACKGROUNDS())
-DIM bg_names = SELECT(LAMBDA r -> r[1], XMASPLAY.BACKGROUNDS())
+DIM bg_names = Column(XMASPLAY.BACKGROUNDS(), name_col)
 DIM act_ids = SELECT(LAMBDA r -> r[0], XMASPLAY.ACTIONS())
-DIM act_names = SELECT(LAMBDA r -> r[1], XMASPLAY.ACTIONS())
+DIM act_names = Column(XMASPLAY.ACTIONS(), name_col)
 DIM cast_ids = SELECT(LAMBDA r -> r[0], XMASPLAY.CASTS())
-DIM cast_names = SELECT(LAMBDA r -> r[1], XMASPLAY.CASTS())
+DIM cast_names = Column(XMASPLAY.CASTS(), name_col)
 
 ' The bubbles with the speakers of places a and b exchanged.
 FUNC SwapSpeakers(lines, a, b)
@@ -135,29 +182,30 @@ DO WHILE running
     ENDTRY
     GFX.TARGET
 
-    CLS 24, 20, 28
+    CLS 52, 22, 30
     GFX.DRAWIMAGE_EX(frame_img, px, py, pw, ph, 0)
 
     ' the size in the id makes ImGui take the size given here
-    DIM flags = GUI.FLAG("NO_TITLEBAR") + GUI.FLAG("NO_RESIZE") + GUI.FLAG("NO_MOVE") + GUI.FLAG("NO_COLLAPSE") + GUI.FLAG("NO_SAVED_SETTINGS")
-    IF GUI.BEGIN("##panel" + STR$(ui), 0, 0, PANEL_W * ui, WIN_H * ui, TRUE, flags) THEN
-        GUI.SEPARATOR_TEXT("Weihnachtsgruß")
-        doc{"f"} = XMASPLAY.CLEANTEXT$(GUI.INPUT$("Von", doc{"f"}), XMASPLAY.MAX_NAME)
-        doc{"t"} = XMASPLAY.CLEANTEXT$(GUI.INPUT$("Für", doc{"t"}), XMASPLAY.MAX_NAME)
+    DIM flags = GUI.FLAG("NOTITLEBAR") + GUI.FLAG("NORESIZE") + GUI.FLAG("NOMOVE") + GUI.FLAG("NOCOLLAPSE") + GUI.FLAG("NOSAVEDSETTINGS")
+    PushTheme()
+    IF GUI.BEGIN("##panel" + STR$(ui), 0, 0, PANEL_W * ui, WIN_H * ui, flags) THEN
+        GUI.SEPARATOR_TEXT(T$("title"))
+        doc{"f"} = XMASPLAY.CLEANTEXT$(GUI.INPUT$(T$("from"), doc{"f"}), XMASPLAY.MAX_NAME)
+        doc{"t"} = XMASPLAY.CLEANTEXT$(GUI.INPUT$(T$("to"), doc{"t"}), XMASPLAY.MAX_NAME)
         DIM scenes = doc{"s"}
         IF GUI.BEGIN_TAB_BAR("scenes") THEN
             DIM si = 0
             FOR si = 0 TO LEN(scenes) - 1
-                IF GUI.BEGIN_TAB_ITEM("Szene " + STR$(si + 1)) THEN
+                IF GUI.BEGIN_TAB_ITEM(T$("scene") + " " + STR$(si + 1) + "##scene" + STR$(si)) THEN
                     GUI.PUSH_ID(si)
                     DIM sc = scenes[si]
-                    sc{"b"} = bg_ids[GUI.COMBO("Ort", MAX([0, FIND_IN_ARRAY(bg_ids, sc{"b"})]), bg_names)]
-                    sc{"a"} = act_ids[GUI.COMBO("Aktion", MAX([0, FIND_IN_ARRAY(act_ids, sc{"a"})]), act_names)]
+                    sc{"b"} = bg_ids[GUI.COMBO(T$("place"), MAX([0, FIND_IN_ARRAY(bg_ids, sc{"b"})]), bg_names)]
+                    sc{"a"} = act_ids[GUI.COMBO(T$("action"), MAX([0, FIND_IN_ARRAY(act_ids, sc{"a"})]), act_names)]
                     DIM cast = sc{"c"}
                     DIM ci = 0
                     FOR ci = 0 TO LEN(cast) - 1
                         GUI.PUSH_ID(100 + ci)
-                        DIM picked$ = cast_ids[GUI.COMBO("Figur " + STR$(ci + 1), MAX([0, FIND_IN_ARRAY(cast_ids, cast[ci])]), cast_names)]
+                        DIM picked$ = cast_ids[GUI.COMBO(T$("figure") + " " + STR$(ci + 1), MAX([0, FIND_IN_ARRAY(cast_ids, cast[ci])]), cast_names)]
                         DIM other = FIND_IN_ARRAY(cast, picked$)
                         IF other >= 0 ANDALSO other <> ci THEN
                             ' the figure already stands elsewhere: the two swap places and keep their bubbles
@@ -167,7 +215,7 @@ DO WHILE running
                         cast[ci] = picked$
                         GUI.POP_ID
                     NEXT ci
-                    IF LEN(cast) < XMASPLAY.MAX_CAST ANDALSO GUI.BUTTON("+ Figur") THEN
+                    IF LEN(cast) < XMASPLAY.MAX_CAST ANDALSO GUI.BUTTON(T$("add_fig")) THEN
                         DIM id$ = ""
                         FOR EACH id$ IN cast_ids
                             IF FIND_IN_ARRAY(cast, id$) < 0 THEN
@@ -178,7 +226,7 @@ DO WHILE running
                     ENDIF
                     IF LEN(cast) > 1 THEN
                         GUI.SAME_LINE
-                        IF GUI.BUTTON("- Figur") THEN
+                        IF GUI.BUTTON(T$("del_fig")) THEN
                             ' the last figure leaves; its bubbles go to the first
                             cast = TAKE(LEN(cast) - 1, cast)
                             DIM kept = []
@@ -191,7 +239,7 @@ DO WHILE running
                     ENDIF
                     sc{"c"} = cast
                     DIM who_names = SELECT(LAMBDA c -> cast_names[FIND_IN_ARRAY(cast_ids, c)], cast)
-                    GUI.SEPARATOR_TEXT("Sprechblasen")
+                    GUI.SEPARATOR_TEXT(T$("bubbles"))
                     DIM lines = sc{"l"}
                     DIM li = 0
                     FOR li = 0 TO LEN(lines) - 1
@@ -208,10 +256,10 @@ DO WHILE running
                         GUI.TEXT(STR$(LENW(typed$)) + "/" + STR$(XMASPLAY.MAX_LINE))
                         GUI.POP_ID
                     NEXT li
-                    IF LEN(lines) < XMASPLAY.MAX_SCENE_LINES ANDALSO GUI.BUTTON("+ Sprechblase") THEN lines = APPEND(lines, [[LEN(lines) MOD LEN(cast), ""]])
+                    IF LEN(lines) < XMASPLAY.MAX_SCENE_LINES ANDALSO GUI.BUTTON(T$("add_line")) THEN lines = APPEND(lines, [[LEN(lines) MOD LEN(cast), ""]])
                     IF LEN(lines) > 1 THEN
                         GUI.SAME_LINE
-                        IF GUI.BUTTON("- letzte") THEN lines = TAKE(LEN(lines) - 1, lines)
+                        IF GUI.BUTTON(T$("del_line")) THEN lines = TAKE(LEN(lines) - 1, lines)
                     ENDIF
                     sc{"l"} = lines
                     scenes[si] = sc
@@ -221,44 +269,45 @@ DO WHILE running
             NEXT si
             GUI.END_TAB_BAR
         ENDIF
-        IF LEN(scenes) < XMASPLAY.MAX_SCENES ANDALSO GUI.BUTTON("+ Szene") THEN scenes = APPEND(scenes, {"b": "snow", "c": ["santa", "lina"], "l": [[0, ""]], "a": "dance"})
+        IF LEN(scenes) < XMASPLAY.MAX_SCENES ANDALSO GUI.BUTTON(T$("add_scene")) THEN scenes = APPEND(scenes, {"b": "snow", "c": ["santa", "lina"], "l": [[0, ""]], "a": "dance"})
         IF LEN(scenes) > 1 THEN
             GUI.SAME_LINE
-            IF GUI.BUTTON("- letzte Szene") THEN scenes = TAKE(LEN(scenes) - 1, scenes)
+            IF GUI.BUTTON(T$("del_scene")) THEN scenes = TAKE(LEN(scenes) - 1, scenes)
         ENDIF
         doc{"s"} = scenes
-        GUI.SEPARATOR_TEXT("Musik")
-        DIM song = GUI.COMBO("Lied", doc{"m"}, SELECT(LAMBDA r -> r[1], XMASPLAY.MUSICS()))
-        DIM style = GUI.COMBO("Stil", doc{"g"}, SELECT(LAMBDA r -> r[1], XMASPLAY.GENRES()))
+        GUI.SEPARATOR_TEXT(T$("music"))
+        DIM song = GUI.COMBO(T$("song"), doc{"m"}, Column(XMASPLAY.MUSICS(), name_col))
+        DIM style = GUI.COMBO(T$("style"), doc{"g"}, Column(XMASPLAY.GENRES(), name_col))
         DIM play_now = (song <> doc{"m"} ORELSE style <> doc{"g"}) ANDALSO music_on
         doc{"m"} = song
         doc{"g"} = style
-        IF NOT music_on ANDALSO GUI.BUTTON("Musik an") THEN play_now = TRUE
+        IF NOT music_on ANDALSO GUI.BUTTON(T$("play")) THEN play_now = TRUE
         IF play_now THEN
             music_on = TRUE
             TRY
                 XMASPLAY.MUSIC(song, style)
             CATCH
-                copied$ = "Musik: " + ERRMSG$
+                copied$ = T$("music") + ": " + ERRMSG$
             ENDTRY
         ENDIF
-        GUI.SEPARATOR_TEXT("Vorschau")
-        IF GUI.BUTTON("Von vorn") THEN t_story = ms_now
-        GUI.SEPARATOR_TEXT("Teilen")
+        GUI.SEPARATOR_TEXT(T$("preview"))
+        IF GUI.BUTTON(T$("restart")) THEN t_story = ms_now
+        GUI.SEPARATOR_TEXT(T$("share"))
         link$ = play_url$ + XMASPLAY.ENCODE$(story)
-        IF GUI.BUTTON("Link kopieren") THEN
+        IF GUI.BUTTON(T$("copy")) THEN
             IF on_web THEN
                 TXTWRITER "/clipboard_set.txt", link$
             ELSE
                 CLIPBOARD.SET link$
             ENDIF
-            copied$ = "kopiert, " + STR$(LEN(link$)) + " Zeichen"
+            copied$ = T$("copied") + ", " + STR$(LEN(link$)) + " " + T$("chars")
         ENDIF
         GUI.SAME_LINE
         GUI.TEXT(copied$)
         GUI.TEXT_WRAPPED(link$)
     ENDIF
     GUI.END
+    GUI.POP_STYLE_COLOR(THEME_COLORS)
 
 
     frames = frames + 1

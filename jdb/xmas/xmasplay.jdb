@@ -204,6 +204,12 @@ EXPORT FUNC DECODE(code$)
     ENDTRY
 ENDFUNC
 
+' The demo story in the viewer's language.
+EXPORT FUNC DEMOFOR(lang$)
+    IF lang$ <> "en" THEN RETURN DEMO()
+    RETURN {"f": "Santa and Lina", "t": "you", "m": 1, "g": 0, "s": [{"b": "room", "c": ["santa", "lina"], "l": [[0, "Ho ho ho! Merry Christmas, so glad you are here!"], [1, "Oh, Santa! Did you bring cookies?"], [0, "Even better: a present, just for you!"]], "a": "gift"}, {"b": "forest", "c": ["rudi", "pino"], "l": [[0, "Snow! Finally snow!"], [1, "Last one to the pond is a snowman!"]], "a": "snowball"}]}
+ENDFUNC
+
 EXPORT FUNC DEMO()
     RETURN {"f": "Santa und Lina", "t": "dich", "m": 0, "g": 0, "s": [{"b": "room", "c": ["santa", "lina"], "l": [[0, "Ho ho ho! Frohe Weihnachten, schön, dass du da bist!"], [1, "Oh, der Weihnachtsmann! Hast du Kekse mitgebracht?"], [0, "Viel besser: ein Geschenk, nur für dich!"]], "a": "gift"}, {"b": "snow", "c": ["lina", "santa"], "l": [[0, "Draußen schneit es! Komm, wir spielen!"], [1, "Hohoho, ich werfe aber sehr gut!"]], "a": "snowball"}]}
 ENDFUNC
@@ -1059,8 +1065,9 @@ EXPORT SUB FRAME(parts, story, t, st)
         DrawCast(parts, sc, poses)
         DIM pulse = SIN(t * 4) * 6
         ROUNDED_RECT 150 - pulse, 1150 - pulse / 2, 420 + pulse * 2, 90 + pulse, 34, TRUE, 216, 34, 52
-        DIM call$ = "Tippen!"
-        IF story{"t"} <> "" THEN call$ = "Für " + story{"t"} + ": tippen!"
+        DIM lang$ = parts{"lang"} ?? "de"
+        DIM call$ = Say$(lang$, "tap")
+        IF story{"t"} <> "" THEN call$ = Say$(lang$, "for") + " " + story{"t"} + ": " + Say$(lang$, "tap_low")
         DIM cw = GFX.TEXTSIZE(call$)[0]
         TEXT (FW - cw) / 2, 1176, call$, 255, 255, 255
         RETURN
@@ -1110,16 +1117,35 @@ EXPORT SUB FRAME(parts, story, t, st)
     DrawHearts(room{"heart"}, et, 360, 760)
     DrawCast(parts, sc, poses)
     DrawConfetti(et)
-    DIM card$ = "Frohe Weihnachten!"
+    DIM lang$ = parts{"lang"} ?? "de"
+    DIM rows = [Say$(lang$, "merry")]
+    DIM names$ = ""
     IF story{"f"} <> "" ANDALSO story{"t"} <> "" THEN
-        card$ = "Von " + story{"f"} + " für " + story{"t"}
+        names$ = Say$(lang$, "from") + " " + story{"f"} + " " + Say$(lang$, "for_low") + " " + story{"t"}
     ELSEIF story{"f"} <> "" THEN
-        card$ = "Von " + story{"f"}
+        names$ = Say$(lang$, "from") + " " + story{"f"}
     ENDIF
-    DIM tw = GFX.TEXTSIZE(card$)[0]
-    ROUNDED_RECT (FW - tw) / 2 - 30, 150, tw + 60, 76, 30, TRUE, 216, 34, 52
-    TEXT (FW - tw) / 2, 168, card$, 255, 245, 220
+    IF names$ <> "" THEN rows = APPEND(rows, Wrap(names$, FW - 120))
+    DIM widest = MAX(SELECT(LAMBDA r -> GFX.TEXTSIZE(r)[0], rows))
+    ROUNDED_RECT (FW - widest) / 2 - 30, 140, widest + 60, 40 + LEN(rows) * 44, 30, TRUE, 216, 34, 52
+    DIM ri = 0
+    FOR ri = 0 TO LEN(rows) - 1
+        DIM rw = GFX.TEXTSIZE(rows[ri])[0]
+        TEXT (FW - rw) / 2, 160 + ri * 44, rows[ri], 255, 245, 220
+    NEXT ri
+    IF et > 4 THEN
+        DIM again$ = Say$(lang$, "again")
+        TEXT (FW - GFX.TEXTSIZE(again$)[0]) / 2, 1200, again$, 255, 255, 255
+    ENDIF
 ENDSUB
+
+' The player's own words in German or English.
+FUNC Say$(lang$, key$)
+    DIM de = {"tap": "Tippen!", "tap_low": "tippen!", "for": "Für", "for_low": "für", "from": "Von", "merry": "Frohe Weihnachten!", "again": "Nochmal? Tippen!"}
+    DIM en = {"tap": "Tap!", "tap_low": "tap!", "for": "For", "for_low": "for", "from": "From", "merry": "Merry Christmas!", "again": "Again? Tap!"}
+    IF lang$ = "en" THEN RETURN en{key$}
+    RETURN de{key$}
+ENDFUNC
 
 ' ---------------------------------------------------------------- music
 

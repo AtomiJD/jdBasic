@@ -1,0 +1,125 @@
+' The player of the Christmas story cards: plays the story of a link full
+' screen, its music starts with the first tap, a tap after the end plays it
+' again. Desktop: run from jdb/xmas, an optional argument is a story code.
+' Browser: the page hands the code over as "s" in /url_params.json; "debug"
+' shows the frame rate, "mute" keeps it silent.
+OPTION "EXPLICIT"
+
+IMPORT XMASPLAY
+
+DIM on_web = OS.GETOS$() = "WEB"
+DIM art_dir$ = IIF(on_web, "/art/", "art/")
+DIM font$ = "/jdbasic_default.ttf"
+IF NOT on_web THEN font$ = PATH.DIRNAME$(OS.SELF$()) + "/jdbasic_default.ttf"
+
+FUNC UrlParams()
+    IF NOT on_web ORELSE NOT FILE.EXISTS("/url_params.json") THEN RETURN {}
+    RETURN JSON.PARSE(TXTREADER$("/url_params.json"))
+ENDFUNC
+
+DIM url_params = UrlParams()
+DIM muted = GETENV$("XMAS_MUTE") <> "" ORELSE MAP.EXISTS(url_params, "mute")
+DIM debug = MAP.EXISTS(url_params, "debug")
+
+' "de" or "en": the viewer's language, the story itself stays as written.
+FUNC Lang$()
+    DIM l$ = LCASE$(LEFT$(GETENV$("XMAS_LANG") + ("" + (url_params{"__lang"} ?? "de")), 2))
+    IF l$ = "de" THEN RETURN "de"
+    RETURN "en"
+ENDFUNC
+
+FUNC LinkCode$()
+    IF on_web THEN RETURN "" + (url_params{"s"} ?? "")
+    DIM a = OS.ARGS()
+    IF LEN(a) > 1 THEN RETURN a[LEN(a) - 1]
+    RETURN ""
+ENDFUNC
+
+DIM story = XMASPLAY.DECODE(LinkCode$())
+IF ISNONE(story) THEN story = XMASPLAY.CLEAN(XMASPLAY.DEMOFOR(Lang$()))
+DIM fallback = XMASPLAY.CLEAN(XMASPLAY.DEMOFOR(Lang$()))
+
+SCREEN XMASPLAY.FW, XMASPLAY.FH, "Frohe Weihnachten"
+SETFONT font$, 30
+
+DIM t_load = TICK()
+DIM parts = XMASPLAY.PREPARE(XMASPLAY.LOADPARTS(art_dir$), story)
+parts{"lang"} = Lang$()
+DIM load_ms = TICK() - t_load
+
+DIM started = FALSE
+DIM music_on = FALSE
+DIM running = TRUE
+DIM t_start = TICK()
+DIM t_run = 0
+
+SUB OnTap(info)
+    IF started ANDALSO (TICK() - t_run) / 1000 > XMASPLAY.LENGTH(story) + 3 THEN
+        t_run = TICK()
+        RETURN
+    ENDIF
+    IF started THEN RETURN
+    started = TRUE
+    t_run = TICK()
+    IF muted ORELSE music_on THEN RETURN
+    music_on = TRUE
+    TRY
+        XMASPLAY.MUSIC(story{"m"}, story{"g"})
+    CATCH
+        PRINT "music: "; ERRMSG$
+    ENDTRY
+ENDSUB
+
+SUB OnQuit(info)
+    running = FALSE
+ENDSUB
+
+ON "MOUSEDOWN" CALL OnTap@
+ON "QUIT" CALL OnQuit@
+
+DIM frames = 0
+DIM fps = 0
+DIM fps_mark = TICK()
+
+' XMAS_SHOTS=<dir> starts without a tap, saves frames at the story seconds
+' of XMAS_SHOTS_AT (default: the first bubble and the end) and quits.
+DIM shot_dir$ = GETENV$("XMAS_SHOTS")
+DIM shot_times = [1, XMASPLAY.LENGTH(story) + 1.5]
+IF GETENV$("XMAS_SHOTS_AT") <> "" THEN shot_times = SELECT(LAMBDA s -> VAL(s), SPLIT(GETENV$("XMAS_SHOTS_AT"), ","))
+DIM shot_i = 0
+' XMAS_SHOT_REGION=x,y,w,h saves only that part of the frame
+DIM shot_region = []
+IF GETENV$("XMAS_SHOT_REGION") <> "" THEN shot_region = SELECT(LAMBDA v -> VAL(v), SPLIT(GETENV$("XMAS_SHOT_REGION"), ","))
+IF shot_dir$ <> "" THEN
+    started = TRUE
+    t_run = TICK()
+ENDIF
+
+DO WHILE running
+    DIM ms_now = TICK()
+    TRY
+        XMASPLAY.FRAME(parts, story, (ms_now - t_start) / 1000, IIF(started, (ms_now - t_run) / 1000, -1))
+    CATCH
+        PRINT "frame: "; ERRMSG$
+        story = fallback
+        parts = XMASPLAY.PREPARE(parts, story)
+    ENDTRY
+    frames = frames + 1
+    IF ms_now - fps_mark >= 1000 THEN
+        fps = frames
+        frames = 0
+        fps_mark = ms_now
+    ENDIF
+    IF debug THEN TEXT 10, XMASPLAY.FH - 40, STR$(fps) + " fps  load " + STR$(INT(load_ms)) + " ms", 255, 255, 0
+    IF shot_dir$ <> "" ANDALSO shot_i < LEN(shot_times) ANDALSO (ms_now - t_run) / 1000 >= shot_times[shot_i] THEN
+        IF LEN(shot_region) = 4 THEN
+            GFX.SAVE_SCREENSHOT(shot_dir$ + "/xmas_shot" + STR$(shot_i) + ".png", shot_region[0], shot_region[1], shot_region[2], shot_region[3])
+        ELSE
+            GFX.SAVE_SCREENSHOT(shot_dir$ + "/xmas_shot" + STR$(shot_i) + ".png")
+        ENDIF
+        shot_i = shot_i + 1
+        IF shot_i = LEN(shot_times) THEN running = FALSE
+    ENDIF
+    SCREENFLIP
+    SLEEP 1
+LOOP

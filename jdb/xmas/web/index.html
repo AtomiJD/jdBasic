@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ein Weihnachtsgruß für dich</title>
+<meta name="description" content="Eine kleine animierte Weihnachtsgeschichte mit Musik, nur für dich. A little animated Christmas story with music, just for you.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Ein Weihnachtsgruß für dich 🎄">
+<meta property="og:description" content="Tippen zum Abspielen - mit Musik. Tap to play - with music.">
+<meta property="og:image" content="https://vvss.jdbasic.tech/xmas/og.jpg">
+<meta property="og:image:width" content="720">
+<meta property="og:image:height" content="720">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8E%84%3C/text%3E%3C/svg%3E">
+<style>
+  :root { --bg: #14342a; --card: #1e4a3b; --red: #c8283a; --cream: #fff6e4; --gold: #ffd64a; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: radial-gradient(circle at 50% 0%, #2a5a48, var(--bg) 70%); color: var(--cream);
+         font: 17px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; display: flex; align-items: center; justify-content: center; padding: 16px; }
+  main { max-width: 440px; width: 100%; text-align: center; }
+  img { width: 100%; border-radius: 18px; box-shadow: 0 10px 40px rgba(0,0,0,.45); }
+  h1 { font-size: 26px; margin: 18px 0 6px; }
+  p { margin: 8px 0; color: #e8dcc6; }
+  a.btn { display: inline-block; margin: 14px 0 6px; padding: 14px 26px; border-radius: 30px; background: var(--red); color: #fff; text-decoration: none; font-weight: 600; font-size: 18px; }
+  .hint { font-size: 14px; color: #c9bba3; }
+  noscript p { color: var(--gold); }
+</style>
+</head>
+<body>
+<main id="info" hidden>
+  <img src="og.jpg" alt="">
+  <h1 id="h"></h1>
+  <p id="t"></p>
+  <a class="btn" id="demo" href="play/?prog=player&fs=1&assets=assets.txt"></a>
+  <p class="hint" id="hint"></p>
+</main>
+<noscript><p>Bitte JavaScript einschalten. Please enable JavaScript.</p></noscript>
+<script>
+  (function () {
+    var q = new URLSearchParams(location.search);
+    var base = 'play/?fs=1&assets=assets.txt&prog=';
+    var s = q.get('s');
+    if (s && /^[0-9A-Za-z_-]{1,2048}$/.test(s)) { location.replace(base + 'player&s=' + encodeURIComponent(s)); return; }
+    var wide = window.matchMedia('(pointer: fine) and (min-width: 1000px)').matches;
+    if (wide && !q.has('info')) { location.replace(base + 'editor'); return; }
+    var de = (navigator.language || 'de').slice(0, 2) === 'de';
+    document.documentElement.lang = de ? 'de' : 'en';
+    document.getElementById('h').textContent = de ? 'Weihnachtsgrüße mit Musik' : 'Christmas greetings with music';
+    document.getElementById('t').textContent = de
+      ? 'Kleine animierte Geschichten mit Santa, Lina, Rudi und ihren Freunden - zum Verschicken als Link.'
+      : 'Little animated stories with Santa, Lina, Rudi and their friends - to send as a link.';
+    document.getElementById('demo').textContent = de ? 'Demo ansehen' : 'Watch the demo';
+    document.getElementById('hint').textContent = de
+      ? 'Eigene Grüße erstellst du am PC: einfach diese Seite dort öffnen.'
+      : 'Make your own on a computer: just open this page there.';
+    document.getElementById('info').hidden = false;
+  })();
+</script>
+</body>
+</html>
