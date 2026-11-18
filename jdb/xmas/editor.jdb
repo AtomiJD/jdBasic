@@ -25,8 +25,8 @@ DIM name_col = IIF(lang$ = "de", 1, 2)
 
 ' The editor's own words in German or English.
 FUNC T$(key$)
-    DIM de = {"title": "Weihnachtsgruß", "from": "Von", "to": "Für", "scene": "Szene", "place": "Ort", "action": "Aktion", "figure": "Figur", "add_fig": "+ Figur", "del_fig": "- Figur", "bubbles": "Sprechblasen", "add_line": "+ Sprechblase", "del_line": "- letzte", "add_scene": "+ Szene", "del_scene": "- letzte Szene", "music": "Musik", "song": "Lied", "style": "Stil", "play": "Musik an", "preview": "Vorschau", "restart": "Von vorn", "share": "Teilen", "copy": "Link kopieren", "copied": "kopiert", "chars": "Zeichen"}
-    DIM en = {"title": "Christmas greeting", "from": "From", "to": "For", "scene": "Scene", "place": "Place", "action": "Action", "figure": "Figure", "add_fig": "+ Figure", "del_fig": "- Figure", "bubbles": "Speech bubbles", "add_line": "+ Bubble", "del_line": "- Last", "add_scene": "+ Scene", "del_scene": "- Last scene", "music": "Music", "song": "Song", "style": "Style", "play": "Music on", "preview": "Preview", "restart": "Restart", "share": "Share", "copy": "Copy link", "copied": "copied", "chars": "characters"}
+    DIM de = {"title": "Weihnachtsgruß", "from": "Von", "to": "Für", "scene": "Szene", "place": "Ort", "action": "Aktion", "figure": "Figur", "add_fig": "+ Figur", "del_fig": "- Figur", "steps": "Ablauf", "add_line": "+ Sprechblase", "add_act": "+ Aktion", "add_scene": "+ Szene", "del_scene": "- letzte Szene", "music": "Musik", "song": "Lied", "style": "Stil", "play": "Musik an", "preview": "Vorschau", "restart": "Von vorn", "share": "Teilen", "copy": "Link kopieren", "copied": "kopiert", "chars": "Zeichen"}
+    DIM en = {"title": "Christmas greeting", "from": "From", "to": "For", "scene": "Scene", "place": "Place", "action": "Action", "figure": "Figure", "add_fig": "+ Figure", "del_fig": "- Figure", "steps": "Sequence", "add_line": "+ Bubble", "add_act": "+ Action", "add_scene": "+ Scene", "del_scene": "- Last scene", "music": "Music", "song": "Song", "style": "Style", "play": "Music on", "preview": "Preview", "restart": "Restart", "share": "Share", "copy": "Copy link", "copied": "copied", "chars": "characters"}
     IF lang$ = "en" THEN RETURN en{key$}
     RETURN de{key$}
 ENDFUNC
@@ -106,42 +106,85 @@ DIM act_names = Column(XMASPLAY.ACTIONS(), name_col)
 DIM cast_ids = SELECT(LAMBDA r -> r[0], XMASPLAY.CASTS())
 DIM cast_names = Column(XMASPLAY.CASTS(), name_col)
 
-' The bubbles with the speakers of places a and b exchanged.
-FUNC SwapSpeakers(lines, a, b)
+' The steps with the figures of places a and b exchanged, in bubbles and actions.
+FUNC SwapSpeakers(steps, a, b)
     DIM out = []
     DIM ln = NONE
-    FOR EACH ln IN lines
-        DIM who = ln[0]
-        IF who = a THEN
-            who = b
-        ELSEIF who = b THEN
-            who = a
+    FOR EACH ln IN steps
+        IF XMASPLAY.ISACT(ln) THEN
+            out = APPEND(out, [[ln[0], Swapped(ln[1], a, b), Swapped(ln[2], a, b)]])
+        ELSE
+            out = APPEND(out, [[Swapped(ln[0], a, b), ln[1]]])
         ENDIF
-        out = APPEND(out, [[who, ln[1]]])
     NEXT ln
     RETURN out
 ENDFUNC
 
-' How many bubbles of the first n of a scene's lines have text.
-FUNC Said(lines, n)
-    DIM said_n = 0
-    DIM k = 0
-    FOR k = 0 TO MIN([n, LEN(lines)]) - 1
-        IF TRIM$(lines[k][1]) <> "" THEN said_n = said_n + 1
-    NEXT k
-    RETURN said_n
+FUNC Swapped(i, a, b)
+    IF i = a THEN RETURN b
+    IF i = b THEN RETURN a
+    RETURN i
 ENDFUNC
 
-' Seconds into the played story where the panel's scene si, bubble li
-' starts; scenes and bubbles without text are not played.
+' The steps once the cast has only n places: what the leaving figure did
+' goes to the first one.
+FUNC Leave(steps, n)
+    DIM out = []
+    DIM ln = NONE
+    FOR EACH ln IN steps
+        IF XMASPLAY.ISACT(ln) THEN
+            out = APPEND(out, [[ln[0], IIF(ln[1] >= n, 0, ln[1]), IIF(ln[2] >= n, 0, ln[2])]])
+        ELSE
+            out = APPEND(out, [[IIF(ln[0] >= n, 0, ln[0]), ln[1]]])
+        ENDIF
+    NEXT ln
+    RETURN out
+ENDFUNC
+
+' The steps with step i and the one after it exchanged.
+FUNC SwapSteps(steps, i)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(steps) - 1
+        DIM pick = k
+        IF k = i THEN pick = i + 1
+        IF k = i + 1 THEN pick = i
+        out = APPEND(out, [steps[pick]])
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The steps without step i.
+FUNC WithoutStep(steps, i)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(steps) - 1
+        IF k <> i THEN out = APPEND(out, [steps[k]])
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' TRUE for a step the player plays: an action, or a bubble with text.
+FUNC Plays(ln)
+    IF XMASPLAY.ISACT(ln) THEN RETURN TRUE
+    RETURN TRIM$(ln[1]) <> ""
+ENDFUNC
+
+' Seconds into the played story where the panel's scene si, step li starts;
+' bubbles without text and scenes with nothing to play are skipped.
 FUNC StartOf(d, si, li)
     DIM at = 0
     DIM k = 0
-    FOR k = 0 TO si - 1
-        DIM n = Said(d{"s"}[k]{"l"}, XMASPLAY.MAX_SCENE_LINES)
-        IF n > 0 THEN at = at + n * XMASPLAY.PER_LINE + XMASPLAY.ACTION_LEN
+    DIM j = 0
+    FOR k = 0 TO si
+        DIM steps = d{"s"}[k]{"l"}
+        DIM upto = LEN(steps)
+        IF k = si THEN upto = li
+        FOR j = 0 TO upto - 1
+            IF Plays(steps[j]) THEN at = at + XMASPLAY.STEPLEN(steps[j])
+        NEXT j
     NEXT k
-    RETURN at + Said(d{"s"}[si]{"l"}, li) * XMASPLAY.PER_LINE
+    RETURN at
 ENDFUNC
 
 ' The story the preview plays: the panel's, held to the limits.
@@ -207,7 +250,6 @@ DO WHILE running
                     GUI.PUSH_ID(si)
                     DIM sc = scenes[si]
                     sc{"b"} = bg_ids[GUI.COMBO(T$("place"), MAX([0, FIND_IN_ARRAY(bg_ids, sc{"b"})]), bg_names)]
-                    sc{"a"} = act_ids[GUI.COMBO(T$("action"), MAX([0, FIND_IN_ARRAY(act_ids, sc{"a"})]), act_names)]
                     DIM cast = sc{"c"}
                     DIM ci = 0
                     FOR ci = 0 TO LEN(cast) - 1
@@ -234,39 +276,71 @@ DO WHILE running
                     IF LEN(cast) > 1 THEN
                         GUI.SAME_LINE
                         IF GUI.BUTTON(T$("del_fig")) THEN
-                            ' the last figure leaves; its bubbles go to the first
                             cast = TAKE(LEN(cast) - 1, cast)
-                            DIM kept = []
-                            DIM ln = NONE
-                            FOR EACH ln IN sc{"l"}
-                                kept = APPEND(kept, [[IIF(ln[0] >= LEN(cast), 0, ln[0]), ln[1]]])
-                            NEXT ln
-                            sc{"l"} = kept
+                            sc{"l"} = Leave(sc{"l"}, LEN(cast))
                         ENDIF
                     ENDIF
                     sc{"c"} = cast
                     DIM who_names = SELECT(LAMBDA c -> cast_names[FIND_IN_ARRAY(cast_ids, c)], cast)
-                    GUI.SEPARATOR_TEXT(T$("bubbles"))
+                    GUI.SEPARATOR_TEXT(T$("steps"))
                     DIM lines = sc{"l"}
+                    DIM n_said = 0
+                    DIM n_done = 0
+                    DIM move_up = -1
+                    DIM move_down = -1
+                    DIM drop_at = -1
                     DIM li = 0
                     FOR li = 0 TO LEN(lines) - 1
                         GUI.PUSH_ID(200 + li)
-                        GUI.SET_NEXT_ITEM_WIDTH(130 * ui)
-                        DIM who = GUI.COMBO("##who", CLAMP(lines[li][0], 0, LEN(cast) - 1), who_names)
+                        DIM before = JSON.STRINGIFY$(lines[li])
+                        IF XMASPLAY.ISACT(lines[li]) THEN
+                            n_done = n_done + 1
+                            GUI.SET_NEXT_ITEM_WIDTH(170 * ui)
+                            DIM act$ = act_ids[GUI.COMBO("##act", MAX([0, FIND_IN_ARRAY(act_ids, lines[li][0])]), act_names)]
+                            GUI.SAME_LINE
+                            GUI.SET_NEXT_ITEM_WIDTH(120 * ui)
+                            DIM by = GUI.COMBO("##by", CLAMP(lines[li][1], 0, LEN(cast) - 1), who_names)
+                            DIM onto = CLAMP(lines[li][2], 0, LEN(cast) - 1)
+                            IF XMASPLAY.DIRECTED(act$) ANDALSO LEN(cast) > 1 THEN
+                                GUI.SAME_LINE
+                                GUI.TEXT("->")
+                                GUI.SAME_LINE
+                                GUI.SET_NEXT_ITEM_WIDTH(120 * ui)
+                                onto = GUI.COMBO("##to", onto, who_names)
+                            ENDIF
+                            lines[li] = [act$, by, onto]
+                        ELSE
+                            n_said = n_said + 1
+                            GUI.SET_NEXT_ITEM_WIDTH(120 * ui)
+                            DIM who = GUI.COMBO("##who", CLAMP(lines[li][0], 0, LEN(cast) - 1), who_names)
+                            GUI.SAME_LINE
+                            GUI.SET_NEXT_ITEM_WIDTH((PANEL_W - 340) * ui)
+                            DIM typed$ = GUI.INPUT$("##text", lines[li][1])
+                            IF LENW(typed$) > XMASPLAY.MAX_LINE THEN typed$ = LEFTW$(typed$, XMASPLAY.MAX_LINE)
+                            lines[li] = [who, typed$]
+                            GUI.SAME_LINE
+                            GUI.TEXT(STR$(LENW(typed$)) + "/" + STR$(XMASPLAY.MAX_LINE))
+                        ENDIF
+                        IF JSON.STRINGIFY$(lines[li]) <> before THEN t_story = ms_now - StartOf(doc, si, li) * 1000
                         GUI.SAME_LINE
-                        GUI.SET_NEXT_ITEM_WIDTH((PANEL_W - 230) * ui)
-                        DIM typed$ = GUI.INPUT$("##text", lines[li][1])
-                        IF LENW(typed$) > XMASPLAY.MAX_LINE THEN typed$ = LEFTW$(typed$, XMASPLAY.MAX_LINE)
-                        IF typed$ <> lines[li][1] ORELSE who <> lines[li][0] THEN t_story = ms_now - StartOf(doc, si, li) * 1000
-                        lines[li] = [who, typed$]
+                        IF li > 0 ANDALSO GUI.BUTTON("^") THEN move_up = li
                         GUI.SAME_LINE
-                        GUI.TEXT(STR$(LENW(typed$)) + "/" + STR$(XMASPLAY.MAX_LINE))
+                        IF li < LEN(lines) - 1 ANDALSO GUI.BUTTON("v") THEN move_down = li
+                        GUI.SAME_LINE
+                        IF LEN(lines) > 1 ANDALSO GUI.BUTTON("x") THEN drop_at = li
                         GUI.POP_ID
                     NEXT li
-                    IF LEN(lines) < XMASPLAY.MAX_SCENE_LINES ANDALSO GUI.BUTTON(T$("add_line")) THEN lines = APPEND(lines, [[LEN(lines) MOD LEN(cast), ""]])
-                    IF LEN(lines) > 1 THEN
-                        GUI.SAME_LINE
-                        IF GUI.BUTTON(T$("del_line")) THEN lines = TAKE(LEN(lines) - 1, lines)
+                    IF move_up > 0 THEN lines = SwapSteps(lines, move_up - 1)
+                    IF move_down >= 0 THEN lines = SwapSteps(lines, move_down)
+                    IF drop_at >= 0 THEN lines = WithoutStep(lines, drop_at)
+                    DIM drew_add = FALSE
+                    IF n_said < XMASPLAY.MAX_SCENE_LINES THEN
+                        drew_add = TRUE
+                        IF GUI.BUTTON(T$("add_line")) THEN lines = APPEND(lines, [[n_said MOD LEN(cast), ""]])
+                    ENDIF
+                    IF n_done < XMASPLAY.MAX_SCENE_ACTIONS THEN
+                        IF drew_add THEN GUI.SAME_LINE
+                        IF GUI.BUTTON(T$("add_act")) THEN lines = APPEND(lines, [["laugh", 0, MIN([1, LEN(cast) - 1])]])
                     ENDIF
                     sc{"l"} = lines
                     scenes[si] = sc
@@ -276,7 +350,7 @@ DO WHILE running
             NEXT si
             GUI.END_TAB_BAR
         ENDIF
-        IF LEN(scenes) < XMASPLAY.MAX_SCENES ANDALSO GUI.BUTTON(T$("add_scene")) THEN scenes = APPEND(scenes, {"b": "snow", "c": ["santa", "lina"], "l": [[0, ""]], "a": "dance"})
+        IF LEN(scenes) < XMASPLAY.MAX_SCENES ANDALSO GUI.BUTTON(T$("add_scene")) THEN scenes = APPEND(scenes, {"b": "snow", "c": ["santa", "lina"], "l": [[0, ""], ["dance", 0, 1]]})
         IF LEN(scenes) > 1 THEN
             GUI.SAME_LINE
             IF GUI.BUTTON(T$("del_scene")) THEN scenes = TAKE(LEN(scenes) - 1, scenes)

@@ -40,12 +40,22 @@ FUNC InLimits(s)
     DIM sc = NONE
     FOR EACH sc IN s{"s"}
         IF LEN(sc{"c"}) < 1 ORELSE LEN(sc{"c"}) > XMASPLAY.MAX_CAST THEN RETURN FALSE
-        IF LEN(sc{"l"}) > XMASPLAY.MAX_SCENE_LINES THEN RETURN FALSE
+        IF LEN(sc{"l"}) = 0 THEN RETURN FALSE
+        DIM n_lines = 0
+        DIM n_acts = 0
         DIM ln = NONE
         FOR EACH ln IN sc{"l"}
-            IF ln[0] < 0 ORELSE ln[0] >= LEN(sc{"c"}) THEN RETURN FALSE
-            IF LENW(ln[1]) > XMASPLAY.MAX_LINE ORELSE ln[1] = "" THEN RETURN FALSE
+            IF XMASPLAY.ISACT(ln) THEN
+                n_acts = n_acts + 1
+                IF LEN(ln) <> 3 THEN RETURN FALSE
+                IF ln[1] < 0 ORELSE ln[1] >= LEN(sc{"c"}) ORELSE ln[2] < 0 ORELSE ln[2] >= LEN(sc{"c"}) THEN RETURN FALSE
+            ELSE
+                n_lines = n_lines + 1
+                IF ln[0] < 0 ORELSE ln[0] >= LEN(sc{"c"}) THEN RETURN FALSE
+                IF LENW(ln[1]) > XMASPLAY.MAX_LINE ORELSE ln[1] = "" THEN RETURN FALSE
+            ENDIF
         NEXT ln
+        IF n_lines > XMASPLAY.MAX_SCENE_LINES ORELSE n_acts > XMASPLAY.MAX_SCENE_ACTIONS THEN RETURN FALSE
     NEXT sc
     RETURN TRUE
 ENDFUNC
@@ -75,7 +85,8 @@ Check(InLimits(back), "demo in limits")
 DIM old = XMASPLAY.DECODE("1FYw9CgIxEEav8u3UwQNsp4VoZWFhIRaz2XFnID-QRATFa3kBL2YWXvOK994ULEml8UqHDF0ZsC-_rwbzKriIaWKvTZJDMJkEp8gDOTp6hXL32QqkPbli4fTCTmpOsxSpiNYWmcqab3D2yg9EDgPdHN1LjjTS1qvFPmu5Sx_T5w8")
 Check(NOT ISNONE(old), "v1 link decodes")
 IF NOT ISNONE(old) THEN
-    Check(LEN(old{"s"}) = 1 ANDALSO LEN(old{"s"}[0]{"l"}) = 2, "v1 link: one scene, two lines")
+    Check(LEN(old{"s"}) = 1 ANDALSO LEN(old{"s"}[0]{"l"}) = 3, "v1 link: one scene, two lines and its action")
+    Check(XMASPLAY.ISACT(old{"s"}[0]{"l"}[2]) ANDALSO old{"s"}[0]{"l"}[2][0] = "dance", "v1 link: the action comes last")
     Check(old{"s"}[0]{"l"}[1][0] = 1, "v1 link: the second line is Lina's")
 ENDIF
 
@@ -123,7 +134,7 @@ DIM wild$ = "{" + q$ + "f" + q$ + ":7," + q$ + "t" + q$ + ":[1]," + q$ + "m" + q
 DIM w = XMASPLAY.DECODE(Craft$(wild$))
 Check(NOT ISNONE(w) ANDALSO InLimits(w), "wrong types are cleaned")
 IF NOT ISNONE(w) THEN
-    Check(w{"m"} = 0 ANDALSO w{"f"} = "" ANDALSO w{"s"}[0]{"b"} = "room" ANDALSO w{"s"}[0]{"a"} = "laugh", "wrong types fall back to defaults")
+    Check(w{"m"} = 0 ANDALSO w{"f"} = "" ANDALSO w{"s"}[0]{"b"} = "room" ANDALSO LEN(w{"s"}[0]{"l"}) = 1, "wrong types fall back to defaults, an unknown action is dropped")
 ENDIF
 DIM many = {"f": REPEAT$("x", 500), "t": "y", "s": []}
 FOR i = 1 TO 5
@@ -134,13 +145,29 @@ Check(NOT ISNONE(m) ANDALSO InLimits(m), "too much of everything is cut to the l
 DIM brackets = {"f": "a", "t": "b", "s": [{"b": "room", "c": ["santa"], "l": [[0, REPEAT$("[", 70)]], "a": "dance"}]}
 DIM br = XMASPLAY.DECODE(XMASPLAY.ENCODE$(brackets))
 Check(NOT ISNONE(br), "brackets inside a bubble are text, not nesting")
-DIM gap = {"f": "a", "t": "b", "s": [{"b": "room", "c": ["santa"], "l": [[0, "  "], [0, ""]], "a": "dance"}, {"b": "snow", "c": ["lina"], "l": [[0, "hallo"]], "a": "hug"}]}
+DIM gap = {"f": "a", "t": "b", "s": [{"b": "room", "c": ["santa"], "l": [[0, "  "], [0, ""]]}, {"b": "snow", "c": ["lina"], "l": [[0, "hallo"]], "a": "hug"}]}
 DIM gp = XMASPLAY.DECODE(XMASPLAY.ENCODE$(gap))
 Check(NOT ISNONE(gp) ANDALSO LEN(gp{"s"}) = 1 ANDALSO gp{"s"}[0]{"b"} = "snow", "a scene without text is dropped")
 DIM trio = {"f": "a", "t": "b", "s": [{"b": "room", "c": ["pip", "rudi", "pino"], "l": [[2, "hallo"]], "a": "dance"}]}
 DIM tr = XMASPLAY.DECODE(XMASPLAY.ENCODE$(trio))
 Check(NOT ISNONE(tr) ANDALSO JSON.STRINGIFY$(tr{"s"}[0]{"c"}) = JSON.STRINGIFY$(["pip", "rudi", "pino"]), "every known figure keeps its place in the cast")
 Check(NOT ISNONE(tr) ANDALSO tr{"s"}[0]{"l"}[0][0] = 2, "a bubble keeps its third speaker")
+' actions between the bubbles keep their order; too many are cut, unknown ones and wrong figures are mended
+DIM mixed = {"f": "a", "t": "b", "s": [{"b": "room", "c": ["santa", "lina"], "l": [[0, "eins"], ["gift", 0, 1], [1, "zwei"], ["hug", 1, 9], ["boom", 0, 1], ["kiss", "x", 0], ["wave", 0], ["dance", 0, 0], ["laugh", 1, 1], [0, "drei"]]}]}
+DIM mx = XMASPLAY.DECODE(XMASPLAY.ENCODE$(mixed))
+Check(NOT ISNONE(mx) ANDALSO InLimits(mx), "a mixed scene stays in its limits")
+IF NOT ISNONE(mx) THEN
+    DIM got = mx{"s"}[0]{"l"}
+    Check(LEN(got) = 7, "four actions and three bubbles are kept, the unknown action is dropped (" + STR$(LEN(got)) + ")")
+    IF LEN(got) = 7 THEN
+    Check(JSON.STRINGIFY$(got[1]) = JSON.STRINGIFY$(["gift", 0, 1]), "an action keeps its place between the bubbles")
+    Check(got[3][2] = 1, "a figure out of the cast is clamped into it")
+    Check(got[4][1] = 0, "a figure that is no number becomes the first")
+    Check(JSON.STRINGIFY$(got[6]) = JSON.STRINGIFY$([0, "drei"]), "a bubble after the fifth action still counts")
+    ENDIF
+ENDIF
+DIM only_act = {"f": "a", "t": "b", "s": [{"b": "room", "c": ["santa", "lina"], "l": [["dance", 0, 1]]}]}
+Check(NOT ISNONE(XMASPLAY.DECODE(XMASPLAY.ENCODE$(only_act))), "a scene of actions alone plays")
 Check(ISNONE(XMASPLAY.DECODE("2" + REPEAT$("A", 2100))), "an overlong code is refused")
 Check(ISNONE(XMASPLAY.DECODE("")), "an empty code")
 Check(ISNONE(XMASPLAY.DECODE("9abc")), "an unknown version")
