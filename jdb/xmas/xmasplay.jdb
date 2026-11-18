@@ -160,8 +160,12 @@ EXPORT FUNC CLEAN(raw)
     NEXT sc
     IF LEN(scenes) = 0 THEN RETURN NONE
     DIM m = 0
-    IF ISNUM(raw{"m"} ?? NONE) THEN m = CLAMP(INT(raw{"m"}), 0, LEN(MUSICS()) - 1)
-    RETURN {"f": CLEANTEXT$(raw{"f"} ?? "", MAX_NAME), "t": CLEANTEXT$(raw{"t"} ?? "", MAX_NAME), "m": m, "s": scenes}
+    IF ISNUM(raw{"m"} ?? NONE) THEN m = INT(raw{"m"})
+    IF m < 0 ORELSE m >= LEN(MUSICS()) THEN m = 0
+    DIM g = 0
+    IF ISNUM(raw{"g"} ?? NONE) THEN g = INT(raw{"g"})
+    IF g < 0 ORELSE g >= LEN(GENRES()) THEN g = 0
+    RETURN {"f": CLEANTEXT$(raw{"f"} ?? "", MAX_NAME), "t": CLEANTEXT$(raw{"t"} ?? "", MAX_NAME), "m": m, "g": g, "s": scenes}
 ENDFUNC
 
 ' A story of the first link format: lines said in turn by Santa and Lina in the room.
@@ -174,7 +178,7 @@ FUNC FromV1(raw)
         lines = APPEND(lines, [[i MOD 2, v]])
         i = i + 1
     NEXT v
-    RETURN {"f": raw{"from"} ?? "", "t": raw{"to"} ?? "", "m": 0, "s": [{"b": "room", "c": ["santa", "lina"], "l": lines, "a": "dance"}]}
+    RETURN {"f": raw{"from"} ?? "", "t": raw{"to"} ?? "", "m": 0, "g": 0, "s": [{"b": "room", "c": ["santa", "lina"], "l": lines, "a": "dance"}]}
 ENDFUNC
 
 ' The story a link carries, held to the editor's limits, or NONE.
@@ -194,7 +198,7 @@ EXPORT FUNC DECODE(code$)
 ENDFUNC
 
 EXPORT FUNC DEMO()
-    RETURN {"f": "Santa und Lina", "t": "dich", "m": 0, "s": [{"b": "room", "c": ["santa", "lina"], "l": [[0, "Ho ho ho! Frohe Weihnachten, schön, dass du da bist!"], [1, "Oh, der Weihnachtsmann! Hast du Kekse mitgebracht?"], [0, "Viel besser: ein Geschenk, nur für dich!"]], "a": "gift"}, {"b": "snow", "c": ["lina", "santa"], "l": [[0, "Draußen schneit es! Komm, wir spielen!"], [1, "Hohoho, ich werfe aber sehr gut!"]], "a": "snowball"}]}
+    RETURN {"f": "Santa und Lina", "t": "dich", "m": 0, "g": 0, "s": [{"b": "room", "c": ["santa", "lina"], "l": [[0, "Ho ho ho! Frohe Weihnachten, schön, dass du da bist!"], [1, "Oh, der Weihnachtsmann! Hast du Kekse mitgebracht?"], [0, "Viel besser: ein Geschenk, nur für dich!"]], "a": "gift"}, {"b": "snow", "c": ["lina", "santa"], "l": [[0, "Draußen schneit es! Komm, wir spielen!"], [1, "Hohoho, ich werfe aber sehr gut!"]], "a": "snowball"}]}
 ENDFUNC
 
 ' Seconds a scene lasts: its bubbles, then its action.
@@ -711,12 +715,12 @@ ENDFUNC
 
 ' A bubble whose text has typed n_chars characters, its tail towards (tx, ty).
 SUB DrawBubble(text$, n_chars, tx, ty)
-    DIM bw = 620
+    DIM bw = 560
     DIM rows = Wrap(text$, bw - 60)
     DIM bh = 40 + LEN(rows) * 44
-    DIM bx = (FW - bw) / 2
-    DIM by = MAX([40, ty - 70 - bh])
-    DIM root_x = CLAMP(tx, bx + 70, bx + bw - 70)
+    DIM bx = CLAMP(tx - bw / 2, 16, FW - bw - 16)
+    DIM by = MAX([40, ty - 110 - bh])
+    DIM root_x = CLAMP(tx + IIF(tx < FW / 2, 40, -40), bx + 60, bx + bw - 60)
     DIM root_y = by + bh - 12
     DIM seg = 0
     FOR seg = 0 TO 9
@@ -1026,45 +1030,175 @@ ENDSUB
 
 ' ---------------------------------------------------------------- music
 
-' A carol as [bpm, melody bars, bass per bar, chords per bar]; every bar of
-' a song has the same number of steps. All three are in the public domain.
+' A carol: its tempo, melody bars, the bass root and chord of each bar, the
+' bell accents per bar ("~" for none) and whether sleigh bells fit it. All
+' three are in the public domain.
 FUNC Song(m)
     IF m = 1 THEN
-        ' Jingle Bells (James Lord Pierpont, 1857), the chorus, 4/4 in quarters
-        RETURN [118, ["e5 e5 e5@2", "e5 e5 e5@2", "e5@2 g5@2 c5@3 d5", "e5@4", "f5 f5 f5 f5", "f5 e5 e5 [e5 e5]", "e5 d5 d5 e5", "d5@2 g5@2", "e5 e5 e5@2", "e5 e5 e5@2", "e5@2 g5@2 c5@3 d5", "e5@4", "f5 f5 f5 f5", "f5 e5 e5 [e5 e5]", "g5 g5 f5 d5", "c5@4"], "<c2 c2 c2 c2 f1 c2 g1 g1 c2 c2 c2 c2 f1 c2 g1 c2>", "<C C C C F C G7 G7 C C C C F C G7 C>"]
+        ' Jingle Bells (James Lord Pierpont, 1857), the chorus, 4/4
+        RETURN {"bpm": 118, "bars": ["e5 e5 e5@2", "e5 e5 e5@2", "e5@2 g5@2 c5@3 d5", "e5@4", "f5 f5 f5 f5", "f5 e5 e5 [e5 e5]", "e5 d5 d5 e5", "d5@2 g5@2", "e5 e5 e5@2", "e5 e5 e5@2", "e5@2 g5@2 c5@3 d5", "e5@4", "f5 f5 f5 f5", "f5 e5 e5 [e5 e5]", "g5 g5 f5 d5", "c5@4"], "roots": ["c2", "c2", "c2", "c2", "f1", "c2", "g1", "g1", "c2", "c2", "c2", "c2", "f1", "c2", "g1", "c2"], "chords": ["C", "C", "C", "C", "F", "C", "G7", "G7", "C", "C", "C", "C", "F", "C", "G7", "C"], "bells": ["~", "~", "~", "e6 ~ ~ ~", "~", "~", "~", "g6 ~ ~ ~", "~", "~", "~", "e6 ~ ~ ~", "~", "~", "~", "c6 ~ ~ ~"], "sleigh": TRUE}
     ENDIF
     IF m = 2 THEN
-        ' We Wish You a Merry Christmas (English traditional), 3/4 in eighths
-        RETURN [100, ["c5@2 c5 d5 c5 b4", "a4@2 a4@2 a4@2", "d5@2 d5 e5 d5 c5", "b4@2 g4@2 g4@2", "e5@2 e5 f5 e5 d5", "c5@2 a4@2 g4 g4", "a4@2 d5@2 b4@2", "c5@4 g4@2"], "<c2 f1 d2 g1 c2 f1 g1 c2>", "<C F D7 G C F G7 C>"]
+        ' We Wish You a Merry Christmas (English traditional), 3/4
+        RETURN {"bpm": 100, "bars": ["c5@2 c5 d5 c5 b4", "a4@2 a4@2 a4@2", "d5@2 d5 e5 d5 c5", "b4@2 g4@2 g4@2", "e5@2 e5 f5 e5 d5", "c5@2 a4@2 g4 g4", "a4@2 d5@2 b4@2", "c5@4 g4@2"], "roots": ["c2", "f1", "d2", "g1", "c2", "f1", "g1", "c2"], "chords": ["C", "F", "D7", "G", "C", "F", "G7", "C"], "bells": ["c6 ~ ~", "~", "d6 ~ ~", "~", "~", "~", "~", "c6 ~ ~"], "sleigh": FALSE}
     ENDIF
-    ' Stille Nacht (Franz Xaver Gruber, 1818), 6/8 in sixteenths
-    RETURN [92, ["g4@3 a4 g4@2 e4@6", "g4@3 a4 g4@2 e4@6", "d5@4 d5@2 b4@6", "c5@4 c5@2 g4@6", "a4@4 a4@2 c5@3 b4 a4@2", "g4@3 a4 g4@2 e4@6", "a4@4 a4@2 c5@3 b4 a4@2", "g4@3 a4 g4@2 e4@6", "d5@4 d5@2 f5@3 d5 b4@2", "c5@12", "e5@12", "c5@3 g4 e4@2 g4@3 f4 d4@2", "c4@12", "~@12"], "<c2 c2 g1 c2 f1 c2 f1 c2 g1 c2 c2 g1 c2 c2>", "<C C G7 C F C F C G7 C C G7 C C>"]
+    ' Stille Nacht (Franz Xaver Gruber, 1818), 6/8
+    RETURN {"bpm": 92, "bars": ["g4@3 a4 g4@2 e4@6", "g4@3 a4 g4@2 e4@6", "d5@4 d5@2 b4@6", "c5@4 c5@2 g4@6", "a4@4 a4@2 c5@3 b4 a4@2", "g4@3 a4 g4@2 e4@6", "a4@4 a4@2 c5@3 b4 a4@2", "g4@3 a4 g4@2 e4@6", "d5@4 d5@2 f5@3 d5 b4@2", "c5@12", "e5@12", "c5@3 g4 e4@2 g4@3 f4 d4@2", "c4@12", "~@12"], "roots": ["c2", "c2", "g1", "c2", "f1", "c2", "f1", "c2", "g1", "c2", "c2", "g1", "c2", "c2"], "chords": ["C", "C", "G7", "C", "F", "C", "F", "C", "G7", "C", "C", "G7", "C", "C"], "bells": ["e6", "~", "~", "~", "~", "~", "~", "~", "~", "c6", "e6", "~", "c6", "~"], "sleigh": FALSE}
 ENDFUNC
 
-' Starts carol m of MUSICS() on the sequencer: a music-box melody, a soft
-' bass and warm pad chords, one bar per cycle.
-EXPORT SUB MUSIC(m)
+EXPORT FUNC GENRES()
+    RETURN [["cozy", "Stimmungsvoll", "Cozy"], ["trance", "Trance", "Trance"], ["rock", "Rock", "Rock"], ["swing", "Swing", "Swing"], ["chip", "8-Bit", "8-bit"]]
+ENDFUNC
+
+' A note name moved by semis semitones: NoteAdd$("g1", 7) is "d2".
+FUNC NoteAdd$(n$, semis)
+    DIM names = ["c", "c#", "d", "d#", "e", "f", "f#", "g", "g#", "a", "a#", "b"]
+    DIM octave = VAL(RIGHT$(n$, 1))
+    DIM midi = FIND_IN_ARRAY(names, LEFT$(n$, LEN(n$) - 1)) + 12 * (octave + 1) + semis
+    RETURN names[midi MOD 12] + STR$(INT(midi / 12) - 1)
+ENDFUNC
+
+' The root of a chord symbol: "G7" is "G", "F#m" is "F#".
+FUNC ChordRoot$(c$)
+    IF LEN(c$) > 1 ANDALSO (MID$(c$, 1, 1) = "#" ORELSE MID$(c$, 1, 1) = "b") THEN RETURN LEFT$(c$, 2)
+    RETURN LEFT$(c$, 1)
+ENDFUNC
+
+' One step per bar, cycling: "<a b c>".
+FUNC PerBar$(items)
+    RETURN "<" + JOIN(items, " ") + ">"
+ENDFUNC
+
+' The patterns of carol m in genre g, track by track: 0 melody, 1 bass,
+' 2 chords, 3 drums, 4 bells, 5 sleigh bells, 6 arpeggio; with the tempo.
+EXPORT FUNC PATTERNS(m, g)
     DIM song = Song(m)
+    DIM bars = song{"bars"}
+    DIM roots = song{"roots"}
+    DIM chords = song{"chords"}
+    DIM p = {}
+    p{"mel"} = "[[" + JOIN(bars, "] [") + "]]/" + STR$(LEN(bars))
+    p{"bells"} = PerBar$(SELECT(LAMBDA b -> "[" + b + "]", song{"bells"}))
+    p{"sleigh"} = ""
+    IF song{"sleigh"} THEN p{"sleigh"} = "gain([0.9 0.5]*4, sh*8)"
+    p{"drums"} = ""
+    p{"arp"} = ""
+    IF g = 1 THEN
+        p{"bpm"} = INT(song{"bpm"} * 1.35)
+        p{"bass"} = PerBar$(SELECT(LAMBDA r -> "[~ " + NoteAdd$(r, 12) + "]*4", roots))
+        p{"chords"} = PerBar$(chords)
+        p{"arp"} = PerBar$(SELECT(LAMBDA c -> "arp(up, add(12, " + c + "*4))", chords))
+        p{"drums"} = "bd*4, [~ hh]*4, [~ cp]*2, <cr ~ ~ ~>"
+    ELSEIF g = 2 THEN
+        p{"bpm"} = INT(song{"bpm"} * 1.3)
+        p{"bass"} = PerBar$(SELECT(LAMBDA r -> NoteAdd$(r, 12) + "*8", roots))
+        p{"chords"} = PerBar$(SELECT(LAMBDA c -> "[" + ChordRoot$(c) + "5 ~ " + ChordRoot$(c) + "5 " + ChordRoot$(c) + "5]*2", chords))
+        p{"drums"} = "bd ~ [bd bd] ~, ~ sd ~ sd, hh*8, <cr ~ ~ ~>"
+    ELSEIF g = 3 THEN
+        p{"bpm"} = INT(song{"bpm"} * 1.15)
+        p{"mel"} = "swing(8, " + p{"mel"} + ")"
+        p{"bass"} = PerBar$(SELECT(LAMBDA r -> "[" + NoteAdd$(r, 12) + " " + NoteAdd$(r, 16) + " " + NoteAdd$(r, 19) + " " + NoteAdd$(r, 21) + "]", roots))
+        p{"chords"} = PerBar$(SELECT(LAMBDA c -> "[~ " + c + " ~ " + c + "]", chords))
+        p{"drums"} = "swing(4, [hh hh hh hh]), ~ rim ~ rim, bd ~ ~ ~"
+    ELSEIF g = 4 THEN
+        p{"bpm"} = INT(song{"bpm"} * 1.4)
+        p{"bass"} = PerBar$(SELECT(LAMBDA r -> "[" + NoteAdd$(r, 12) + " " + NoteAdd$(r, 24) + "]*4", roots))
+        p{"chords"} = ""
+        p{"arp"} = PerBar$(SELECT(LAMBDA c -> "arp(up, add(12, " + c + "*8))", chords))
+        p{"drums"} = "bd ~ sd ~, hh*8"
+    ELSE
+        p{"bpm"} = song{"bpm"}
+        p{"bass"} = PerBar$(roots)
+        p{"chords"} = PerBar$(chords)
+    ENDIF
+    RETURN p
+ENDFUNC
+
+' Starts carol m of MUSICS() in genre g of GENRES() on the sequencer.
+EXPORT SUB MUSIC(m, g)
+    DIM p = PATTERNS(m, g)
     SOUND.INIT
     SOUND.RESET
     SOUND.MASTER "FIXED", 0.32
     SOUND.REVERB 0.7, 0.4, 0.8, 0.3
-    SOUND.BPM song[0]
-    SOUND.VOICE 0, "TRIANGLE", 0.03, 0.4, 0.6, 0.6
-    SOUND.UNISON 0, 3, 0.12, 0.6
-    SOUND.OSC2 0, "SINE", -12, 0.35
-    SOUND.FILTER 0, 2200
-    SOUND.LFO 0, 5.2, 0.12
-    SOUND.REVERBSEND 0, 0.45
-    SOUND.VOICE 1, "SINE", 0.01, 0.3, 0.6, 0.5
-    SOUND.VOICE 2, "SINE", 1.0, 0.5, 0.8, 1.8
-    SOUND.UNISON 2, 3, 0.15, 0.8
-    SOUND.REVERBSEND 2, 0.6
-    DIM bars = song[1]
-    SOUND.SEQ 0, "[[" + JOIN(bars, "] [") + "]]/" + STR$(LEN(bars)), "VOICE"
-    SOUND.SEQ 1, song[2], "VOICE"
-    SOUND.SEQ 2, song[3], "VOICE"
+    SOUND.DISTORTION 0
+    SOUND.BPM p{"bpm"}
+    ' melody, bass, chords: the voices of the genre
+    IF g = 1 THEN
+        SOUND.VOICE 0, "SAW", 0.01, 0.3, 0.7, 0.3
+        SOUND.UNISON 0, 5, 0.2, 0.9
+        SOUND.FILTER 0, 4200
+        SOUND.DELAY TRUE, "1/8.", 0.35, 0.25
+        SOUND.DELAYSEND 0, 0.3
+        SOUND.VOICE 1, "SAW", 0.005, 0.12, 0.0, 0.08
+        SOUND.FILTER 1, 900, 0.3, "LP"
+        SOUND.VOICE 2, "SAW", 0.4, 0.5, 0.7, 1.0
+        SOUND.UNISON 2, 5, 0.25, 1.0
+        SOUND.FILTER 2, 1800
+        SOUND.VOICE 6, "SAW", 0.003, 0.15, 0.0, 0.1
+        SOUND.OSC2 6, "SQUARE", -12, 0.5
+        SOUND.FILTER 6, 2600
+        SOUND.DELAYSEND 6, 0.35
+    ELSEIF g = 2 THEN
+        SOUND.DISTORTION 0.35
+        SOUND.VOICE 0, "SQUARE", 0.01, 0.2, 0.8, 0.25
+        SOUND.OSC2 0, "SAW", 0, 0.5, 7
+        SOUND.FILTER 0, 3200
+        SOUND.VOICE 1, "SAW", 0.005, 0.1, 0.6, 0.06
+        SOUND.FILTER 1, 700
+        SOUND.VOICE 2, "SAW", 0.005, 0.15, 0.6, 0.08
+        SOUND.UNISON 2, 3, 0.1, 0.8
+        SOUND.FILTER 2, 2400
+    ELSEIF g = 3 THEN
+        SOUND.VOICE 0, "TRIANGLE", 0.01, 0.3, 0.5, 0.3
+        SOUND.FM 0, 0.6, 2
+        SOUND.FILTER 0, 3000
+        SOUND.VOICE 1, "SINE", 0.005, 0.25, 0.4, 0.15
+        SOUND.OSC2 1, "TRIANGLE", 0, 0.4
+        SOUND.VOICE 2, "SINE", 0.005, 0.3, 0.2, 0.2
+        SOUND.FM 2, 0.8, 1
+    ELSEIF g = 4 THEN
+        SOUND.VOICE 0, "SQUARE", 0.002, 0.1, 0.7, 0.08
+        SOUND.VOICE 1, "TRIANGLE", 0.002, 0.08, 0.6, 0.05
+        SOUND.VOICE 6, "SQUARE", 0.002, 0.05, 0.3, 0.03
+        SOUND.FILTER 6, 3000
+    ELSE
+        SOUND.VOICE 0, "TRIANGLE", 0.03, 0.4, 0.6, 0.6
+        SOUND.UNISON 0, 3, 0.12, 0.6
+        SOUND.OSC2 0, "SINE", -12, 0.35
+        SOUND.FILTER 0, 2200
+        SOUND.LFO 0, 5.2, 0.12
+        SOUND.REVERBSEND 0, 0.45
+        SOUND.VOICE 1, "SINE", 0.01, 0.3, 0.6, 0.5
+        SOUND.VOICE 2, "SINE", 1.0, 0.5, 0.8, 1.8
+        SOUND.UNISON 2, 3, 0.15, 0.8
+        SOUND.REVERBSEND 2, 0.6
+    ENDIF
+    ' a glockenspiel and sleigh bells, the same in every genre
+    SOUND.VOICE 4, "SINE", 0.002, 1.4, 0.0, 1.4
+    SOUND.FM 4, 2.2, 3.5
+    SOUND.REVERBSEND 4, 0.6
+    SOUND.SEQ 0, p{"mel"}, "VOICE"
+    SOUND.SEQ 1, p{"bass"}, "VOICE"
+    IF p{"chords"} <> "" THEN SOUND.SEQ 2, p{"chords"}, "VOICE"
+    IF p{"drums"} <> "" THEN
+        SOUND.KIT 3, "SYNTH"
+        SOUND.SEQ 3, p{"drums"}, "VOICE"
+        SOUND.GAIN 3, 0.5
+    ENDIF
+    SOUND.SEQ 4, p{"bells"}, "VOICE"
+    IF p{"sleigh"} <> "" THEN
+        SOUND.KIT 5, "SYNTH"
+        SOUND.FILTER 5, 5000, 0.2, "HP"
+        SOUND.SEQ 5, p{"sleigh"}, "VOICE"
+        SOUND.GAIN 5, 0.18
+    ENDIF
+    IF p{"arp"} <> "" THEN
+        SOUND.SEQ 6, p{"arp"}, "VOICE"
+        SOUND.GAIN 6, 0.12
+    ENDIF
     SOUND.GAIN 0, 0.32
     SOUND.GAIN 1, 0.35
-    SOUND.GAIN 2, 0.14
+    SOUND.GAIN 2, IIF(g = 0, 0.14, 0.12)
+    SOUND.GAIN 4, 0.14
 ENDSUB

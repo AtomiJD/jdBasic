@@ -68,7 +68,7 @@ SUB OnTap(info)
         ENDIF
         IF muted THEN RETURN
         TRY
-            XMASPLAY.MUSIC(story{"m"})
+            XMASPLAY.MUSIC(story{"m"}, story{"g"} ?? 0)
         CATCH
             PRINT "music: "; ERRMSG$
         ENDTRY

@@ -207,13 +207,15 @@ DO WHILE running
         doc{"s"} = scenes
         GUI.SEPARATOR_TEXT("Musik")
         DIM song = GUI.COMBO("Lied", doc{"m"}, SELECT(LAMBDA r -> r[1], XMASPLAY.MUSICS()))
-        DIM play_now = song <> doc{"m"} ANDALSO music_on
+        DIM style = GUI.COMBO("Stil", doc{"g"}, SELECT(LAMBDA r -> r[1], XMASPLAY.GENRES()))
+        DIM play_now = (song <> doc{"m"} ORELSE style <> doc{"g"}) ANDALSO music_on
         doc{"m"} = song
+        doc{"g"} = style
         IF NOT music_on ANDALSO GUI.BUTTON("Musik an") THEN play_now = TRUE
         IF play_now THEN
             music_on = TRUE
             TRY
-                XMASPLAY.MUSIC(song)
+                XMASPLAY.MUSIC(song, style)
             CATCH
                 copied$ = "Musik: " + ERRMSG$
             ENDTRY

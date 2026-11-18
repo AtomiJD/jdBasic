@@ -1,0 +1,44 @@
+' Every carol in every genre: each pattern the sequencer gets must parse and
+' play events, checked silently with SOUND.EVENTS$.
+'
+'   jdBasic jdb/xmas/test_music.jdb
+OPTION "EXPLICIT"
+
+IMPORT XMASPLAY
+
+DIM passed = 0
+DIM failed = 0
+DIM m = 0
+DIM g = 0
+FOR m = 0 TO LEN(XMASPLAY.MUSICS()) - 1
+    FOR g = 0 TO LEN(XMASPLAY.GENRES()) - 1
+        DIM p = XMASPLAY.PATTERNS(m, g)
+        DIM key$ = ""
+        FOR EACH key$ IN ["mel", "bass", "chords", "drums", "bells", "sleigh", "arp"]
+            DIM pat$ = p{key$}
+            IF pat$ = "" THEN CONTINUEFOR
+            TRY
+                DIM ev$ = SOUND.EVENTS$(pat$, 4)
+                IF TRIM$(ev$) = "" ANDALSO key$ <> "bells" THEN
+                    failed = failed + 1
+                    PRINT "FAIL silent: song "; m; " genre "; g; " "; key$
+                ELSE
+                    passed = passed + 1
+                ENDIF
+            CATCH
+                failed = failed + 1
+                PRINT "FAIL song "; m; " genre "; g; " "; key$; ": "; ERRMSG$
+                PRINT "  "; LEFT$(pat$, 160)
+            ENDTRY
+        NEXT key$
+        IF p{"bpm"} < 60 ORELSE p{"bpm"} > 200 THEN
+            failed = failed + 1
+            PRINT "FAIL bpm "; p{"bpm"}; " song "; m; " genre "; g
+        ELSE
+            passed = passed + 1
+        ENDIF
+    NEXT g
+NEXT m
+
+PRINT "RESULTS: "; passed; " passed, "; failed; " failed"
+IF failed > 0 THEN END 1
