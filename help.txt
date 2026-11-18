@@ -1585,7 +1585,7 @@ Description: TRUE if v is the NONE value (alias of ISNONE).
 
 [ISNUM]
 Syntax: ISNUM(v) -> bool
-Description: TRUE if v is a number (integer or double).
+Description: TRUE if v is a number (integer or double). A truth value is not a number: ISNUM(TRUE) is FALSE, also for true and false read from JSON.
 
 [ISSTR]
 Syntax: ISSTR(v) -> bool

@@ -1,0 +1,66 @@
+' ISNUM answers FALSE for a truth value and ISBOOL TRUE, wherever the value
+' comes from: a literal, a variable, a comparison, a JSON field, a map or
+' array cell, a parameter.
+'
+'   jdbasic tests/regression/test_isnum_bool.jdb
+'   jdbasic -c tests/regression/test_isnum_bool.jdb
+
+OPTION "EXPLICIT"
+
+DIM pass AS INTEGER = 0
+DIM fail AS INTEGER = 0
+
+SUB Check(what$, got, want)
+    IF got = want THEN
+        pass = pass + 1
+    ELSE
+        fail = fail + 1
+        PRINT "FAIL "; what$; ": got "; got; ", want "; want
+    ENDIF
+ENDSUB
+
+SUB CheckText(what$, got$, want$)
+    IF got$ = want$ THEN
+        pass = pass + 1
+    ELSE
+        fail = fail + 1
+        PRINT "FAIL "; what$; ": got '"; got$; "', want '"; want$; "'"
+    ENDIF
+ENDSUB
+
+FUNC KindOf$(v)
+    IF ISNUM(v) THEN RETURN "NUMBER"
+    RETURN TYPEOF(v)
+ENDFUNC
+
+DIM flag AS BOOLEAN = FALSE
+DIM seen = 3 > 2
+DIM doc = JSON.PARSE("{""paid"": false, ""total"": 312.4, ""qty"": 4, ""tags"": [true, 7]}")
+DIM rec = {"on": TRUE, "n": 5}
+DIM cells = [TRUE, 2]
+
+Check("ISNUM of TRUE", ISNUM(TRUE), FALSE)
+Check("ISNUM of a BOOLEAN variable", ISNUM(flag), FALSE)
+Check("ISBOOL of a BOOLEAN variable", ISBOOL(flag), TRUE)
+DIM tags = doc{"tags"}
+Check("ISBOOL of a JSON true read through a variable", ISBOOL(tags[0]), TRUE)
+CheckText("TYPEOF of a JSON true in an array", TYPEOF(doc{"tags"}[0]), "BOOLEAN")
+CheckText("a JSON number next to a truth value still adds", STR$(tags[1] + 1), "8")
+Check("ISNUM of a comparison held in a variable", ISNUM(seen), FALSE)
+Check("ISNUM of a JSON false", ISNUM(doc{"paid"}), FALSE)
+Check("ISBOOL of a JSON false", ISBOOL(doc{"paid"}), TRUE)
+Check("ISNUM of a JSON true in an array", ISNUM(doc{"tags"}[0]), FALSE)
+Check("ISNUM of a map cell holding TRUE", ISNUM(rec{"on"}), FALSE)
+Check("ISNUM of an array cell holding TRUE", ISNUM(cells[0]), FALSE)
+CheckText("kind of a JSON false through a parameter", KindOf$(doc{"paid"}), "BOOLEAN")
+CheckText("kind of TRUE through a parameter", KindOf$(TRUE), "BOOLEAN")
+
+Check("ISNUM of an integer", ISNUM(42), TRUE)
+Check("ISNUM of a double", ISNUM(3.5), TRUE)
+Check("ISNUM of a JSON number", ISNUM(doc{"total"}), TRUE)
+Check("ISNUM of a JSON integer in an array", ISNUM(doc{"tags"}[1]), TRUE)
+Check("ISNUM of a map cell holding a number", ISNUM(rec{"n"}), TRUE)
+CheckText("kind of a number through a parameter", KindOf$(doc{"qty"}), "NUMBER")
+
+PRINT pass; " passed, "; fail; " failed"
+IF fail > 0 THEN END 1

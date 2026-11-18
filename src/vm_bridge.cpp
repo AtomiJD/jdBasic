@@ -1074,7 +1074,10 @@ static JdbArray* value_to_jdbarray(const Value& v) {
                 date_cells++;
                 cell_tags[(size_t)i] = 10;  // JD_TAG_DATE
             }
-            if (e.type == ValueType::BOOLEAN) bool_cells++;
+            if (e.type == ValueType::BOOLEAN) {
+                bool_cells++;
+                cell_tags[(size_t)i] = (int8_t)jd_tag(JdTag::BOOL);
+            }
             r->data[i] = e.to_double();
         }
     }
@@ -1089,9 +1092,11 @@ static JdbArray* value_to_jdbarray(const Value& v) {
     // Uniform numeric arrays keep the plain flags encoding.
     // A date among cells that are not dates needs its tag too: the
     // array-wide date flag speaks only for an array whose every cell is one.
-    // A map cell is told from an inner array by its tag.
+    // A map cell is told from an inner array by its tag, a truth value among
+    // numbers from a number by its tag.
     if ((has_string && has_other) || has_none || has_map ||
-        (date_cells > 0 && date_cells != r->length)) {
+        (date_cells > 0 && date_cells != r->length) ||
+        (bool_cells > 0 && bool_cells != r->length)) {
         r->elem_tags = (int8_t*)malloc((size_t)(r->length > 0 ? r->length : 1));
         memcpy(r->elem_tags, cell_tags.data(), (size_t)(r->length > 0 ? r->length : 1));
         r->flags |= 8;

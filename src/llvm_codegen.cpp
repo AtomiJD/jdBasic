@@ -17687,7 +17687,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 }
                 if (elem_read && av.tag != JD_TAG_RUNTIME) {
                     bool hit = false;
-                    if (upper == "ISNUM") hit = av.tag == JD_TAG_I64 || jd_is_f64_tag(av.tag) || av.tag == JD_TAG_BOOL;
+                    if (upper == "ISNUM") hit = av.tag == JD_TAG_I64 || jd_is_f64_tag(av.tag);
                     else if (upper == "ISSTR") hit = av.tag == JD_TAG_STR;
                     else if (upper == "ISARR") hit = av.tag == JD_TAG_ARR;
                     else if (upper == "ISMAP") hit = av.tag == JD_TAG_NATIVE_MAP;
@@ -17763,13 +17763,20 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             return { LLVMConstInt(i64_type, 0, 0), JD_TAG_BOOL };
 
         bool result = false;
+        // A variable declared AS BOOLEAN or bound to a truth value is held
+        // in an I64 slot; bool_vars names it, as TYPEOF reads it.
+        bool bool_var = false;
+        if (arg.kind == ExprKind::VARIABLE) {
+            std::string up = arg.str_val;
+            std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+            VarInfo* v = lookup_var(arg.str_val);
+            bool_var = bool_vars.count(up) || (v && v->tag == JD_TAG_BOOL);
+        }
         if (upper == "ISBOOL") {
-            result = (arg.kind == ExprKind::LITERAL_BOOL);
+            result = arg.kind == ExprKind::LITERAL_BOOL || bool_var;
         } else if (upper == "ISNUM") {
-            // Bool literals are also numeric in jdBasic
-            if (arg.kind == ExprKind::LITERAL_INT || arg.kind == ExprKind::LITERAL_FLOAT
-                || arg.kind == ExprKind::LITERAL_BOOL) result = true;
-            else if (arg.kind == ExprKind::VARIABLE) {
+            if (arg.kind == ExprKind::LITERAL_INT || arg.kind == ExprKind::LITERAL_FLOAT) result = true;
+            else if (arg.kind == ExprKind::VARIABLE && !bool_var) {
                 VarInfo* v = lookup_var(arg.str_val);
                 if (v && (v->tag == JD_TAG_I64 || jd_is_f64_tag(v->tag))) result = true;
             }

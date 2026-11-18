@@ -2564,7 +2564,7 @@ number. `FORMAT_DATE$` accepts both and is the portable way to render one.
 ### Type Inspection
 
 * **`TYPEOF(value) -> string$`**: Returns the type name as a string: `"INT64"`, `"FLOAT64"`, `"STRING"`, `"BOOLEAN"`, `"ARRAY"`, `"OBJECT"` (every map), `"DATE"`, `"FUNCREF"` or `"NONE"`. There is no `"NUMBER"`; use `ISNUM(v)` to test for a number. Compiled with `-c`, a number read out of an array is `FLOAT64`, and a function reference held in a variable is `FUNCREF` (the interpreter answers `STRING`).
-* **`ISNUM(v) -> bool`**: `TRUE` if `v` is a number (integer or double).
+* **`ISNUM(v) -> bool`**: `TRUE` if `v` is a number (integer or double). A truth value is not a number: `ISNUM(TRUE)` is `FALSE`, also for `true` and `false` read from JSON.
 * **`ISSTR(v) -> bool`**: `TRUE` if `v` is a string.
 * **`ISARR(v) -> bool`**: `TRUE` if `v` is an array.
 * **`ISMAP(v) -> bool`**: `TRUE` if `v` is a map/object.

@@ -431,7 +431,7 @@ void VM::register_data_builtins() {
     // ── 5. Type Checking ─────────────────────────────────────
 
     register_native("ISNUM", [](const std::vector<Value>& args) -> Value {
-        return Value::make_bool(is_numeric(args[0].type));
+        return Value::make_bool(is_numeric(args[0].type) && args[0].type != ValueType::BOOLEAN);
     });
     register_native("ISSTR", [](const std::vector<Value>& args) -> Value {
         return Value::make_bool(args[0].type == ValueType::STRING);
