@@ -20,6 +20,52 @@ changed from the File menu, and choosing a line ending there makes them all
 the same. A change made to the open file by another program is noticed when
 either pane gets the focus again.
 
+### Regular expressions
+
+Tick **Regular expression** in Find / Replace to search with a pattern
+(ECMAScript syntax). "Match case" off makes it case-insensitive, "Whole
+word" puts `\b` around the pattern. In **Replace with**, `$1`, `$2` ... are
+the groups and `$&` the whole match. Replace All is one Undo step.
+
+Find:
+
+| Find what | Finds |
+|---|---|
+| `^TODO.*` | lines that start with TODO, up to the line end |
+| `^#+ .*` | Markdown headings |
+| `\d{4}-\d{2}-\d{2}` | ISO dates such as 2026-11-18 |
+| `colou?r` | colour and color |
+| `^\d+\. ` | numbered list items |
+| `!?\[[^\]]*\]\([^)]*\)` | Markdown links and images |
+| `[ \t]+(?=\r?$)` | whitespace at the end of a line |
+| `(\r\n){3,}` | two or more blank lines in a row |
+| `\\` | a backslash |
+
+Replace:
+
+| Find what | Replace with | Result |
+|---|---|---|
+| `(\d{4})-(\d{2})-(\d{2})` | `$3.$2.$1` | 2026-11-18 becomes 18.11.2026 |
+| `^(\w+), (\w+)(?=\r?$)` | `$2 $1` | "Doe, John" becomes "John Doe" |
+| `\*\*(.+?)\*\*` | `__$1__` | `**bold**` becomes `__bold__` |
+| `^(#+) ` | `#$1 ` | every heading one level deeper |
+| `^- ` | `* ` | `-` bullets become `*` bullets |
+| `[ \t]+(?=\r?$)` | (empty) | trailing whitespace removed |
+| ` {2,}` | ` ` (one space) | runs of spaces become one |
+| `(\r\n){3,}` | `$1$1` | several blank lines become one |
+| `colou?r` | `<$&>` | every match wrapped in angle brackets |
+
+Things to know:
+
+- `^` matches at the start of every line, but `$` only right before a line
+  feed. Lines end in CR LF, so write the line end as `(?=\r?$)` (or `\r?\n`
+  when the line break itself is to be replaced).
+- `.` does not match CR or LF: `.*` stays on its line.
+- The Replace box cannot hold a line break. To keep or repeat one, capture
+  it and write it back, as `$1$1` does above.
+- Lazy quantifiers (`.+?`) and lookahead (`(?=...)`, `(?!...)`) work;
+  lookbehind (`(?<=...)`) does not, and a pattern using it finds nothing.
+
 ## Markdown
 
 A `.md` or `.markdown` file opens as its source on the left and the rendered
