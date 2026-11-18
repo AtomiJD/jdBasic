@@ -21437,6 +21437,9 @@ LLVMCodegen::TypedValue LLVMCodegen::scalar_text(const TypedValue& av, bool cell
         LLVMPositionBuilderAtEnd(builder, bb_end);
         s = LLVMBuildPhi(builder, i8_ptr_type, "st");
         LLVMAddIncoming(s, vals.data(), from.data(), (unsigned)vals.size());
+        // The read may have handed over a text of its own (a bridge or VM
+        // copy); the answer above is a copy of it, so it goes now.
+        drop_read_temp(av);
     } else {
         return av;
     }
