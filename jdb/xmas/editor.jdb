@@ -18,7 +18,7 @@ FUNC UrlParams()
     RETURN JSON.PARSE(TXTREADER$("/url_params.json"))
 ENDFUNC
 DIM url_params = UrlParams()
-DIM lang$ = LCASE$(LEFT$(GETENV$("XMAS_LANG") + ("" + (url_params{"__lang"} ?? "de")), 2))
+DIM lang$ = LCASE$(LEFT$(GETENV$("XMAS_LANG") + ("" + (url_params{"lang"} ?? "")) + ("" + (url_params{"__lang"} ?? "de")), 2))
 IF lang$ <> "de" THEN lang$ = "en"
 ' the column of the catalog tables that holds the names in this language
 DIM name_col = IIF(lang$ = "de", 1, 2)
@@ -189,6 +189,13 @@ DO WHILE running
     DIM flags = GUI.FLAG("NOTITLEBAR") + GUI.FLAG("NORESIZE") + GUI.FLAG("NOMOVE") + GUI.FLAG("NOCOLLAPSE") + GUI.FLAG("NOSAVEDSETTINGS")
     PushTheme()
     IF GUI.BEGIN("##panel" + STR$(ui), 0, 0, PANEL_W * ui, WIN_H * ui, flags) THEN
+        IF GUI.BUTTON(IIF(lang$ = "de", "English", "Deutsch")) THEN
+            lang$ = IIF(lang$ = "de", "en", "de")
+            name_col = IIF(lang$ = "de", 1, 2)
+            bg_names = Column(XMASPLAY.BACKGROUNDS(), name_col)
+            act_names = Column(XMASPLAY.ACTIONS(), name_col)
+            cast_names = Column(XMASPLAY.CASTS(), name_col)
+        ENDIF
         GUI.SEPARATOR_TEXT(T$("title"))
         doc{"f"} = XMASPLAY.CLEANTEXT$(GUI.INPUT$(T$("from"), doc{"f"}), XMASPLAY.MAX_NAME)
         doc{"t"} = XMASPLAY.CLEANTEXT$(GUI.INPUT$(T$("to"), doc{"t"}), XMASPLAY.MAX_NAME)

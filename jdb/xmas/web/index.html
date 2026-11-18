@@ -39,12 +39,15 @@
 <script>
   (function () {
     var q = new URLSearchParams(location.search);
-    var base = 'play/?fs=1&assets=assets.txt&prog=';
+    var lang = (q.get('lang') || '').slice(0, 2).toLowerCase();
+    var keep = (lang === 'de' || lang === 'en') ? '&lang=' + lang : '';
+    var base = 'play/?fs=1&assets=assets.txt' + keep + '&prog=';
     var s = q.get('s');
     if (s && /^[0-9A-Za-z_-]{1,2048}$/.test(s)) { location.replace(base + 'player&s=' + encodeURIComponent(s)); return; }
     var wide = window.matchMedia('(pointer: fine) and (min-width: 1000px)').matches;
     if (wide && !q.has('info')) { location.replace(base + 'editor'); return; }
-    var de = (navigator.language || 'de').slice(0, 2) === 'de';
+    var de = (lang || (navigator.language || 'de').slice(0, 2)) === 'de';
+    document.getElementById('demo').href = base + 'player';
     document.documentElement.lang = de ? 'de' : 'en';
     document.getElementById('h').textContent = de ? 'Weihnachtsgrüße mit Musik' : 'Christmas greetings with music';
     document.getElementById('t').textContent = de

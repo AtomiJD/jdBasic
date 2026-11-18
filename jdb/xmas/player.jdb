@@ -23,7 +23,7 @@ DIM debug = MAP.EXISTS(url_params, "debug")
 
 ' "de" or "en": the viewer's language, the story itself stays as written.
 FUNC Lang$()
-    DIM l$ = LCASE$(LEFT$(GETENV$("XMAS_LANG") + ("" + (url_params{"__lang"} ?? "de")), 2))
+    DIM l$ = LCASE$(LEFT$(GETENV$("XMAS_LANG") + ("" + (url_params{"lang"} ?? "")) + ("" + (url_params{"__lang"} ?? "de")), 2))
     IF l$ = "de" THEN RETURN "de"
     RETURN "en"
 ENDFUNC
