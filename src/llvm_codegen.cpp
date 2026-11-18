@@ -1098,6 +1098,7 @@ static bool is_forms_event_handler_name(const std::string& name) {
     // did nothing at all in a compiled program.
     static const char* suffixes[] = { "_CLICK", "_DBLCLICK", "_CHANGE",
                                       "_TICK", "_LOAD", "_UNLOAD", "_RESIZE",
+                                      "_ACTIVATE", "_DEACTIVATE",
                                       "_GOTFOCUS", "_LOSTFOCUS",
                                       "_KEYDOWN", "_KEYPRESS", "_KEYUP",
                                       "_MOUSEDOWN", "_MOUSEMOVE", "_MOUSEUP",

@@ -470,10 +470,175 @@ void layout_form(int handle) {
     }
 }
 
+void set_app_dark_menus(bool dark);
+
+LRESULT form_default_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    auto hit = g_byhwnd.find(hwnd);
+    if (hit != g_byhwnd.end()) {
+        FormsItem& it = g_items[hit->second];
+        if (it.kind == "MDIFRAME")
+            return DefFrameProcW(hwnd, it.mdi_client, msg, wParam, lParam);
+        if (it.kind == "MDICHILD")
+            return DefMDIChildProcW(hwnd, msg, wParam, lParam);
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+// ── Dark menu bar and status bar ────────────────────────────────
+// Windows draws neither dark. The menu bar is painted through the
+// undocumented WM_UAHDRAWMENU / WM_UAHDRAWMENUITEM messages DefWindowProc
+// sends for it; the status bar paints itself in statusbar_proc.
+
+std::set<int> g_dark_forms;
+
+const COLORREF DARK_BAR_BACK = RGB(0x2B, 0x2B, 0x2B);
+const COLORREF DARK_BAR_HOT  = RGB(0x41, 0x41, 0x41);
+const COLORREF DARK_BAR_DOWN = RGB(0x50, 0x50, 0x50);
+const COLORREF DARK_BAR_TEXT = RGB(0xE0, 0xE0, 0xE0);
+const COLORREF DARK_BAR_GRAY = RGB(0x80, 0x80, 0x80);
+const COLORREF DARK_BAR_LINE = RGB(0x45, 0x45, 0x45);
+
+const UINT WM_UAHDRAWMENU     = 0x0091;
+const UINT WM_UAHDRAWMENUITEM = 0x0092;
+
+struct UahMenu { HMENU hmenu; HDC hdc; DWORD flags; };
+struct UahMenuItem {
+    int position;
+    DWORD metrics[8];
+    DWORD popup_metrics[5];
+};
+struct UahDrawMenuItem { DRAWITEMSTRUCT dis; UahMenu um; UahMenuItem umi; };
+
+bool form_is_dark(HWND hwnd) {
+    auto hit = g_byhwnd.find(hwnd);
+    return hit != g_byhwnd.end() && g_dark_forms.count(hit->second) != 0;
+}
+
+void fill_solid(HDC dc, const RECT& rc, COLORREF c) {
+    HBRUSH br = CreateSolidBrush(c);
+    FillRect(dc, &rc, br);
+    DeleteObject(br);
+}
+
+// The one-pixel light line Windows leaves between menu bar and client area.
+void paint_menu_line(HWND hwnd) {
+    MENUBARINFO mbi = { sizeof(mbi) };
+    if (!GetMenu(hwnd) || !GetMenuBarInfo(hwnd, OBJID_MENU, 0, &mbi)) return;
+    RECT client, win;
+    GetClientRect(hwnd, &client);
+    MapWindowPoints(hwnd, nullptr, (POINT*)&client, 2);
+    GetWindowRect(hwnd, &win);
+    OffsetRect(&client, -win.left, -win.top);
+    RECT line = client;
+    line.bottom = line.top;
+    line.top--;
+    HDC dc = GetWindowDC(hwnd);
+    fill_solid(dc, line, DARK_BAR_BACK);
+    ReleaseDC(hwnd, dc);
+}
+
+// True when the message was a dark form's menu-bar paint and is answered.
+bool dark_menu_message(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, LRESULT& out) {
+    if (msg != WM_UAHDRAWMENU && msg != WM_UAHDRAWMENUITEM &&
+        msg != WM_NCPAINT && msg != WM_NCACTIVATE) return false;
+    if (!form_is_dark(hwnd)) return false;
+
+    if (msg == WM_UAHDRAWMENU) {
+        UahMenu* um = (UahMenu*)lParam;
+        MENUBARINFO mbi = { sizeof(mbi) };
+        if (!GetMenuBarInfo(hwnd, OBJID_MENU, 0, &mbi)) return false;
+        RECT win;
+        GetWindowRect(hwnd, &win);
+        RECT bar = mbi.rcBar;
+        OffsetRect(&bar, -win.left, -win.top);
+        fill_solid(um->hdc, bar, DARK_BAR_BACK);
+        out = TRUE;
+        return true;
+    }
+
+    if (msg == WM_UAHDRAWMENUITEM) {
+        UahDrawMenuItem* d = (UahDrawMenuItem*)lParam;
+        wchar_t label[256] = {};
+        MENUITEMINFOW mii = { sizeof(mii) };
+        mii.dwTypeData = label;
+        mii.cch = 255;
+        mii.fMask = MIIM_STRING | MIIM_FTYPE | MIIM_BITMAP;
+        if (!GetMenuItemInfoW(d->um.hmenu, d->umi.position, TRUE, &mii) ||
+            (mii.fType & MFT_BITMAP) || mii.hbmpItem)
+            return false;   // bitmap items (MDI child buttons) keep the system drawing
+        UINT st = d->dis.itemState;
+        COLORREF back = DARK_BAR_BACK;
+        if (st & (ODS_SELECTED | ODS_CHECKED)) back = DARK_BAR_DOWN;
+        else if (st & ODS_HOTLIGHT) back = DARK_BAR_HOT;
+        fill_solid(d->um.hdc, d->dis.rcItem, back);
+        UINT fmt = DT_CENTER | DT_SINGLELINE | DT_VCENTER;
+        if (st & ODS_NOACCEL) fmt |= DT_HIDEPREFIX;
+        SetBkMode(d->um.hdc, TRANSPARENT);
+        SetTextColor(d->um.hdc, (st & (ODS_GRAYED | ODS_DISABLED | ODS_INACTIVE))
+                                    ? DARK_BAR_GRAY : DARK_BAR_TEXT);
+        DrawTextW(d->um.hdc, label, -1, &d->dis.rcItem, fmt);
+        out = TRUE;
+        return true;
+    }
+
+    out = form_default_proc(hwnd, msg, wParam, lParam);
+    paint_menu_line(hwnd);
+    return true;
+}
+
+LRESULT CALLBACK statusbar_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
+                                UINT_PTR, DWORD_PTR form_hwnd) {
+    if ((msg == WM_PAINT || msg == WM_ERASEBKGND) && form_is_dark((HWND)form_hwnd)) {
+        if (msg == WM_ERASEBKGND) return 1;
+        PAINTSTRUCT ps;
+        HDC dc = BeginPaint(hwnd, &ps);
+        RECT all;
+        GetClientRect(hwnd, &all);
+        fill_solid(dc, all, DARK_BAR_BACK);
+        HFONT font = (HFONT)SendMessageW(hwnd, WM_GETFONT, 0, 0);
+        HGDIOBJ old_font = font ? SelectObject(dc, font) : nullptr;
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, DARK_BAR_TEXT);
+        int parts = (int)SendMessageW(hwnd, SB_GETPARTS, 0, 0);
+        for (int i = 0; i < parts; i++) {
+            RECT rc;
+            if (!SendMessageW(hwnd, SB_GETRECT, i, (LPARAM)&rc)) continue;
+            int len = LOWORD(SendMessageW(hwnd, SB_GETTEXTLENGTHW, i, 0));
+            std::wstring w(len + 1, 0);
+            SendMessageW(hwnd, SB_GETTEXTW, i, (LPARAM)&w[0]);
+            w.resize(len);
+            RECT text_rc = rc;
+            text_rc.left += 6;
+            DrawTextW(dc, w.c_str(), -1, &text_rc,
+                      DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
+            if (i < parts - 1) {
+                RECT sep = { rc.right - 1, rc.top + 3, rc.right, rc.bottom - 3 };
+                fill_solid(dc, sep, DARK_BAR_LINE);
+            }
+        }
+        if (old_font) SelectObject(dc, old_font);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    if (msg == WM_NCDESTROY) RemoveWindowSubclass(hwnd, statusbar_proc, 1);
+    return DefSubclassProc(hwnd, msg, wp, lp);
+}
+
 // ── Window class / WndProc ──────────────────────────────────────
 
 LRESULT CALLBACK form_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    LRESULT dark_out = 0;
+    if (dark_menu_message(hwnd, msg, wParam, lParam, dark_out)) return dark_out;
     switch (msg) {
+        case WM_ACTIVATE: {
+            auto hit = g_byhwnd.find(hwnd);
+            if (hit != g_byhwnd.end())
+                queue_event(g_items[hit->second].name,
+                            LOWORD(wParam) == WA_INACTIVE ? "DEACTIVATE" : "ACTIVATE",
+                            info_map(g_items[hit->second]));
+            break;
+        }
+
         case WM_COMMAND: {
             HWND ctl = (HWND)lParam;
             if (!ctl) {
@@ -803,6 +968,7 @@ LRESULT CALLBACK form_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                         }
                         g_fore.erase(it->first);
                         g_back.erase(it->first);
+                        g_dark_forms.erase(it->first);
                         g_tags.erase(it->first);
                         g_ctl_tips.erase(it->first);
                         g_cursors.erase(it->first);
@@ -828,6 +994,7 @@ LRESULT CALLBACK form_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                         ++it;
                     }
                 }
+                set_app_dark_menus(!g_dark_forms.empty());
                 // No PostQuitMessage: FORM.RUN and FORM.DOEVENTS re-check
                 // g_open_forms after every dispatch, and a queued WM_QUIT
                 // would leak into whichever message loop runs next. MDI
@@ -837,17 +1004,7 @@ LRESULT CALLBACK form_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             return 0;
         }
     }
-    {
-        auto hit = g_byhwnd.find(hwnd);
-        if (hit != g_byhwnd.end()) {
-            FormsItem& it = g_items[hit->second];
-            if (it.kind == "MDIFRAME")
-                return DefFrameProcW(hwnd, it.mdi_client, msg, wParam, lParam);
-            if (it.kind == "MDICHILD")
-                return DefMDIChildProcW(hwnd, msg, wParam, lParam);
-        }
-    }
-    return DefWindowProcW(hwnd, msg, wParam, lParam);
+    return form_default_proc(hwnd, msg, wParam, lParam);
 }
 
 const wchar_t* FORM_CLASS = L"JDBForm";
@@ -1445,10 +1602,23 @@ void edit_rebuild(int handle, FormsItem& it, LONG_PTR style) {
 
 // ── Dark mode ───────────────────────────────────────────────────
 // The caption goes dark through DWM; scroll bars and other themed parts of
-// the child controls follow the Explorer dark theme. Menu bar and status
-// bar keep the light system look.
+// the child controls follow the Explorer dark theme. The menu bar and the
+// status bar of a dark form are painted here (dark_menu_message,
+// statusbar_proc); drop-down menus follow uxtheme's app-wide mode, dark
+// while any form is dark.
 
-std::set<int> g_dark_forms;
+void set_app_dark_menus(bool dark) {
+    static HMODULE ux = LoadLibraryExW(L"uxtheme.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (!ux) return;
+    // ordinal 135: SetPreferredAppMode (AllowDarkModeForApp before 1903),
+    // 2 = ForceDark; ordinal 136: FlushMenuThemes
+    using SetMode = int (WINAPI*)(int);
+    using Flush = void (WINAPI*)();
+    auto set_mode = (SetMode)GetProcAddress(ux, MAKEINTRESOURCEA(135));
+    auto flush = (Flush)GetProcAddress(ux, MAKEINTRESOURCEA(136));
+    if (set_mode) set_mode(dark ? 2 : 0);
+    if (flush) flush();
+}
 
 void set_dark_mode(int handle, HWND h, bool dark) {
     BOOL on = dark ? TRUE : FALSE;
@@ -1456,10 +1626,12 @@ void set_dark_mode(int handle, HWND h, bool dark) {
     if (FAILED(DwmSetWindowAttribute(h, 20, &on, sizeof(on))))
         DwmSetWindowAttribute(h, 19, &on, sizeof(on));
     if (dark) g_dark_forms.insert(handle); else g_dark_forms.erase(handle);
+    set_app_dark_menus(!g_dark_forms.empty());
     for (HWND c = GetWindow(h, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT))
         SetWindowTheme(c, dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
     SetWindowPos(h, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
                  SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    DrawMenuBar(h);
     RedrawWindow(h, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_ALLCHILDREN);
 }
 
@@ -3050,6 +3222,7 @@ int do_create_statusbar(int frm, const std::string& name, const Value& parts,
         edges.push_back(-1);
     }
     SendMessageW(sb, SB_SETPARTS, edges.size(), (LPARAM)edges.data());
+    SetWindowSubclass(sb, statusbar_proc, 1, (DWORD_PTR)f.hwnd);
 
     int handle = store_item(sb, name, "STATUSBAR", frm);
     layout_form(frm);
@@ -3063,6 +3236,7 @@ const std::vector<const char*>& events_of(const std::string& kind) {
 #define JDF_INPUT_EV "GOTFOCUS", "LOSTFOCUS", "KEYDOWN", "KEYUP", "KEYPRESS", \
                      "MOUSEDOWN", "MOUSEUP", "MOUSEMOVE", "DROPFILES"
     static const std::vector<const char*> form_ev  = { "LOAD", "UNLOAD", "RESIZE",
+                                                       "ACTIVATE", "DEACTIVATE",
                                                        "MOUSEDOWN", "MOUSEUP", "MOUSEMOVE",
                                                        "DROPFILES" };
     static const std::vector<const char*> click_ev = { "CLICK", JDF_INPUT_EV };

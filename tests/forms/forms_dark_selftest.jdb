@@ -1,0 +1,59 @@
+' Dark mode on a form with a menu and a status bar, and the ACTIVATE /
+' DEACTIVATE events: the form is painted dark while it pumps messages, a
+' second dark form closes without taking the first one's mode along, and
+' FORM.RUN bringing the form to the front fires ACTIVATE.
+
+DIM N_PASS AS INTEGER = 0
+DIM N_FAIL AS INTEGER = 0
+
+SUB Check(cond AS BOOLEAN, label$ AS STRING)
+    IF cond THEN
+        N_PASS = N_PASS + 1
+    ELSE
+        N_FAIL = N_FAIL + 1
+        PRINT "FAIL: "; label$
+    ENDIF
+ENDSUB
+
+DIM n_activate AS INTEGER = 0
+DIM n_ticks AS INTEGER = 0
+
+DIM frm AS DOUBLE = FORM.CREATE("Dark Selftest", 420, 240, "MAIN")
+FORM.MENU(frm, [{"text": "&File", "items": [{"text": "&Open", "name": "mnuOpen"}, "-", {"text": "E&xit", "name": "mnuExit"}]}, {"text": "&View", "items": [{"text": "&Dark", "name": "mnuDark"}]}])
+DIM txt AS DOUBLE = FORM.RICHTEXT(frm, "txt", 0, 0, 420, 200)
+DIM sb AS DOUBLE = FORM.STATUSBAR(frm, "sb", [120, 80, -1])
+
+Check(FORM.GET(frm, "DARKMODE") = FALSE, "form starts light")
+FORM.SET(frm, "DARKMODE", TRUE)
+Check(FORM.GET(frm, "DARKMODE") = TRUE, "DARKMODE after SET")
+FORM.SET(sb, "TEXT", ["Ln 1, Col 1", "100%", "UTF-8"])
+
+DIM other AS DOUBLE = FORM.CREATE("Second", 200, 100, "OTHER")
+FORM.MENU(other, [{"text": "&Edit", "items": [{"text": "&Copy", "name": "mnuCopy"}]}])
+FORM.SET(other, "DARKMODE", TRUE)
+FORM.SHOW(other)
+FORM.CLOSE(other)
+Check(FORM.GET(frm, "DARKMODE") = TRUE, "closing another dark form keeps this one dark")
+
+FORM.SET(frm, "DARKMODE", FALSE)
+Check(FORM.GET(frm, "DARKMODE") = FALSE, "DARKMODE off again")
+FORM.SET(frm, "DARKMODE", TRUE)
+
+SUB MAIN_ACTIVATE(e)
+    n_activate = n_activate + 1
+ENDSUB
+
+SUB TMR_TICK(e)
+    n_ticks = n_ticks + 1
+    FORM.SET(sb, "TEXT", ["Ln " + STR$(n_ticks) + ", Col 1", "100%", "UTF-8"])
+    IF n_ticks >= 4 THEN FORM.CLOSE(frm)
+ENDSUB
+
+FORM.TIMER(frm, "tmr", 100)
+FORM.RUN(frm)
+
+Check(n_ticks >= 4, "the dark form ran its timer and repainted the status bar")
+Check(n_activate >= 1, "FORM.RUN bringing the form to the front fires ACTIVATE")
+
+PRINT "RESULTS: "; N_PASS; " passed, "; N_FAIL; " failed"
+IF N_FAIL > 0 THEN END 1
