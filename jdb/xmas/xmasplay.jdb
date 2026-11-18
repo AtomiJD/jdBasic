@@ -100,7 +100,7 @@ EXPORT FUNC CASTS()
 ENDFUNC
 
 EXPORT FUNC ACTIONS()
-    RETURN [["laugh", "Lachen", "Laugh"], ["dance", "Tanzen", "Dance"], ["gift", "Geschenk geben", "Give a present"], ["hug", "Umarmen", "Hug"], ["snowball", "Schneeballschlacht", "Snowball fight"], ["kiss", "Luftkuss", "Blow a kiss"], ["wave", "Winken", "Wave"], ["surprise", "Staunen", "Surprise"]]
+    RETURN [["laugh", "Lachen", "Laugh"], ["dance", "Tanzen", "Dance"], ["gift", "Geschenk geben", "Give a present"], ["hug", "Umarmen", "Hug"], ["snowball", "Schneeballschlacht", "Snowball fight"], ["kiss", "Luftkuss", "Blow a kiss"], ["wave", "Winken", "Wave"], ["surprise", "Staunen", "Surprise"], ["glow", "Leuchten", "Glow"], ["slide", "Bauchrutscher", "Belly slide"], ["magic", "Zaubern", "Magic"]]
 ENDFUNC
 
 ' TRUE for an action that goes from one figure to another.
@@ -128,7 +128,7 @@ ENDFUNC
 ' a cast of one to three, up to four bubbles [speaker, text] and an action.
 '   {"f": "...", "t": "...", "m": 0, "s": [{"b": "room", "c": ["santa", "lina"], "l": [[0, "..."]], "a": "gift"}]}
 
-FUNC CleanScene(sc)
+FUNC CleanScene(sc, to$)
     IF NOT ISMAP(sc) THEN RETURN NONE
     DIM b$ = CLEANTEXT$(sc{"b"} ?? "", 16)
     IF FIND_IN_ARRAY(Ids(BACKGROUNDS()), b$) < 0 THEN b$ = "room"
@@ -164,7 +164,7 @@ FUNC CleanScene(sc)
                         n_acts = n_acts + 1
                     ENDIF
                 ELSEIF n_lines < MAX_SCENE_LINES THEN
-                    DIM text$ = CLEANTEXT$(item[1], MAX_LINE)
+                    DIM text$ = CLEANTEXT$(REPLACE$(REPLACE$(CLEANTEXT$(item[1], MAX_LINE), "{name}", to$), "{Name}", to$), MAX_LINE)
                     DIM who = 0
                     IF ISNUM(item[0]) THEN who = CLAMP(INT(item[0]), 0, LEN(cast) - 1)
                     IF text$ <> "" THEN
@@ -199,7 +199,7 @@ EXPORT FUNC CLEAN(raw)
     DIM scenes = []
     DIM sc = NONE
     FOR EACH sc IN TAKE(MAX_SCENES, raw{"s"})
-        DIM clean = CleanScene(sc)
+        DIM clean = CleanScene(sc, CLEANTEXT$(raw{"t"} ?? "", MAX_NAME))
         IF NOT ISNONE(clean) THEN
             IF LEN(clean{"l"}) > 0 THEN scenes = APPEND(scenes, clean)
         ENDIF
@@ -251,6 +251,15 @@ ENDFUNC
 
 EXPORT FUNC DEMO()
     RETURN {"f": "Santa und Lina", "t": "dich", "m": 0, "g": 0, "s": [{"b": "room", "c": ["santa", "lina"], "l": [[0, "Ho ho ho! Frohe Weihnachten, schön, dass du da bist!"], [1, "Oh, der Weihnachtsmann! Hast du Kekse mitgebracht?"], [0, "Viel besser: ein Geschenk, nur für dich!"], ["gift", 0, 1], [1, "Hihi, danke! Das ist ja wunderschön!"], ["hug", 1, 0]]}, {"b": "forest", "c": ["rudi", "pino"], "l": [[0, "Schnee! Endlich Schnee!"], ["snowball", 1, 0], [0, "Hey! Na warte..."], ["kiss", 1, 0], [1, "Hehe, frohe Weihnachten, Rudi!"]]}]}
+ENDFUNC
+
+' Ready stories to start from, [name, story], in German or English; {name}
+' becomes the recipient when the story plays.
+EXPORT FUNC TEMPLATES(l$)
+    IF l$ = "en" THEN
+        RETURN [["-", NONE], ["Classic", {"m": 0, "g": 0, "s": [{"b": "room", "c": ["santa", "lina"], "l": [[0, "Ho ho ho! Merry Christmas, {name}!"], ["wave", 0, 1], [1, "Santa! Is that a present for {name}?"], [0, "Of course! Wrapped with lots of love."], ["gift", 0, 1], [1, "Hihi, how lovely!"], ["hug", 1, 0]]}, {"b": "snow", "c": ["santa", "lina"], "l": [[0, "And now: out into the snow!"], ["dance", 0, 1], [1, "Merry Christmas and a happy new year!"]]}]}], ["Funny", {"m": 1, "g": 2, "s": [{"b": "workshop", "c": ["pip", "santa"], "l": [[1, "Pip, are all the presents ready?"], [0, "Er... almost. I will magic up the rest!"], ["magic", 0, 0], [1, "Hohoho, that does not count!"], ["laugh", 0, 1]]}, {"b": "forest", "c": ["rudi", "pino"], "l": [[1, "Rudi, bet I am faster?"], ["slide", 1, 1], [0, "Hey! Just you wait..."], ["snowball", 0, 1], [1, "Haha! Merry Christmas, {name}!"]]}]}], ["Short and sweet", {"m": 2, "g": 0, "s": [{"b": "room", "c": ["lina", "pino"], "l": [[0, "Hello {name}! I am thinking of you."], ["wave", 0, 1], [1, "Me too!"], ["hug", 0, 1], [0, "Merry Christmas!"]]}]}], ["For kids", {"m": 1, "g": 4, "s": [{"b": "snow", "c": ["rudi", "pip", "pino"], "l": [[0, "Hello {name}! I am Rudi."], ["glow", 0, 0], [1, "And I am Pip, the elf!"], ["magic", 1, 1], [2, "And I am Pino! Look at this!"], ["slide", 2, 2], [0, "Merry Christmas, {name}!"], ["dance", 0, 1]]}]}]]
+    ENDIF
+    RETURN [["-", NONE], ["Klassisch", {"m": 0, "g": 0, "s": [{"b": "room", "c": ["santa", "lina"], "l": [[0, "Ho ho ho! Frohe Weihnachten, {name}!"], ["wave", 0, 1], [1, "Der Weihnachtsmann! Ist das ein Geschenk für {name}?"], [0, "Natürlich! Mit ganz viel Liebe eingepackt."], ["gift", 0, 1], [1, "Hihi, wie schön!"], ["hug", 1, 0]]}, {"b": "snow", "c": ["santa", "lina"], "l": [[0, "Und jetzt: ab in den Schnee!"], ["dance", 0, 1], [1, "Frohes Fest und ein gutes neues Jahr!"]]}]}], ["Lustig", {"m": 1, "g": 2, "s": [{"b": "workshop", "c": ["pip", "santa"], "l": [[1, "Pip, sind alle Geschenke fertig?"], [0, "Äh... fast. Ich zaubere schnell den Rest!"], ["magic", 0, 0], [1, "Hohoho, das zählt aber nicht!"], ["laugh", 0, 1]]}, {"b": "forest", "c": ["rudi", "pino"], "l": [[1, "Rudi, wetten, ich bin schneller?"], ["slide", 1, 1], [0, "Hey! Na warte..."], ["snowball", 0, 1], [1, "Haha! Frohe Weihnachten, {name}!"]]}]}], ["Kurz & lieb", {"m": 2, "g": 0, "s": [{"b": "room", "c": ["lina", "pino"], "l": [[0, "Hallo {name}! Ich denk ganz fest an dich."], ["wave", 0, 1], [1, "Ich auch!"], ["hug", 0, 1], [0, "Frohe Weihnachten!"]]}]}], ["Für Kinder", {"m": 1, "g": 4, "s": [{"b": "snow", "c": ["rudi", "pip", "pino"], "l": [[0, "Hallo {name}! Ich bin Rudi."], ["glow", 0, 0], [1, "Und ich bin Pip, der Wichtel!"], ["magic", 1, 1], [2, "Und ich bin Pino! Guckt mal!"], ["slide", 2, 2], [0, "Frohe Weihnachten, {name}!"], ["dance", 0, 1]]}]}]]
 ENDFUNC
 
 ' Seconds a scene lasts: its bubbles, then its action.
@@ -1059,6 +1068,48 @@ FUNC ActionPoses(a$, poses, at, by, onto)
             poses[k]{"arm_l"} = 60
             poses[k]{"arm_r"} = -60
         NEXT k
+    ELSEIF a$ = "glow" THEN
+        poses[by]{"eyes"} = "happy"
+        poses[by]{"arm_l"} = 130 + SIN(at * 6) * 10
+        poses[by]{"arm_r"} = -130 - SIN(at * 6) * 10
+        poses[by]{"y"} = poses[by]{"y"} - ABS(SIN(at * 3)) * 10
+        FOR k = 0 TO n - 1
+            IF k <> by ANDALSO at > 0.5 THEN poses[k]{"mouth"} = 1
+        NEXT k
+    ELSEIF a$ = "slide" THEN
+        DIM x0 = poses[by]{"x"}
+        DIM goal = FW - x0
+        IF ABS(goal - x0) < 200 THEN goal = x0 + IIF(x0 < FW / 2, 220, -220)
+        goal = CLAMP(goal, 250, FW - 250)
+        DIM ph = MIN([1, at / (ACTION_LEN - 0.2)])
+        DIM lying = MIN([1, at / 0.4, (ACTION_LEN - at) / 0.4])
+        DIM heading = SGN(goal - x0) * IIF(ph < 0.5, 1, -1)
+        poses[by]{"x"} = LERP(x0, goal, SIN(ph * MATH.PI))
+        poses[by]{"tilt"} = heading * 80 * lying
+        poses[by]{"y"} = poses[by]{"y"} + 25 * lying
+        poses[by]{"arm_l"} = 170 * lying
+        poses[by]{"arm_r"} = -170 * lying
+        poses[by]{"eyes"} = "happy"
+        poses[by]{"laugh"} = TRUE
+        FOR k = 0 TO n - 1
+            IF k <> by THEN
+                poses[k]{"laugh"} = TRUE
+                poses[k]{"eyes"} = "happy"
+            ENDIF
+        NEXT k
+    ELSEIF a$ = "magic" THEN
+        IF poses[by]{"x"} <= FW / 2 THEN
+            poses[by]{"arm_r"} = -130 + SIN(at * 10) * 25
+        ELSE
+            poses[by]{"arm_l"} = 130 + SIN(at * 10) * 25
+        ENDIF
+        poses[by]{"eyes"} = "happy"
+        FOR k = 0 TO n - 1
+            IF k <> by ANDALSO at > 1.2 THEN
+                poses[k]{"mouth"} = 1
+                poses[k]{"y"} = poses[k]{"y"} - ABS(SIN(at * 7 + k)) * 12
+            ENDIF
+        NEXT k
     ELSE
         FOR k = 0 TO n - 1
             poses[k]{"laugh"} = TRUE
@@ -1160,6 +1211,52 @@ SUB ActionFx(a$, room, poses, at, by, onto)
             CIRCLE ex, ey, 26, TRUE, 255, 214, 70
             TEXT ex - 6, ey - 18, "!", 120, 40, 40
         NEXT i
+    ELSEIF a$ = "glow" THEN
+        ' rings of red light from the nose (or the face) and sparkles around
+        DIM gx = poses[by]{"x"}
+        DIM gy = poses[by]{"y"} - 250 * poses[by]{"scale"}
+        DIM ring = 0
+        FOR ring = 0 TO 3
+            DIM rp = (at * 0.9 + ring / 4) - INT(at * 0.9 + ring / 4)
+            DIM rr = 30 + rp * 300
+            DIM fade = 1 - rp
+            DIM w = 0
+            FOR w = 0 TO 4
+                CIRCLE gx, gy, rr + w, FALSE, 255, 70 + 120 * (1 - fade), 90 + 100 * (1 - fade)
+            NEXT w
+        NEXT ring
+        FOR i = 0 TO 9
+            DIM sa = i * 0.63 + at * 1.5
+            Sparkle(gx + COS(sa) * (90 + i * 12), gy + SIN(sa) * (70 + i * 9), 9, 3)
+        NEXT i
+    ELSEIF a$ = "slide" THEN
+        ' snow thrown up behind the slider
+        FOR i = 0 TO 7
+            DIM pp = (at * 2 + i / 8) - INT(at * 2 + i / 8)
+            CIRCLE poses[by]{"x"} + SIN(i * 2.1) * 60, 1150 - pp * 60, 10 * (1 - pp) + 2, TRUE, 250, 252, 255
+        NEXT i
+    ELSEIF a$ = "magic" THEN
+        ' a swirl of glitter in the middle, then little presents pop out of it
+        DIM mx = (poses[by]{"x"} + FW / 2) / 2
+        DIM my = poses[by]{"y"} - 360
+        FOR i = 0 TO 13
+            DIM ma = i * 0.45 + at * 4
+            DIM mr = 20 + i * 7 + SIN(at * 3 + i) * 8
+            Sparkle(mx + COS(ma) * mr, my + SIN(ma) * mr * 0.6, 6 + i MOD 3 * 3, 3)
+        NEXT i
+        DIM g = 0
+        FOR g = 0 TO 2
+            DIM born = 1.2 + g * 0.5
+            IF at > born THEN
+                DIM gs = MIN([1, (at - born) / 0.4])
+                DIM gxx = mx + (g - 1) * 110
+                DIM gyy = 1180 - ABS(SIN((at - born) * 6)) * (1 - gs) * 60
+                DIM col = Bulb(g + 1)
+                ROUNDED_RECT gxx - 30 * gs, gyy - 30 * gs, 60 * gs, 60 * gs, 6, TRUE, col[0], col[1], col[2]
+                RECT gxx - 5 * gs, gyy - 30 * gs, 10 * gs, 60 * gs, TRUE, 255, 255, 255
+                RECT gxx - 30 * gs, gyy - 5 * gs, 60 * gs, 10 * gs, TRUE, 255, 255, 255
+            ENDIF
+        NEXT g
     ELSEIF a$ = "laugh" THEN
         FOR i = 0 TO n - 1
             DIM hp = (at * 0.8 + i * 0.3) - INT(at * 0.8 + i * 0.3)

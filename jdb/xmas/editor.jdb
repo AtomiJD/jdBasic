@@ -25,8 +25,8 @@ DIM name_col = IIF(lang$ = "de", 1, 2)
 
 ' The editor's own words in German or English.
 FUNC T$(key$)
-    DIM de = {"title": "Weihnachtsgruß", "from": "Von", "to": "Für", "scene": "Szene", "place": "Ort", "action": "Aktion", "figure": "Figur", "add_fig": "+ Figur", "del_fig": "- Figur", "steps": "Ablauf", "add_line": "+ Sprechblase", "add_act": "+ Aktion", "add_scene": "+ Szene", "del_scene": "- letzte Szene", "music": "Musik", "song": "Lied", "style": "Stil", "play": "Musik an", "preview": "Vorschau", "restart": "Von vorn", "share": "Teilen", "copy": "Link kopieren", "copied": "kopiert", "chars": "Zeichen"}
-    DIM en = {"title": "Christmas greeting", "from": "From", "to": "For", "scene": "Scene", "place": "Place", "action": "Action", "figure": "Figure", "add_fig": "+ Figure", "del_fig": "- Figure", "steps": "Sequence", "add_line": "+ Bubble", "add_act": "+ Action", "add_scene": "+ Scene", "del_scene": "- Last scene", "music": "Music", "song": "Song", "style": "Style", "play": "Music on", "preview": "Preview", "restart": "Restart", "share": "Share", "copy": "Copy link", "copied": "copied", "chars": "characters"}
+    DIM de = {"title": "Weihnachtsgruß", "template": "Vorlage", "from": "Von", "to": "Für", "scene": "Szene", "place": "Ort", "action": "Aktion", "figure": "Figur", "add_fig": "+ Figur", "del_fig": "- Figur", "steps": "Ablauf", "add_line": "+ Sprechblase", "add_act": "+ Aktion", "add_scene": "+ Szene", "del_scene": "- letzte Szene", "music": "Musik", "song": "Lied", "style": "Stil", "play": "Musik an", "preview": "Vorschau", "restart": "Von vorn", "share": "Teilen", "copy": "Link kopieren", "copied": "kopiert", "chars": "Zeichen"}
+    DIM en = {"title": "Christmas greeting", "template": "Template", "from": "From", "to": "For", "scene": "Scene", "place": "Place", "action": "Action", "figure": "Figure", "add_fig": "+ Figure", "del_fig": "- Figure", "steps": "Sequence", "add_line": "+ Bubble", "add_act": "+ Action", "add_scene": "+ Scene", "del_scene": "- Last scene", "music": "Music", "song": "Song", "style": "Style", "play": "Music on", "preview": "Preview", "restart": "Restart", "share": "Share", "copy": "Copy link", "copied": "copied", "chars": "characters"}
     IF lang$ = "en" THEN RETURN en{key$}
     RETURN de{key$}
 ENDFUNC
@@ -98,6 +98,7 @@ DIM link$ = ""
 DIM copied$ = ""
 DIM music_on = FALSE
 DIM running = TRUE
+DIM template_i = 0
 
 DIM bg_ids = SELECT(LAMBDA r -> r[0], XMASPLAY.BACKGROUNDS())
 DIM bg_names = Column(XMASPLAY.BACKGROUNDS(), name_col)
@@ -240,6 +241,19 @@ DO WHILE running
             cast_names = Column(XMASPLAY.CASTS(), name_col)
         ENDIF
         GUI.SEPARATOR_TEXT(T$("title"))
+        DIM tmpls = XMASPLAY.TEMPLATES(lang$)
+        DIM picked_t = GUI.COMBO(T$("template"), template_i, Column(tmpls, 0))
+        IF picked_t <> template_i THEN
+            template_i = picked_t
+            IF picked_t > 0 THEN
+                DIM keep_f$ = doc{"f"}
+                DIM keep_t$ = doc{"t"}
+                doc = tmpls[picked_t][1]
+                doc{"f"} = keep_f$
+                doc{"t"} = keep_t$
+                t_story = ms_now
+            ENDIF
+        ENDIF
         doc{"f"} = XMASPLAY.CLEANTEXT$(GUI.INPUT$(T$("from"), doc{"f"}), XMASPLAY.MAX_NAME)
         doc{"t"} = XMASPLAY.CLEANTEXT$(GUI.INPUT$(T$("to"), doc{"t"}), XMASPLAY.MAX_NAME)
         DIM scenes = doc{"s"}
