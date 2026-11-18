@@ -1766,15 +1766,10 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                         it->second.tags[i] = JD_TAG_FUNCREF;
                         continue;
                     }
-                    // A LAMBDA, or a variable holding one (a closure a FUNC
-                    // returned), is a function pointer the same way.
-                    if (e.args[i] && (e.args[i]->kind == ExprKind::LAMBDA_EXPR ||
-                        (e.args[i]->kind == ExprKind::VARIABLE && [&] {
-                            VarInfo* fv = lookup_var(e.args[i]->str_val);
-                            if (fv) return fv->tag == JD_TAG_FUNCREF;
-                            auto pit = pre_var_tags.find(e.args[i]->str_val);
-                            return pit != pre_var_tags.end() && pit->second == JD_TAG_FUNCREF;
-                        }()))) {
+                    // A LAMBDA written as the argument is a function pointer
+                    // the same way. A variable holding a closure is decided
+                    // later, once every call site and assignment is known.
+                    if (e.args[i] && e.args[i]->kind == ExprKind::LAMBDA_EXPR) {
                         it->second.tags[i] = JD_TAG_FUNCREF;
                         continue;
                     }
@@ -3551,12 +3546,13 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         }
     }
 
-    // A global filled with a closure holds a function reference: a LAMBDA,
-    // or a call to a FUNC every RETURN of which hands back a LAMBDA. A FUNC
-    // of the main program handed such a global takes the function reference
-    // in that parameter, so the analysis below sees what `fn(x)` through it
-    // answers. Statements inside FUNC and SUB bodies are left out: a local
-    // there may carry the same name.
+    // A global that only ever holds a closure - every assignment to its name
+    // is a LAMBDA or a call to a FUNC each RETURN of which hands back one -
+    // is a function reference. A FUNC parameter every call site hands such
+    // a global, a LAMBDA or a name@ takes the function reference, so the
+    // analysis below sees what `fn(x)` through it answers. A site inside a
+    // FUNC or SUB body counts as handing something else: a local there may
+    // carry the name.
     {
         auto is_factory = [&](const std::string& fname) {
             auto dit = decls.find(fname);
@@ -3579,45 +3575,72 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         auto is_definition = [](const Stmt& st) {
             return st.kind == StmtKind::FUNCTION || st.kind == StmtKind::SUB;
         };
+        // Every assignment to every name, in the main program and in bodies.
+        std::unordered_set<std::string> closure_names, other_names;
+        std::function<void(const Stmt&)> note_assign = [&](const Stmt& st) {
+            if (!st.var_name.empty() &&
+                (st.kind == StmtKind::DIM || st.kind == StmtKind::LET ||
+                 st.kind == StmtKind::ASSIGN)) {
+                bool closure = st.expr &&
+                    (st.expr->kind == ExprKind::LAMBDA_EXPR ||
+                     (st.expr->kind == ExprKind::CALL && is_factory(st.expr->func_name)));
+                (closure ? closure_names : other_names).insert(st.var_name);
+            }
+            for (auto& b : st.body) if (b) note_assign(*b);
+            for (auto& c : st.catch_body()) if (c) note_assign(*c);
+            for (auto& f : st.finally_body()) if (f) note_assign(*f);
+            for (auto& br : st.branches)
+                for (auto& b : br.body) if (b) note_assign(*b);
+        };
+        for (auto& s : program) if (s) note_assign(*s);
         std::unordered_set<std::string> funcref_globals;
-        for (auto& s : program) {
-            if (!s || is_definition(*s) || s->var_name.empty() || !s->expr) continue;
-            if (s->kind != StmtKind::DIM && s->kind != StmtKind::LET &&
-                s->kind != StmtKind::ASSIGN) continue;
-            const Expr& x = *s->expr;
-            if (x.kind == ExprKind::LAMBDA_EXPR ||
-                (x.kind == ExprKind::CALL && is_factory(x.func_name)))
-                funcref_globals.insert(s->var_name);
-        }
+        for (auto& n : closure_names)
+            if (!other_names.count(n)) funcref_globals.insert(n);
+
         if (!funcref_globals.empty()) {
-            std::function<void(const Expr&)> scan_expr = [&](const Expr& e) {
-                if (e.kind == ExprKind::CALL) {
-                    auto it = decls.find(e.func_name);
-                    if (it != decls.end())
-                        for (size_t i = 0; i < e.args.size() && i < it->second.tags.size(); i++)
-                            if (e.args[i] && e.args[i]->kind == ExprKind::VARIABLE &&
-                                funcref_globals.count(e.args[i]->str_val) &&
-                                it->second.tags[i] == JD_TAG_F64)
-                                it->second.tags[i] = JD_TAG_FUNCREF;
+            // Per FUNC and parameter position: a site handed a function, a
+            // site handed anything else.
+            std::map<std::pair<std::string, size_t>, std::pair<bool, bool>> sites;
+            std::function<void(const Expr&, bool)> scan_expr = [&](const Expr& e, bool in_body) {
+                if (e.kind == ExprKind::CALL && decls.count(e.func_name)) {
+                    for (size_t i = 0; i < e.args.size(); i++) {
+                        if (!e.args[i]) continue;
+                        const Expr& a = *e.args[i];
+                        bool fn = a.kind == ExprKind::LAMBDA_EXPR ||
+                                  (a.kind == ExprKind::LITERAL_STRING && a.is_funcref_lit) ||
+                                  (!in_body && a.kind == ExprKind::VARIABLE &&
+                                   funcref_globals.count(a.str_val));
+                        auto& slot = sites[{ e.func_name, i }];
+                        (fn ? slot.first : slot.second) = true;
+                    }
                 }
-                if (e.left) scan_expr(*e.left);
-                if (e.right) scan_expr(*e.right);
-                for (auto& a : e.args) if (a) scan_expr(*a);
+                if (e.left) scan_expr(*e.left, in_body);
+                if (e.right) scan_expr(*e.right, in_body);
+                for (auto& a : e.args) if (a) scan_expr(*a, in_body);
             };
-            std::function<void(const Stmt&)> scan_stmt = [&](const Stmt& s) {
-                if (is_definition(s)) return;
-                if (s.expr) scan_expr(*s.expr);
-                for (auto& pe : s.print_exprs) if (pe) scan_expr(*pe);
-                if (s.loop_cond) scan_expr(*s.loop_cond);
-                for (auto& b : s.body) if (b) scan_stmt(*b);
-                for (auto& c : s.catch_body()) if (c) scan_stmt(*c);
-                for (auto& f : s.finally_body()) if (f) scan_stmt(*f);
+            std::function<void(const Stmt&, bool)> scan_stmt = [&](const Stmt& s, bool in_body) {
+                bool body = in_body || is_definition(s);
+                if (s.expr) scan_expr(*s.expr, body);
+                for (auto& pe : s.print_exprs) if (pe) scan_expr(*pe, body);
+                if (s.loop_cond) scan_expr(*s.loop_cond, body);
+                if (s.end_expr) scan_expr(*s.end_expr, body);
+                if (s.step_expr) scan_expr(*s.step_expr, body);
+                for (auto& b : s.body) if (b) scan_stmt(*b, body);
+                for (auto& c : s.catch_body()) if (c) scan_stmt(*c, body);
+                for (auto& f : s.finally_body()) if (f) scan_stmt(*f, body);
                 for (auto& br : s.branches) {
-                    if (br.condition) scan_expr(*br.condition);
-                    for (auto& b : br.body) if (b) scan_stmt(*b);
+                    if (br.condition) scan_expr(*br.condition, body);
+                    for (auto& b : br.body) if (b) scan_stmt(*b, body);
                 }
             };
-            for (auto& s : program) if (s) scan_stmt(*s);
+            for (auto& s : program) if (s) scan_stmt(*s, false);
+            for (auto& [key, seen] : sites) {
+                if (!seen.first || seen.second) continue;
+                auto it = decls.find(key.first);
+                if (it != decls.end() && key.second < it->second.tags.size() &&
+                    it->second.tags[key.second] == JD_TAG_F64)
+                    it->second.tags[key.second] = JD_TAG_FUNCREF;
+            }
         }
     }
 
@@ -12345,7 +12368,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             // or a string picked out of an array keeps its kind in the result.
             TypedValue body;
             {
-                bool cell_body = expr.right->kind == ExprKind::INDEX;
+                // Outside SELECT and friends only a read by position: a text
+                // key read keeps its own path and its copy rules.
+                bool cell_body = expr.right->kind == ExprKind::INDEX &&
+                    (hof_mode != 0 || !expr.right->right ||
+                     (expr.right->right->kind != ExprKind::LITERAL_STRING &&
+                      !(expr.right->right->kind == ExprKind::VARIABLE &&
+                        !expr.right->right->str_val.empty() &&
+                        expr.right->right->str_val.back() == '$')));
                 ScopedLeafTag _lt(this, cell_body ? JD_TAG_RUNTIME : m_want_leaf_tag);
                 body = codegen_expr(*expr.right);
             }
