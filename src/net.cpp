@@ -335,8 +335,8 @@ sock_t bind_one(const addrinfo* ai, bool& opened, std::string& err) {
 // Binds a listening or UDP socket to host:port; 0 on failure with the error set.
 // The socket is bound to the first address of the name this system can open
 // a socket for. A name with more addresses, such as "localhost" (::1 and
-// 127.0.0.1), fails when another of them is taken on the port, so a client
-// that picks that address does not reach a different program.
+// 127.0.0.1), fails when another of them is taken on the port at the
+// moment of the call.
 sock_t bound_socket(const std::string& host, int64_t port, int socktype, const char* fn) {
     addrinfo* res = resolve(host, port, socktype, true);
     if (!res) return BAD_SOCK;
@@ -344,12 +344,17 @@ sock_t bound_socket(const std::string& host, int64_t port, int socktype, const c
     sock_t fd = BAD_SOCK;
     bool opened = false;
     addrinfo* ai = res;
+    const addrinfo* bound_ai = nullptr;
     while (ai && !opened) {
         fd = bind_one(ai, opened, err);
+        bound_ai = ai;
         ai = ai->ai_next;
     }
     for (; fd != BAD_SOCK && port != 0 && ai; ai = ai->ai_next) {
         if (is_wildcard(ai)) continue;
+        if (ai->ai_addrlen == bound_ai->ai_addrlen &&
+            memcmp(ai->ai_addr, bound_ai->ai_addr, ai->ai_addrlen) == 0)
+            continue;
         std::string probe_err;
         sock_t probe = bind_one(ai, opened, probe_err);
         if (probe != BAD_SOCK) {
