@@ -59,6 +59,22 @@ DIM act_names = SELECT(LAMBDA r -> r[1], XMASPLAY.ACTIONS())
 DIM cast_ids = SELECT(LAMBDA r -> r[0], XMASPLAY.CASTS())
 DIM cast_names = SELECT(LAMBDA r -> r[1], XMASPLAY.CASTS())
 
+' The bubbles with the speakers of places a and b exchanged.
+FUNC SwapSpeakers(lines, a, b)
+    DIM out = []
+    DIM ln = NONE
+    FOR EACH ln IN lines
+        DIM who = ln[0]
+        IF who = a THEN
+            who = b
+        ELSEIF who = b THEN
+            who = a
+        ENDIF
+        out = APPEND(out, [[who, ln[1]]])
+    NEXT ln
+    RETURN out
+ENDFUNC
+
 ' How many bubbles of the first n of a scene's lines have text.
 FUNC Said(lines, n)
     DIM said_n = 0
@@ -141,7 +157,14 @@ DO WHILE running
                     DIM ci = 0
                     FOR ci = 0 TO LEN(cast) - 1
                         GUI.PUSH_ID(100 + ci)
-                        cast[ci] = cast_ids[GUI.COMBO("Figur " + STR$(ci + 1), MAX([0, FIND_IN_ARRAY(cast_ids, cast[ci])]), cast_names)]
+                        DIM picked$ = cast_ids[GUI.COMBO("Figur " + STR$(ci + 1), MAX([0, FIND_IN_ARRAY(cast_ids, cast[ci])]), cast_names)]
+                        DIM other = FIND_IN_ARRAY(cast, picked$)
+                        IF other >= 0 ANDALSO other <> ci THEN
+                            ' the figure already stands elsewhere: the two swap places and keep their bubbles
+                            cast[other] = cast[ci]
+                            sc{"l"} = SwapSpeakers(sc{"l"}, ci, other)
+                        ENDIF
+                        cast[ci] = picked$
                         GUI.POP_ID
                     NEXT ci
                     sc{"c"} = cast
