@@ -278,17 +278,21 @@ DO WHILE running
                         cast[ci] = picked$
                         GUI.POP_ID
                     NEXT ci
-                    IF LEN(cast) < XMASPLAY.MAX_CAST ANDALSO GUI.BUTTON(T$("add_fig")) THEN
-                        DIM id$ = ""
-                        FOR EACH id$ IN cast_ids
-                            IF FIND_IN_ARRAY(cast, id$) < 0 THEN
-                                cast = APPEND(cast, [id$])
-                                EXITFOR
-                            ENDIF
-                        NEXT id$
+                    DIM drew_fig = FALSE
+                    IF LEN(cast) < XMASPLAY.MAX_CAST THEN
+                        drew_fig = TRUE
+                        IF GUI.BUTTON(T$("add_fig")) THEN
+                            DIM id$ = ""
+                            FOR EACH id$ IN cast_ids
+                                IF FIND_IN_ARRAY(cast, id$) < 0 THEN
+                                    cast = APPEND(cast, [id$])
+                                    EXITFOR
+                                ENDIF
+                            NEXT id$
+                        ENDIF
                     ENDIF
                     IF LEN(cast) > 1 THEN
-                        GUI.SAME_LINE
+                        IF drew_fig THEN GUI.SAME_LINE
                         IF GUI.BUTTON(T$("del_fig")) THEN
                             cast = TAKE(LEN(cast) - 1, cast)
                             sc{"l"} = Leave(sc{"l"}, LEN(cast))
@@ -337,11 +341,23 @@ DO WHILE running
                         ENDIF
                         IF JSON.STRINGIFY$(lines[li]) <> before THEN t_story = ms_now - StartOf(doc, si, li) * 1000
                         GUI.SAME_LINE
-                        IF li > 0 ANDALSO GUI.BUTTON("^") THEN move_up = li
+                        IF li > 0 THEN
+                            IF GUI.BUTTON("^") THEN move_up = li
+                        ELSE
+                            GUI.DUMMY(22 * ui, 1)
+                        ENDIF
                         GUI.SAME_LINE
-                        IF li < LEN(lines) - 1 ANDALSO GUI.BUTTON("v") THEN move_down = li
+                        IF li < LEN(lines) - 1 THEN
+                            IF GUI.BUTTON("v") THEN move_down = li
+                        ELSE
+                            GUI.DUMMY(22 * ui, 1)
+                        ENDIF
                         GUI.SAME_LINE
-                        IF LEN(lines) > 1 ANDALSO GUI.BUTTON("x") THEN drop_at = li
+                        IF LEN(lines) > 1 THEN
+                            IF GUI.BUTTON("x") THEN drop_at = li
+                        ELSE
+                            GUI.DUMMY(22 * ui, 1)
+                        ENDIF
                         GUI.POP_ID
                     NEXT li
                     IF move_up > 0 THEN lines = SwapSteps(lines, move_up - 1)
@@ -364,9 +380,13 @@ DO WHILE running
             NEXT si
             GUI.END_TAB_BAR
         ENDIF
-        IF LEN(scenes) < XMASPLAY.MAX_SCENES ANDALSO GUI.BUTTON(T$("add_scene")) THEN scenes = APPEND(scenes, {"b": "snow", "c": ["santa", "lina"], "l": [[0, ""], ["dance", 0, 1]]})
+        DIM drew_scene = FALSE
+        IF LEN(scenes) < XMASPLAY.MAX_SCENES THEN
+            drew_scene = TRUE
+            IF GUI.BUTTON(T$("add_scene")) THEN scenes = APPEND(scenes, {"b": "snow", "c": ["santa", "lina"], "l": [[0, ""], ["dance", 0, 1]]})
+        ENDIF
         IF LEN(scenes) > 1 THEN
-            GUI.SAME_LINE
+            IF drew_scene THEN GUI.SAME_LINE
             IF GUI.BUTTON(T$("del_scene")) THEN scenes = TAKE(LEN(scenes) - 1, scenes)
         ENDIF
         doc{"s"} = scenes
