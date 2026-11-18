@@ -358,11 +358,14 @@ ENDSUB
 
 ' --------------------------- camera + input state ---------------------------
 
-DIM cam_x AS DOUBLE = NX / 2.0
-DIM cam_y AS DOUBLE = NY + 2.0
+' Camera at the +X +Z corner, well above the ground, looking down into the
+' chunk along (-X, -Z). yaw = -PI/4 points the forward vector at (-0.7, 0, -0.7)
+' so the chunk fills the view instead of sitting behind the camera.
+DIM cam_x AS DOUBLE = NX + 4.0
+DIM cam_y AS DOUBLE = NY + 4.0
 DIM cam_z AS DOUBLE = NZ + 4.0
-DIM yaw   AS DOUBLE = -MATH.PI * 0.75
-DIM pitch AS DOUBLE = -0.45
+DIM yaw   AS DOUBLE = -MATH.PI * 0.25
+DIM pitch AS DOUBLE = -0.5
 DIM sel_type AS INTEGER = BT_GRASS
 
 DIM keys AS MAP = {}
@@ -449,7 +452,7 @@ ENDFUNC
 
 ' --------------------------- main loop ---------------------------
 
-DIM proj = MAT4.PERSPECTIVE(65.0, WIN_W / WIN_H, 0.1, 200.0)
+DIM proj = MAT4.PERSPECTIVE(65.0, WIN_W * 1.0 / WIN_H, 0.1, 200.0)
 
 DIM last_t AS INTEGER = TICK()
 DIM move_speed AS DOUBLE = 7.0
