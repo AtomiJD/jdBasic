@@ -58,7 +58,7 @@ EXPORT FUNC DECODE(code$)
 ENDFUNC
 
 EXPORT FUNC DEMO()
-    RETURN {"lines": ["Ho ho ho! Frohe Weihnachten, liebe Oma!", "Oh, der Weihnachtsmann! Hast du Kekse mitgebracht?", "Nur die guten mit Zimt. Und ganz viel Liebe!", "Hihi, dann darfst du bleiben. Frohes Fest!"], "from": "Achim", "to": "Oma"}
+    RETURN {"lines": ["Ho ho ho! Frohe Weihnachten, schön, dass du da bist!", "Oh, der Weihnachtsmann! Hast du Kekse mitgebracht?", "Nur die guten mit Zimt. Und ganz viel Liebe!", "Hihi, dann darfst du bleiben. Frohes Fest!"], "from": "Santa und Lina", "to": "dich"}
 ENDFUNC
 
 ' Seconds from the first bubble to the end card.
@@ -256,8 +256,8 @@ SUB DrawLight(x, y, k, t)
     CIRCLE x - 2, y - 2, 2, TRUE, 255, 255, 255
 ENDSUB
 
-SUB DrawPic(pic, x, y)
-    GFX.DRAWIMAGE_EX(pic[0], x, y, pic[1], pic[2], 0)
+SUB DrawPic(pic, x, y, s)
+    GFX.DRAWIMAGE_EX(pic[0], x, y, pic[1] * s, pic[2] * s, 0)
 ENDSUB
 
 SUB DrawRoom(room, t)
@@ -280,59 +280,63 @@ SUB DrawRoom(room, t)
     DRAWCOLOR 200, 64, 76
     ELLIPSE 360, 1120, 250, 58, TRUE
     ' the window: night sky, moon, snow, curtains
-    RECT 446, 112, 236, 290, TRUE, 246, 236, 220
-    RECT 458, 124, 212, 266, TRUE, 26, 34, 84
-    RECT 458, 300, 212, 90, TRUE, 34, 46, 104
-    CIRCLE 620, 178, 26, TRUE, 255, 240, 170
-    CIRCLE 632, 170, 22, TRUE, 26, 34, 84
+    RECT 38, 112, 236, 290, TRUE, 246, 236, 220
+    RECT 50, 124, 212, 266, TRUE, 26, 34, 84
+    RECT 50, 300, 212, 90, TRUE, 34, 46, 104
+    CIRCLE 110, 178, 26, TRUE, 255, 240, 170
+    CIRCLE 122, 170, 22, TRUE, 26, 34, 84
     DIM f = 0
     FOR f = 0 TO 27
-        DIM fx = 458 + (f * 97 + INT(t * 18 * (1 + f MOD 3) + SIN(t + f) * 6)) MOD 212
+        DIM fx = 50 + (f * 97 + INT(t * 18 * (1 + f MOD 3) + SIN(t + f) * 6)) MOD 212
         DIM fy = 124 + (f * 53 + INT(t * 36 * (1 + f MOD 2))) MOD 250
         CIRCLE fx, fy, 2 + f MOD 2, TRUE, 255, 255, 255
     NEXT f
-    ROUNDED_RECT 458, 370, 212, 22, 10, TRUE, 255, 255, 255
-    RECT 561, 124, 6, 266, TRUE, 246, 236, 220
-    ROUNDED_RECT 430, 100, 44, 310, 16, TRUE, 236, 90, 110
-    ROUNDED_RECT 654, 100, 44, 310, 16, TRUE, 236, 90, 110
-    RECT 420, 92, 288, 18, TRUE, 150, 96, 64
-    ' the tree with its star glowing and its lights blinking
-    DIM glow = 30 + SIN(t * 3) * 8
-    CIRCLE 150, 484, glow + 16, TRUE, 120, 70, 70
-    CIRCLE 150, 484, glow, TRUE, 170, 120, 80
-    DrawPic(room{"tree"}, 10, 440)
-    DIM lights = [[70, 398], [110, 384], [150, 378], [190, 382], [225, 390], [78, 306], [115, 296], [150, 292], [185, 294], [210, 300], [98, 208], [130, 200], [162, 199], [188, 204]]
-    FOR i = 0 TO LEN(lights) - 1
-        DrawLight(10 + lights[i][0], 440 + lights[i][1], i, t)
-    NEXT i
-    DIM sp = t * 2
-    GFX.STROKE 150 + COS(sp) * 46, 484 + SIN(sp) * 46 - 8, 150 + COS(sp) * 46, 484 + SIN(sp) * 46 + 8, 3, 255, 250, 200
-    GFX.STROKE 150 + COS(sp) * 46 - 8, 484 + SIN(sp) * 46, 150 + COS(sp) * 46 + 8, 484 + SIN(sp) * 46, 3, 255, 250, 200
-    DrawPic(room{"presents"}, 36, 790)
+    ROUNDED_RECT 50, 370, 212, 22, 10, TRUE, 255, 255, 255
+    RECT 153, 124, 6, 266, TRUE, 246, 236, 220
+    ROUNDED_RECT 22, 100, 44, 310, 16, TRUE, 236, 90, 110
+    ROUNDED_RECT 246, 100, 44, 310, 16, TRUE, 236, 90, 110
+    RECT 12, 92, 288, 18, TRUE, 150, 96, 64
     ' the fireplace with candles, fire and sparks
-    DrawPic(room{"fireplace"}, 392, 580)
+    DrawPic(room{"fireplace"}, 456, 644, 0.8)
     DIM fl = SIN(t * 11) * 3
     DRAWCOLOR 255, 170, 60
-    ELLIPSE 508, 580 + fl, 6, 10 - fl, TRUE
-    ELLIPSE 596, 588 - fl, 6, 10 + fl, TRUE
+    ELLIPSE 549, 645 + fl, 5, 8 - fl, TRUE
+    ELLIPSE 619, 651 - fl, 5, 8 + fl, TRUE
     DRAWCOLOR 255, 240, 170
-    ELLIPSE 508, 583 + fl, 3, 5, TRUE
-    ELLIPSE 596, 591 - fl, 3, 5, TRUE
-    ROUNDED_RECT 488, 868, 70, 18, 8, TRUE, 110, 64, 38
-    ROUNDED_RECT 534, 862, 70, 18, 8, TRUE, 96, 56, 32
-    DIM flick = SIN(t * 9) * 8
-    DIM flick2 = SIN(t * 13 + 1) * 6
+    ELLIPSE 549, 648 + fl, 2, 4, TRUE
+    ELLIPSE 619, 654 - fl, 2, 4, TRUE
+    ROUNDED_RECT 530, 868, 56, 15, 7, TRUE, 110, 64, 38
+    ROUNDED_RECT 568, 863, 56, 15, 7, TRUE, 96, 56, 32
+    DIM flick = SIN(t * 9) * 6
+    DIM flick2 = SIN(t * 13 + 1) * 5
     DRAWCOLOR 240, 100, 30
-    ELLIPSE 552 + flick2 / 2, 830 - flick, 50, 44 + flick, TRUE
+    ELLIPSE 584 + flick2 / 2, 836 - flick, 40, 36 + flick, TRUE
     DRAWCOLOR 255, 160, 40
-    ELLIPSE 540 - flick2, 838, 30, 30 + flick2, TRUE
-    ELLIPSE 568 + flick2, 840, 26, 26 - flick2, TRUE
+    ELLIPSE 574 - flick2, 843, 24, 24 + flick2, TRUE
+    ELLIPSE 596 + flick2, 845, 21, 21 - flick2, TRUE
     DRAWCOLOR 255, 230, 120
-    ELLIPSE 552, 850, 18, 18 - flick / 2, TRUE
+    ELLIPSE 584, 853, 14, 14 - flick / 2, TRUE
     FOR i = 0 TO 7
         DIM ph = (t * 0.7 + i / 8) - INT(t * 0.7 + i / 8)
-        CIRCLE 552 + SIN(i * 3 + t * 2) * 26 * ph, 840 - ph * 110, MAX([1, 4 * (1 - ph)]), TRUE, 255, 220, 120
+        CIRCLE 584 + SIN(i * 3 + t * 2) * 22 * ph, 846 - ph * 90, MAX([1, 4 * (1 - ph)]), TRUE, 255, 220, 120
     NEXT i
+    ' the tree in the middle, its star glowing and its lights blinking
+    DIM tx0 = 245
+    DIM ty0 = 520
+    DIM ts = 0.85
+    DIM glow = 26 + SIN(t * 3) * 7
+    CIRCLE tx0 + 140 * ts, ty0 + 40 * ts, glow + 14, TRUE, 120, 70, 70
+    CIRCLE tx0 + 140 * ts, ty0 + 40 * ts, glow, TRUE, 170, 120, 80
+    DrawPic(room{"tree"}, tx0, ty0, ts)
+    DIM lights = [[70, 398], [110, 384], [150, 378], [190, 382], [225, 390], [78, 306], [115, 296], [150, 292], [185, 294], [210, 300], [98, 208], [130, 200], [162, 199], [188, 204]]
+    FOR i = 0 TO LEN(lights) - 1
+        DrawLight(tx0 + lights[i][0] * ts, ty0 + lights[i][1] * ts, i, t)
+    NEXT i
+    DIM sx = tx0 + 140 * ts + COS(t * 2) * 40
+    DIM sy = ty0 + 40 * ts + SIN(t * 2) * 40
+    GFX.STROKE sx, sy - 8, sx, sy + 8, 3, 255, 250, 200
+    GFX.STROKE sx - 8, sy, sx + 8, sy, 3, 255, 250, 200
+    DrawPic(room{"presents"}, 266, 826, 0.8)
     ' the garland along the ceiling
     FOR i = 0 TO 30
         DIM gx = i * 24
@@ -346,10 +350,10 @@ SUB DrawRoom(room, t)
     ' the cat, asleep and breathing, dreaming in Zs
     DIM cat = room{"cat"}
     DIM breath = 1 + SIN(t * 2.2) * 0.03
-    GFX.DRAWIMAGE_EX(cat[0], 540, 930 + cat[2] * (1 - breath), cat[1], cat[2] * breath, 0)
+    GFX.DRAWIMAGE_EX(cat[0], 528, 1136 + cat[2] * (1 - breath), cat[1], cat[2] * breath, 0)
     FOR i = 0 TO 2
         DIM zp = (t * 0.35 + i / 3) - INT(t * 0.35 + i / 3)
-        TEXT 560 + zp * 40 + SIN(t * 2 + i) * 8, 920 - zp * 90, IIF(i = 1, "Z", "z"), 255, 255, 255
+        TEXT 624 + zp * 40 + SIN(t * 2 + i) * 6, 1130 - zp * 80, IIF(i = 1, "Z", "z"), 255, 255, 255
     NEXT i
 ENDSUB
 
@@ -434,7 +438,7 @@ EXPORT SUB FRAME(parts, story, t, st)
     DIM room = parts{"room"}
     DIM cast = [parts{"cast"}{"santa"}, parts{"cast"}{"lina"}]
     DrawRoom(room, t)
-    DIM poses = [IdlePose(200, 1062, 1.0, t, 0), IdlePose(486, 1070, 0.92, t, 1.7)]
+    DIM poses = [IdlePose(168, 1068, 0.95, t, 0), IdlePose(548, 1074, 0.88, t, 1.7)]
     poses[0]{"head"} = poses[0]{"head"} + 5
     poses[1]{"head"} = poses[1]{"head"} - 5
     DIM lines = story{"lines"}
@@ -489,7 +493,7 @@ EXPORT SUB FRAME(parts, story, t, st)
         poses[k]{"eyes"} = "happy"
         poses[k]{"tail"} = SIN(beat) * 22
     NEXT k
-    DrawHearts(room{"heart"}, et, 343, 760)
+    DrawHearts(room{"heart"}, et, 360, 760)
     DrawFigure(cast[0], poses[0])
     DrawFigure(cast[1], poses[1])
     DrawConfetti(et)
