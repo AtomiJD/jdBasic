@@ -12,6 +12,8 @@ art/santa_arm.rgbz
 art/santa_head.rgbz
 art/santa_leg.rgbz
 art/santa_torso.rgbz
+art/bg_room.jpg 540x960
+art/bg_snow.jpg 540x960
 raster.jdb
 xml.jdb
 img.jdb

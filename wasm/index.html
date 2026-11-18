@@ -619,13 +619,33 @@
     // path per line (pictures, sounds, data). Each file is fetched as bytes
     // and put at the same path under the FS root, so GFX.LOADIMAGE and
     // friends find it there as on the desktop.
+    async function toRgba(bytes, tw, th){
+      const pic = await createImageBitmap(new Blob([bytes]));
+      const s = Math.max(tw / pic.width, th / pic.height);
+      const sw = tw / s, sh = th / s;
+      const c = document.createElement('canvas'); c.width = tw; c.height = th;
+      const g = c.getContext('2d'); g.imageSmoothingQuality = 'high';
+      g.drawImage(pic, (pic.width - sw) / 2, (pic.height - sh) / 2, sw, sh, 0, 0, tw, th);
+      const px = g.getImageData(0, 0, tw, th).data;
+      const out = new Uint8Array(8 + px.length);
+      const head = new DataView(out.buffer);
+      head.setUint32(0, tw, true); head.setUint32(4, th, true);
+      out.set(px, 8);
+      return out;
+    }
     async function fetchAssets(list){
       if (!list || !/^[\w.\/-]+$/.test(list) || list.includes('..')) return;
       let names = [];
       try { const r = await fetch(list, {cache:'no-store'}); if (r.ok) names = (await r.text()).split(/\r?\n/); } catch(e){}
       let n = 0;
       for (const raw of names) {
-        const name = raw.trim();
+        // "path [WxH]": a picture with a size is also decoded here, cropped to
+        // that shape and written beside it as <path>.rgba (width and height as
+        // two little-endian 32-bit numbers, then RGBA), since the runtime
+        // reads no PNG or JPEG itself.
+        const fields = raw.trim().split(/\s+/);
+        const name = fields[0];
+        const size = fields[1] ? /^(\d{1,4})x(\d{1,4})$/.exec(fields[1]) : null;
         if (!name || name.startsWith('#') || !/^[\w.\/-]+$/.test(name) || name.includes('..')) continue;
         try {
           const r = await fetch(name, {cache:'no-cache'});
@@ -637,6 +657,7 @@
             try { Mod.FS.mkdir(dir); } catch(e){}
           }
           Mod.FS.writeFile('/' + name, bytes);
+          if (size && /\.(png|jpe?g|webp)$/i.test(name)) Mod.FS.writeFile('/' + name + '.rgba', await toRgba(bytes, +size[1], +size[2]));
           n++;
         } catch(e){}
       }

@@ -19,7 +19,7 @@ deploy_spike() {
     local dest=/var/www/vvss/xmas/spike stage=xmas_stage mark page
     $SSH "rm -rf ~/$stage && mkdir -p ~/$stage/art"
     $SCP spike.jdb editor_spike.jdb xmasplay.jdb assets.txt "$HOST:~/$stage/"
-    $SCP art/*.rgbz "$HOST:~/$stage/art/"
+    $SCP art/*.rgbz art/bg_*.jpg "$HOST:~/$stage/art/"
     $SCP ../../lib/raster.jdb ../../lib/xml.jdb ../../lib/img.jdb ../../lib/ttf.jdb "$HOST:~/$stage/"
     $SCP ../../wasm/jdbasic.js ../../wasm/jdbasic.wasm "$HOST:~/$stage/"
     mark=$(sha256sum ../../wasm/jdbasic.wasm ../../wasm/jdbasic.js | sha256sum | cut -c1-12)
@@ -33,7 +33,7 @@ deploy_spike() {
     rm -f "$page"
     $SSH "sudo -n mkdir -p $dest/art \
       && sudo -n cp ~/$stage/*.jdb ~/$stage/assets.txt ~/$stage/index.html ~/$stage/jdbasic.js ~/$stage/jdbasic.wasm $dest/ \
-      && sudo -n cp ~/$stage/art/*.rgbz $dest/art/ \
+      && sudo -n cp ~/$stage/art/*.rgbz ~/$stage/art/bg_*.jpg $dest/art/ \
       && (sudo -n test -d $dest/vendor || sudo -n cp -r /var/www/vvss/tower/play/vendor $dest/) \
       && sudo -n chown -R www-data:www-data /var/www/vvss/xmas \
       && rm -rf ~/$stage"

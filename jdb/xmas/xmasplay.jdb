@@ -238,6 +238,32 @@ FUNC LoadPart(art_dir$, name$)
     RETURN [img, w, h]
 ENDFUNC
 
+' A painted background: the RGBA the runtime page decoded beside the JPEG
+' (bg_<id>.jpg.rgba, in the browser) or the JPEG itself (on the desktop);
+' NONE when there is neither.
+FUNC LoadBg(art_dir$, id$)
+    DIM path$ = art_dir$ + "bg_" + id$ + ".jpg"
+    TRY
+        IF FILE.EXISTS(path$ + ".rgba") THEN
+            DIM raw$ = BINREADER$(path$ + ".rgba")
+            DIM size = UNPACK("<II", raw$)
+            DIM spr = SPRITE.CREATE(size[0], size[1])
+            SPRITE.SETBUFFER spr, UNPACK(STR$(size[0] * size[1] * 4) + "B", raw$, 8)
+            DIM img = GFX.NEWTARGET(size[0], size[1], TRUE)
+            GFX.TARGET img, TRUE
+            SPRITE.POS spr, 0, 0
+            SPRITE.DRAW spr
+            GFX.TARGET
+            SPRITE.DELETE spr
+            RETURN [img, size[0], size[1]]
+        ENDIF
+        IF FILE.EXISTS(path$) THEN RETURN [GFX.LOADIMAGE(path$), 1024, 1536]
+    CATCH
+        RETURN NONE
+    ENDTRY
+    RETURN NONE
+ENDFUNC
+
 ' The rig of a figure: pivots of its parts, joints in the torso's own
 ' coordinates, eyes, mouth and pigtails in the head's.
 FUNC CastDef(name$)
@@ -269,6 +295,8 @@ EXPORT FUNC LOADPARTS(art_dir$)
     room{"presents"} = LoadPart(art_dir$, "room_presents")
     room{"cat"} = LoadPart(art_dir$, "room_cat")
     room{"heart"} = LoadPart(art_dir$, "fx_heart")
+    room{"bg_room"} = LoadBg(art_dir$, "room")
+    room{"bg_snow"} = LoadBg(art_dir$, "snow")
     RETURN {"cast": cast, "room": room}
 ENDFUNC
 
@@ -401,7 +429,14 @@ SUB DrawPic(pic, x, y, s)
     GFX.DRAWIMAGE_EX(pic[0], x, y, pic[1] * s, pic[2] * s, 0)
 ENDSUB
 
-SUB DrawRoom(room, t)
+' A background filling the frame, cut at the sides or the top and bottom.
+SUB DrawBg(pic)
+    DIM s = MAX([FW / pic[1], FH / pic[2]])
+    GFX.DRAWIMAGE_EX(pic[0], (FW - pic[1] * s) / 2, (FH - pic[2] * s) / 2, pic[1] * s, pic[2] * s, 0)
+ENDSUB
+
+' The room drawn in shapes, when its painted picture is missing.
+SUB RoomShell(t)
     ' wall, wainscot, floor and rug
     RECT 0, 0, FW, 900, TRUE, 96, 42, 56
     DIM i = 0
@@ -437,33 +472,51 @@ SUB DrawRoom(room, t)
     ROUNDED_RECT 22, 100, 44, 310, 16, TRUE, 236, 90, 110
     ROUNDED_RECT 246, 100, 44, 310, 16, TRUE, 236, 90, 110
     RECT 12, 92, 288, 18, TRUE, 150, 96, 64
+ENDSUB
+
+SUB DrawRoom(room, t)
+    DIM i = 0
+    DIM painted = NOT ISNONE(room{"bg_room"})
+    IF painted THEN
+        DrawBg(room{"bg_room"})
+        ' snow falling past the painted window
+        FOR i = 0 TO 17
+            DIM wx = 54 + (i * 97 + INT(t * 14 * (1 + i MOD 3) + SIN(t + i) * 5)) MOD 190
+            DIM wy = 170 + (i * 53 + INT(t * 30 * (1 + i MOD 2))) MOD 290
+            CIRCLE wx, wy, 1.5 + i MOD 2, TRUE, 255, 255, 255
+        NEXT i
+    ELSE
+        RoomShell(t)
+    ENDIF
+    ' where the back wall meets the floor
+    DIM dy = IIF(painted, -130, 0)
     ' the fireplace with candles, fire and sparks
-    DrawPic(room{"fireplace"}, 456, 644, 0.8)
+    DrawPic(room{"fireplace"}, 456, 644 + dy, 0.8)
     DIM fl = SIN(t * 11) * 3
     DRAWCOLOR 255, 170, 60
-    ELLIPSE 549, 645 + fl, 5, 8 - fl, TRUE
-    ELLIPSE 619, 651 - fl, 5, 8 + fl, TRUE
+    ELLIPSE 549, 645 + dy + fl, 5, 8 - fl, TRUE
+    ELLIPSE 619, 651 + dy - fl, 5, 8 + fl, TRUE
     DRAWCOLOR 255, 240, 170
-    ELLIPSE 549, 648 + fl, 2, 4, TRUE
-    ELLIPSE 619, 654 - fl, 2, 4, TRUE
-    ROUNDED_RECT 530, 868, 56, 15, 7, TRUE, 110, 64, 38
-    ROUNDED_RECT 568, 863, 56, 15, 7, TRUE, 96, 56, 32
+    ELLIPSE 549, 648 + dy + fl, 2, 4, TRUE
+    ELLIPSE 619, 654 + dy - fl, 2, 4, TRUE
+    ROUNDED_RECT 530, 868 + dy, 56, 15, 7, TRUE, 110, 64, 38
+    ROUNDED_RECT 568, 863 + dy, 56, 15, 7, TRUE, 96, 56, 32
     DIM flick = SIN(t * 9) * 6
     DIM flick2 = SIN(t * 13 + 1) * 5
     DRAWCOLOR 240, 100, 30
-    ELLIPSE 584 + flick2 / 2, 836 - flick, 40, 36 + flick, TRUE
+    ELLIPSE 584 + flick2 / 2, 836 + dy - flick, 40, 36 + flick, TRUE
     DRAWCOLOR 255, 160, 40
-    ELLIPSE 574 - flick2, 843, 24, 24 + flick2, TRUE
-    ELLIPSE 596 + flick2, 845, 21, 21 - flick2, TRUE
+    ELLIPSE 574 - flick2, 843 + dy, 24, 24 + flick2, TRUE
+    ELLIPSE 596 + flick2, 845 + dy, 21, 21 - flick2, TRUE
     DRAWCOLOR 255, 230, 120
-    ELLIPSE 584, 853, 14, 14 - flick / 2, TRUE
+    ELLIPSE 584, 853 + dy, 14, 14 - flick / 2, TRUE
     FOR i = 0 TO 7
         DIM ph = (t * 0.7 + i / 8) - INT(t * 0.7 + i / 8)
-        CIRCLE 584 + SIN(i * 3 + t * 2) * 22 * ph, 846 - ph * 90, MAX([1, 4 * (1 - ph)]), TRUE, 255, 220, 120
+        CIRCLE 584 + SIN(i * 3 + t * 2) * 22 * ph, 846 + dy - ph * 90, MAX([1, 4 * (1 - ph)]), TRUE, 255, 220, 120
     NEXT i
     ' the tree in the middle, its star glowing and its lights blinking
     DIM tx0 = 245
-    DIM ty0 = 520
+    DIM ty0 = 520 + dy
     DIM ts = 0.85
     DIM glow = 26 + SIN(t * 3) * 7
     CIRCLE tx0 + 140 * ts, ty0 + 40 * ts, glow + 14, TRUE, 120, 70, 70
@@ -477,7 +530,7 @@ SUB DrawRoom(room, t)
     DIM sy = ty0 + 40 * ts + SIN(t * 2) * 40
     GFX.STROKE sx, sy - 8, sx, sy + 8, 3, 255, 250, 200
     GFX.STROKE sx - 8, sy, sx + 8, sy, 3, 255, 250, 200
-    DrawPic(room{"presents"}, 266, 826, 0.8)
+    DrawPic(room{"presents"}, 266, 826 + dy, 0.8)
     ' the garland along the ceiling
     FOR i = 0 TO 30
         DIM gx = i * 24
@@ -550,6 +603,23 @@ SUB Lantern(x, y, t)
 ENDSUB
 
 SUB DrawSnowland(room, t)
+    IF NOT ISNONE(room{"bg_snow"}) THEN
+        DrawBg(room{"bg_snow"})
+        DIM s = 0
+        FOR s = 0 TO 11
+            DIM tw = (t * 0.9 + s * 0.37) - INT(t * 0.9 + s * 0.37)
+            IF tw < 0.5 THEN Sparkle((s * 173 + 40) MOD FW, 40 + (s * 97) MOD 340, 12 * SIN(tw * MATH.PI * 2), 3)
+        NEXT s
+        FOR s = 0 TO 19
+            IF (INT(t * 4) + s * 3) MOD 7 = 0 THEN Sparkle((s * 89 + 20) MOD FW, 800 + (s * 61) MOD 440, 7, 2)
+        NEXT s
+        FOR s = 0 TO 59
+            DIM fx = (s * 97 + INT(t * 20 * (1 + s MOD 3) + SIN(t + s) * 12)) MOD FW
+            DIM fy = (s * 53 + INT(t * 50 * (1 + s MOD 2))) MOD FH
+            CIRCLE fx, fy, 2 + s MOD 3, TRUE, 255, 255, 255
+        NEXT s
+        RETURN
+    ENDIF
     RECT 0, 0, FW, 300, TRUE, 18, 24, 60
     RECT 0, 300, FW, 300, TRUE, 28, 38, 88
     RECT 0, 600, FW, 300, TRUE, 46, 62, 120

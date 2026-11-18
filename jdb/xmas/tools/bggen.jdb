@@ -1,0 +1,57 @@
+' Paints the backgrounds of the story cards with an image model and keeps
+' them as art/bg_<id>.jpg. The figures and everything that moves, blinks
+' or snows are drawn by the player on top, so the pictures hold only the
+' place itself.
+'
+'   jdBasic jdb/xmas/tools/bggen.jdb [id ...]      (from the repository root)
+'
+' Needs OPENAI_API_KEY; XMAS_IMAGE_MODEL picks the model (gpt-image-2).
+OPTION "EXPLICIT"
+
+DIM key$ = GETENV$("OPENAI_API_KEY")
+IF key$ = "" THEN
+    PRINT "OPENAI_API_KEY is not set"
+    END 1
+ENDIF
+HTTP.SETTIMEOUT(240)
+DIM model$ = GETENV$("XMAS_IMAGE_MODEL")
+IF model$ = "" THEN model$ = "gpt-image-2"
+
+DIM style$ = "Style: cute kawaii anime picture-book illustration, soft cel shading, rounded clean shapes, warm cozy light, gentle colors, high detail but calm, portrait format. No people, no animals, no characters, no text, no letters, no signature, no watermark."
+
+DIM places = {}
+places{"room"} = "A cozy living room on Christmas Eve seen from the front at eye level. Warm red and cream wallpaper with a subtle pattern, wooden wainscoting, a big window in the upper left showing a snowy night with a crescent moon, shelves with candles and small decorations on the walls, a wooden floor with a round red rug. The middle and the right side of the room stay empty: no Christmas tree, no fireplace, no furniture in the middle. The lower half of the picture is open floor where figures will stand."
+places{"snow"} = "A snowy little village square on Christmas night. A starry deep blue sky with a big round moon, soft snowy hills, a few cute small houses with warm glowing windows and snow on the roofs, pine trees with a little snow, distant fairy lights. The lower half of the picture is open smooth snow where figures will stand, nothing in the foreground."
+
+FUNC Keep(answer$, path$)
+    TRY
+        DIM j = JSON.PARSE(answer$)
+        BINWRITER path$, CODEC.BASE64_DECODE$(j{"data"}[0]{"b64_json"})
+        RETURN TRUE
+    CATCH
+        PRINT "  no picture: "; LEFT$(answer$, 300)
+        RETURN FALSE
+    ENDTRY
+ENDFUNC
+
+FUNC Paint(key$, model$, prompt$, path$)
+    DIM body = {"model": model$, "prompt": prompt$, "n": 1, "size": "1024x1536", "output_format": "jpeg", "output_compression": 85, "quality": "medium"}
+    HTTP.CLEARHEADERS()
+    HTTP.SETHEADER("Authorization", "Bearer " + key$)
+    RETURN Keep(HTTP.POST$("https://api.openai.com/v1/images/generations", JSON.STRINGIFY$(body), "application/json"), path$)
+ENDFUNC
+
+DIM cli = OS.ARGS()
+DIM ids = MAP.KEYS(places)
+IF LEN(cli) > 1 THEN ids = DROP(1, cli)
+DIM art$ = PATH.ABS$("jdb/xmas/art")
+DIM id$ = ""
+FOR EACH id$ IN ids
+    IF NOT MAP.EXISTS(places, id$) THEN
+        PRINT id$; ": no such place"
+        CONTINUEFOR
+    ENDIF
+    DIM path$ = art$ + "/bg_" + id$ + ".jpg"
+    PRINT id$; " ... ";
+    IF Paint(key$, model$, places{id$} + " " + style$, path$) THEN PRINT FILE.SIZE(path$); " bytes"
+NEXT id$
