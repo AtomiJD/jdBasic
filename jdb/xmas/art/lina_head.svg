@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="260" height="270" viewBox="0 0 260 270">
+  <defs>
+    <radialGradient id="skin" cx="0.45" cy="0.4" r="0.65">
+      <stop offset="0" stop-color="#ffeadb"/>
+      <stop offset="1" stop-color="#f7c3a3"/>
+    </radialGradient>
+    <linearGradient id="hair" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8a5234"/>
+      <stop offset="1" stop-color="#6a3a22"/>
+    </linearGradient>
+  </defs>
+  <path d="M32 150 Q22 40 130 28 Q238 40 228 150 Q230 214 204 244 L56 244 Q30 214 32 150 Z" fill="url(#hair)"/>
+  <circle cx="130" cy="152" r="84" fill="url(#skin)"/>
+  <ellipse cx="78" cy="184" rx="17" ry="10" fill="#ff8a9a" opacity="0.6"/>
+  <ellipse cx="182" cy="184" rx="17" ry="10" fill="#ff8a9a" opacity="0.6"/>
+  <path d="M50 118 Q36 190 58 236 Q64 182 74 140 Z" fill="url(#hair)"/>
+  <path d="M210 118 Q224 190 202 236 Q196 182 186 140 Z" fill="url(#hair)"/>
+  <path d="M42 146 Q42 58 130 50 Q218 58 218 146 Q204 108 180 98 L172 128 Q158 98 136 96 L124 132 Q112 98 90 102 L80 134 Q66 108 42 146 Z" fill="url(#hair)"/>
+  <path d="M70 84 Q100 62 140 64" fill="none" stroke="#b07a52" stroke-width="7" stroke-linecap="round" opacity="0.8"/>
+  <path d="M86 132 Q100 125 114 130" fill="none" stroke="#6a3a22" stroke-width="5" stroke-linecap="round"/>
+  <path d="M146 130 Q160 125 174 132" fill="none" stroke="#6a3a22" stroke-width="5" stroke-linecap="round"/>
+  <path d="M200 60 L172 40 L174 82 Z" fill="#e8344a"/>
+  <path d="M200 60 L228 42 L226 84 Z" fill="#e8344a"/>
+  <circle cx="200" cy="61" r="10" fill="#ff5a6e"/>
+</svg>

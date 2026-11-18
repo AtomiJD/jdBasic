@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="320" viewBox="0 0 320 320">
+  <rect x="16" y="66" width="288" height="246" fill="#c96b4f"/>
+  <g stroke="#b45a40" stroke-width="3">
+    <line x1="16" y1="110" x2="304" y2="110"/>
+    <line x1="16" y1="154" x2="304" y2="154"/>
+    <line x1="16" y1="198" x2="304" y2="198"/>
+    <line x1="16" y1="242" x2="304" y2="242"/>
+    <line x1="16" y1="286" x2="304" y2="286"/>
+    <line x1="60" y1="66" x2="60" y2="110"/>
+    <line x1="140" y1="66" x2="140" y2="110"/>
+    <line x1="220" y1="66" x2="220" y2="110"/>
+    <line x1="100" y1="110" x2="100" y2="154"/>
+    <line x1="260" y1="110" x2="260" y2="154"/>
+    <line x1="40" y1="154" x2="40" y2="198"/>
+    <line x1="280" y1="154" x2="280" y2="198"/>
+    <line x1="60" y1="198" x2="60" y2="242"/>
+    <line x1="260" y1="198" x2="260" y2="242"/>
+    <line x1="40" y1="242" x2="40" y2="286"/>
+    <line x1="280" y1="242" x2="280" y2="286"/>
+  </g>
+  <path d="M84 312 L84 178 Q160 112 236 178 L236 312 Z" fill="#2a1814"/>
+  <rect x="96" y="290" width="128" height="14" rx="6" fill="#6b3d26"/>
+  <rect x="0" y="40" width="320" height="30" rx="8" fill="#8b5a3c"/>
+  <rect x="0" y="40" width="320" height="8" rx="4" fill="#a8714f"/>
+  <rect x="0" y="302" width="320" height="18" rx="6" fill="#7a5a48"/>
+  <rect x="108" y="6" width="16" height="36" rx="4" fill="#fff6e0"/>
+  <rect x="196" y="14" width="16" height="28" rx="4" fill="#fff6e0"/>
+  <g fill="#2a8f52">
+    <circle cx="20" cy="44" r="10"/><circle cx="44" cy="40" r="10"/><circle cx="68" cy="44" r="10"/>
+    <circle cx="252" cy="44" r="10"/><circle cx="276" cy="40" r="10"/><circle cx="300" cy="44" r="10"/>
+  </g>
+  <g fill="#e8344a"><circle cx="32" cy="48" r="5"/><circle cx="56" cy="46" r="5"/><circle cx="264" cy="46" r="5"/><circle cx="288" cy="48" r="5"/></g>
+  <path d="M34 70 L66 70 L66 128 Q66 150 46 150 L26 150 Q12 148 14 134 Q18 124 34 124 Z" fill="#e8344a"/>
+  <rect x="30" y="64" width="40" height="16" rx="7" fill="#ffffff"/>
+  <path d="M254 70 L286 70 L286 128 Q286 150 266 150 L246 150 Q232 148 234 134 Q238 124 254 124 Z" fill="#2e9b5c"/>
+  <rect x="250" y="64" width="40" height="16" rx="7" fill="#ffffff"/>
+</svg>

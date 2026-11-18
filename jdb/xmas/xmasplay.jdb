@@ -1,5 +1,5 @@
 ' The player of the Christmas story cards: the story code of a link, the
-' puppet, the room, the speech bubbles and the music. Everything draws in a
+' cast, the room, the speech bubbles and the music. Everything draws in a
 ' portrait frame of 720 x 1280 on the current target.
 EXPORT MODULE XMASPLAY
 
@@ -58,7 +58,7 @@ EXPORT FUNC DECODE(code$)
 ENDFUNC
 
 EXPORT FUNC DEMO()
-    RETURN {"lines": ["Ho ho ho! Fröhliche Weihnachten, liebe Oma!", "Ich habe dir etwas ganz Besonderes mitgebracht. Schau mal!"], "from": "Achim", "to": "Oma"}
+    RETURN {"lines": ["Ho ho ho! Frohe Weihnachten, liebe Oma!", "Oh, der Weihnachtsmann! Hast du Kekse mitgebracht?", "Nur die guten mit Zimt. Und ganz viel Liebe!", "Hihi, dann darfst du bleiben. Frohes Fest!"], "from": "Achim", "to": "Oma"}
 ENDFUNC
 
 ' Seconds from the first bubble to the end card.
@@ -68,7 +68,7 @@ ENDFUNC
 
 ' ---------------------------------------------------------------- pictures
 
-' A part as a smooth GFX image, from its baked .rgbz (tools/bake.jdb) or
+' A picture as a smooth GFX image, from its baked .rgbz (tools/bake.jdb) or
 ' else from its SVG; [image, width, height].
 FUNC LoadPart(art_dir$, name$)
     DIM w = 0
@@ -97,33 +97,46 @@ FUNC LoadPart(art_dir$, name$)
     RETURN [img, w, h]
 ENDFUNC
 
-' The puppet's parts; needs an open SCREEN.
+' The rig of a figure: pivots of its parts, joints in the torso's own
+' coordinates, eyes, mouth and pigtails in the head's.
+FUNC CastDef(name$)
+    IF name$ = "lina" THEN
+        RETURN {"piv": {"torso": [85, 160], "head": [130, 228], "arm": [23, 14], "leg": [26, 6], "tail": [36, 13]}, "joint": {"head": [85, 12], "arm_l": [40, 40], "arm_r": [130, 40], "leg_l": [62, 158], "leg_r": [108, 158]}, "eyes": [[100, 160], [160, 160]], "eye": [17, 23], "iris": [40, 160, 165], "mouth": [130, 207], "tails": [[42, 116], [218, 116]]}
+    ENDIF
+    RETURN {"piv": {"torso": [90, 160], "head": [120, 214], "arm": [28, 16], "leg": [32, 8]}, "joint": {"head": [90, 14], "arm_l": [30, 42], "arm_r": [150, 42], "leg_l": [62, 158], "leg_r": [118, 158]}, "eyes": [[90, 140], [150, 140]], "eye": [14, 19], "iris": [110, 70, 50], "mouth": [120, 202], "tails": []}
+ENDFUNC
+
+' The cast, the room's pictures and the effects; needs an open SCREEN.
 EXPORT FUNC LOADPARTS(art_dir$)
-    DIM parts = {}
-    parts{"torso"} = LoadPart(art_dir$, "santa_torso")
-    parts{"head"} = LoadPart(art_dir$, "santa_head")
-    parts{"arm"} = LoadPart(art_dir$, "santa_arm")
-    parts{"leg"} = LoadPart(art_dir$, "santa_leg")
-    RETURN parts
+    DIM cast = {}
+    DIM names = ["santa", "lina"]
+    DIM n = 0
+    FOR n = 0 TO LEN(names) - 1
+        DIM c = CastDef(names[n])
+        DIM img = {}
+        img{"torso"} = LoadPart(art_dir$, names[n] + "_torso")
+        img{"head"} = LoadPart(art_dir$, names[n] + "_head")
+        img{"arm"} = LoadPart(art_dir$, names[n] + "_arm")
+        img{"leg"} = LoadPart(art_dir$, names[n] + "_leg")
+        IF LEN(c{"tails"}) > 0 THEN img{"tail"} = LoadPart(art_dir$, names[n] + "_tail")
+        c{"img"} = img
+        cast{names[n]} = c
+    NEXT n
+    DIM room = {}
+    room{"tree"} = LoadPart(art_dir$, "room_tree")
+    room{"fireplace"} = LoadPart(art_dir$, "room_fireplace")
+    room{"presents"} = LoadPart(art_dir$, "room_presents")
+    room{"cat"} = LoadPart(art_dir$, "room_cat")
+    room{"heart"} = LoadPart(art_dir$, "fx_heart")
+    RETURN {"cast": cast, "room": room}
 ENDFUNC
 
-' ---------------------------------------------------------------- the puppet
-
-' Parts with their pivot; joints in the torso's own coordinates.
-FUNC Piv(name$)
-    DIM p = {"torso": [110, 215], "head": [100, 200], "arm": [35, 22], "leg": [40, 10]}
-    RETURN p{name$}
-ENDFUNC
-
-FUNC Joint(name$)
-    DIM j = {"head": [110, 22], "arm_l": [50, 46], "arm_r": [170, 46], "leg_l": [78, 200], "leg_r": [142, 200]}
-    RETURN j{name$}
-ENDFUNC
+' ---------------------------------------------------------------- the figures
 
 ' A point of the torso in frame coordinates.
-FUNC TorsoPoint(pose, p)
+FUNC TorsoPoint(c, pose, p)
     DIM r = RADIANS(pose{"tilt"})
-    DIM piv = Piv("torso")
+    DIM piv = c{"piv"}{"torso"}
     DIM dx = (p[0] - piv[0]) * pose{"scale"}
     DIM dy = (p[1] - piv[1]) * pose{"scale"}
     RETURN [pose{"x"} + dx * COS(r) - dy * SIN(r), pose{"y"} + dx * SIN(r) + dy * COS(r)]
@@ -144,71 +157,203 @@ SUB DrawPart(part, piv, jx, jy, ang, sc)
     GFX.DRAWIMAGE_EX(part[0], c[0] - w / 2, c[1] - h / 2, w, h, ang)
 ENDSUB
 
-SUB DrawPuppet(parts, pose)
-    DIM sc = pose{"scale"}
-    DIM j = TorsoPoint(pose, Joint("leg_l"))
-    DrawPart(parts{"leg"}, Piv("leg"), j[0], j[1], pose{"tilt"} + pose{"leg_l"}, sc)
-    j = TorsoPoint(pose, Joint("leg_r"))
-    DrawPart(parts{"leg"}, Piv("leg"), j[0], j[1], pose{"tilt"} + pose{"leg_r"}, sc)
-    j = TorsoPoint(pose, Piv("torso"))
-    DrawPart(parts{"torso"}, Piv("torso"), j[0], j[1], pose{"tilt"}, sc)
-    DIM hj = TorsoPoint(pose, Joint("head"))
-    DIM head_ang = pose{"tilt"} + pose{"head"}
-    DIM head_piv = Piv("head")
-    DrawPart(parts{"head"}, head_piv, hj[0], hj[1], head_ang, sc)
-    ' eyes and mouth are drawn, so they can blink and talk
-    DIM eye_h = IIF(pose{"blink"}, 1, 7) * sc
-    DIM eye_pt = PartPoint(hj[0], hj[1], head_piv, head_ang, sc, [84, 113])
-    DRAWCOLOR 40, 30, 30
-    ELLIPSE eye_pt[0], eye_pt[1], 5 * sc, eye_h, TRUE
-    eye_pt = PartPoint(hj[0], hj[1], head_piv, head_ang, sc, [116, 113])
-    ELLIPSE eye_pt[0], eye_pt[1], 5 * sc, eye_h, TRUE
-    DIM m = PartPoint(hj[0], hj[1], head_piv, head_ang, sc, [100, 158])
-    DRAWCOLOR 120, 30, 40
-    ELLIPSE m[0], m[1], 11 * sc, MAX([2, 9 * pose{"mouth"}]) * sc, TRUE
-    j = TorsoPoint(pose, Joint("arm_l"))
-    DrawPart(parts{"arm"}, Piv("arm"), j[0], j[1], pose{"tilt"} + pose{"arm_l"}, sc)
-    j = TorsoPoint(pose, Joint("arm_r"))
-    DrawPart(parts{"arm"}, Piv("arm"), j[0], j[1], pose{"tilt"} + pose{"arm_r"}, sc)
+' An anime eye: open, closed in a blink, or a happy ^.
+SUB DrawEye(x, y, rx, ry, iris, state$)
+    IF state$ = "blink" THEN
+        GFX.STROKE x - rx, y, x, y + rx * 0.3, rx * 0.4, 60, 36, 40
+        GFX.STROKE x, y + rx * 0.3, x + rx, y, rx * 0.4, 60, 36, 40
+        RETURN
+    ENDIF
+    IF state$ = "happy" THEN
+        GFX.STROKE x - rx, y + ry * 0.3, x, y - ry * 0.35, rx * 0.45, 60, 36, 40
+        GFX.STROKE x, y - ry * 0.35, x + rx, y + ry * 0.3, rx * 0.45, 60, 36, 40
+        RETURN
+    ENDIF
+    DRAWCOLOR 44, 26, 34
+    ELLIPSE x, y, rx, ry, TRUE
+    DRAWCOLOR iris[0], iris[1], iris[2]
+    ELLIPSE x, y + ry * 0.14, rx * 0.76, ry * 0.7, TRUE
+    DRAWCOLOR iris[0] / 2, iris[1] / 2, iris[2] / 2
+    ELLIPSE x, y + ry * 0.22, rx * 0.4, ry * 0.4, TRUE
+    CIRCLE x - rx * 0.3, y - ry * 0.36, rx * 0.42, TRUE, 255, 255, 255
+    CIRCLE x + rx * 0.34, y + ry * 0.38, rx * 0.2, TRUE, 255, 255, 255
 ENDSUB
 
-' ---------------------------------------------------------------- room and bubble
+' The mouth: a small smile, talking (open 0..1) or a big laugh.
+SUB DrawMouth(x, y, sc, open, laugh)
+    IF laugh THEN
+        DRAWCOLOR 150, 40, 56
+        ELLIPSE x, y, 15 * sc, 12 * sc, TRUE
+        DRAWCOLOR 255, 130, 150
+        ELLIPSE x, y + 5 * sc, 9 * sc, 5 * sc, TRUE
+        RETURN
+    ENDIF
+    IF open > 0.05 THEN
+        DRAWCOLOR 150, 40, 56
+        ELLIPSE x, y, 10 * sc, MAX([3, 11 * open]) * sc, TRUE
+        DRAWCOLOR 255, 130, 150
+        ELLIPSE x, y + 4 * open * sc, 6 * sc, 3 * open * sc, TRUE
+        RETURN
+    ENDIF
+    GFX.STROKE x - 9 * sc, y - 2 * sc, x, y + 4 * sc, 4 * sc, 120, 50, 60
+    GFX.STROKE x, y + 4 * sc, x + 9 * sc, y - 2 * sc, 4 * sc, 120, 50, 60
+ENDSUB
 
-SUB DrawRoom(t)
-    RECT 0, 0, FW, FH, TRUE, 74, 38, 40
+SUB DrawFigure(c, pose)
+    DIM img = c{"img"}
+    DIM piv = c{"piv"}
+    DIM jt = c{"joint"}
+    DIM sc = pose{"scale"}
+    DIM tilt = pose{"tilt"}
+    DIM j = TorsoPoint(c, pose, jt{"leg_l"})
+    DrawPart(img{"leg"}, piv{"leg"}, j[0], j[1], tilt + pose{"leg_l"}, sc)
+    j = TorsoPoint(c, pose, jt{"leg_r"})
+    DrawPart(img{"leg"}, piv{"leg"}, j[0], j[1], tilt + pose{"leg_r"}, sc)
+    DIM hj = TorsoPoint(c, pose, jt{"head"})
+    DIM head_ang = tilt + pose{"head"}
+    DIM i = 0
+    FOR i = 0 TO LEN(c{"tails"}) - 1
+        DIM tp = PartPoint(hj[0], hj[1], piv{"head"}, head_ang, sc, c{"tails"}[i])
+        DIM swing = pose{"tail"} * IIF(i = 0, 1, -1)
+        DrawPart(img{"tail"}, piv{"tail"}, tp[0], tp[1], head_ang + swing + IIF(i = 0, 14, -14), sc)
+    NEXT i
+    j = TorsoPoint(c, pose, piv{"torso"})
+    DrawPart(img{"torso"}, piv{"torso"}, j[0], j[1], tilt, sc)
+    DrawPart(img{"head"}, piv{"head"}, hj[0], hj[1], head_ang, sc)
+    FOR i = 0 TO 1
+        DIM ep = PartPoint(hj[0], hj[1], piv{"head"}, head_ang, sc, c{"eyes"}[i])
+        DrawEye(ep[0], ep[1], c{"eye"}[0] * sc, c{"eye"}[1] * sc, c{"iris"}, pose{"eyes"})
+    NEXT i
+    DIM mp = PartPoint(hj[0], hj[1], piv{"head"}, head_ang, sc, c{"mouth"})
+    DrawMouth(mp[0], mp[1], sc, pose{"mouth"}, pose{"laugh"})
+    j = TorsoPoint(c, pose, jt{"arm_l"})
+    DrawPart(img{"arm"}, piv{"arm"}, j[0], j[1], tilt + pose{"arm_l"}, sc)
+    j = TorsoPoint(c, pose, jt{"arm_r"})
+    DrawPart(img{"arm"}, piv{"arm"}, j[0], j[1], tilt + pose{"arm_r"}, sc)
+ENDSUB
+
+' The point above a figure's head where a bubble's tail ends.
+FUNC HeadTop(c, pose)
+    DIM hj = TorsoPoint(c, pose, c{"joint"}{"head"})
+    RETURN [hj[0], hj[1] - (c{"piv"}{"head"}[1] + 10) * pose{"scale"}]
+ENDFUNC
+
+' ---------------------------------------------------------------- the room
+
+FUNC Bulb(k)
+    DIM colors = [[255, 70, 90], [255, 214, 70], [80, 170, 255], [90, 230, 140], [255, 130, 220]]
+    RETURN colors[k MOD 5]
+ENDFUNC
+
+SUB DrawLight(x, y, k, t)
+    DIM col = Bulb(k)
+    IF (INT(t * 2.5) + k) MOD 3 = 0 THEN
+        CIRCLE x, y, 5, TRUE, col[0] / 3, col[1] / 3, col[2] / 3
+        RETURN
+    ENDIF
+    CIRCLE x, y, 10, TRUE, (col[0] + 255) / 3, (col[1] + 120) / 3, (col[2] + 120) / 3
+    CIRCLE x, y, 6, TRUE, col[0], col[1], col[2]
+    CIRCLE x - 2, y - 2, 2, TRUE, 255, 255, 255
+ENDSUB
+
+SUB DrawPic(pic, x, y)
+    GFX.DRAWIMAGE_EX(pic[0], x, y, pic[1], pic[2], 0)
+ENDSUB
+
+SUB DrawRoom(room, t)
+    ' wall, wainscot, floor and rug
+    RECT 0, 0, FW, 900, TRUE, 96, 42, 56
     DIM i = 0
     FOR i = 0 TO 11
-        RECT i * 60, 0, 30, 900, TRUE, 82, 44, 46
+        RECT i * 60 + 20, 0, 20, 760, TRUE, 104, 48, 62
     NEXT i
-    RECT 0, 900, FW, FH - 900, TRUE, 92, 58, 38
+    RECT 0, 760, FW, 140, TRUE, 120, 70, 48
+    RECT 0, 752, FW, 12, TRUE, 150, 96, 64
+    RECT 0, 900, FW, FH - 900, TRUE, 160, 104, 66
     FOR i = 0 TO 7
-        RECT 0, 900 + i * 48, FW, 3, TRUE, 70, 42, 28
+        RECT 0, 900 + i * 48, FW, 3, TRUE, 136, 86, 52
     NEXT i
-    ' window with the night outside
-    RECT 440, 160, 220, 300, TRUE, 230, 220, 200
-    RECT 452, 172, 196, 276, TRUE, 20, 32, 70
+    DRAWCOLOR 200, 64, 76
+    ELLIPSE 360, 1120, 340, 96, TRUE
+    DRAWCOLOR 230, 96, 106
+    ELLIPSE 360, 1120, 300, 76, TRUE
+    DRAWCOLOR 200, 64, 76
+    ELLIPSE 360, 1120, 250, 58, TRUE
+    ' the window: night sky, moon, snow, curtains
+    RECT 446, 112, 236, 290, TRUE, 246, 236, 220
+    RECT 458, 124, 212, 266, TRUE, 26, 34, 84
+    RECT 458, 300, 212, 90, TRUE, 34, 46, 104
+    CIRCLE 620, 178, 26, TRUE, 255, 240, 170
+    CIRCLE 632, 170, 22, TRUE, 26, 34, 84
     DIM f = 0
-    FOR f = 0 TO 24
-        DIM fx = 452 + (f * 97 + INT(t * 20 * (1 + f MOD 3))) MOD 196
-        DIM fy = 172 + (f * 53 + INT(t * 40 * (1 + f MOD 2))) MOD 276
+    FOR f = 0 TO 27
+        DIM fx = 458 + (f * 97 + INT(t * 18 * (1 + f MOD 3) + SIN(t + f) * 6)) MOD 212
+        DIM fy = 124 + (f * 53 + INT(t * 36 * (1 + f MOD 2))) MOD 250
         CIRCLE fx, fy, 2 + f MOD 2, TRUE, 255, 255, 255
     NEXT f
-    RECT 547, 172, 6, 276, TRUE, 230, 220, 200
-    ' fireplace with a fire
-    RECT 40, 560, 330, 340, TRUE, 150, 140, 135
-    RECT 20, 540, 370, 36, TRUE, 120, 90, 70
-    RECT 100, 640, 210, 260, TRUE, 30, 20, 20
+    ROUNDED_RECT 458, 370, 212, 22, 10, TRUE, 255, 255, 255
+    RECT 561, 124, 6, 266, TRUE, 246, 236, 220
+    ROUNDED_RECT 430, 100, 44, 310, 16, TRUE, 236, 90, 110
+    ROUNDED_RECT 654, 100, 44, 310, 16, TRUE, 236, 90, 110
+    RECT 420, 92, 288, 18, TRUE, 150, 96, 64
+    ' the tree with its star glowing and its lights blinking
+    DIM glow = 30 + SIN(t * 3) * 8
+    CIRCLE 150, 484, glow + 16, TRUE, 120, 70, 70
+    CIRCLE 150, 484, glow, TRUE, 170, 120, 80
+    DrawPic(room{"tree"}, 10, 440)
+    DIM lights = [[70, 398], [110, 384], [150, 378], [190, 382], [225, 390], [78, 306], [115, 296], [150, 292], [185, 294], [210, 300], [98, 208], [130, 200], [162, 199], [188, 204]]
+    FOR i = 0 TO LEN(lights) - 1
+        DrawLight(10 + lights[i][0], 440 + lights[i][1], i, t)
+    NEXT i
+    DIM sp = t * 2
+    GFX.STROKE 150 + COS(sp) * 46, 484 + SIN(sp) * 46 - 8, 150 + COS(sp) * 46, 484 + SIN(sp) * 46 + 8, 3, 255, 250, 200
+    GFX.STROKE 150 + COS(sp) * 46 - 8, 484 + SIN(sp) * 46, 150 + COS(sp) * 46 + 8, 484 + SIN(sp) * 46, 3, 255, 250, 200
+    DrawPic(room{"presents"}, 36, 790)
+    ' the fireplace with candles, fire and sparks
+    DrawPic(room{"fireplace"}, 392, 580)
+    DIM fl = SIN(t * 11) * 3
+    DRAWCOLOR 255, 170, 60
+    ELLIPSE 508, 580 + fl, 6, 10 - fl, TRUE
+    ELLIPSE 596, 588 - fl, 6, 10 + fl, TRUE
+    DRAWCOLOR 255, 240, 170
+    ELLIPSE 508, 583 + fl, 3, 5, TRUE
+    ELLIPSE 596, 591 - fl, 3, 5, TRUE
+    ROUNDED_RECT 488, 868, 70, 18, 8, TRUE, 110, 64, 38
+    ROUNDED_RECT 534, 862, 70, 18, 8, TRUE, 96, 56, 32
     DIM flick = SIN(t * 9) * 8
-    DRAWCOLOR 240, 120, 30
-    ELLIPSE 205, 840 - flick, 70, 70 + flick, TRUE
-    DRAWCOLOR 255, 200, 60
-    ELLIPSE 205, 860, 40, 40 - flick / 2, TRUE
-    ' garland
-    FOR i = 0 TO 13
-        CIRCLE 30 + i * 26, 548 + INT(SIN(i) * 4), 9, TRUE, 30, 110, 50
-        IF i MOD 2 = 0 THEN CIRCLE 30 + i * 26, 562, 5, TRUE, 230, 40, 40
+    DIM flick2 = SIN(t * 13 + 1) * 6
+    DRAWCOLOR 240, 100, 30
+    ELLIPSE 552 + flick2 / 2, 830 - flick, 50, 44 + flick, TRUE
+    DRAWCOLOR 255, 160, 40
+    ELLIPSE 540 - flick2, 838, 30, 30 + flick2, TRUE
+    ELLIPSE 568 + flick2, 840, 26, 26 - flick2, TRUE
+    DRAWCOLOR 255, 230, 120
+    ELLIPSE 552, 850, 18, 18 - flick / 2, TRUE
+    FOR i = 0 TO 7
+        DIM ph = (t * 0.7 + i / 8) - INT(t * 0.7 + i / 8)
+        CIRCLE 552 + SIN(i * 3 + t * 2) * 26 * ph, 840 - ph * 110, MAX([1, 4 * (1 - ph)]), TRUE, 255, 220, 120
+    NEXT i
+    ' the garland along the ceiling
+    FOR i = 0 TO 30
+        DIM gx = i * 24
+        DIM gy = 30 + SIN(gx / FW * MATH.PI) * 34
+        CIRCLE gx, gy, 13, TRUE, 40, 140, 80
+    NEXT i
+    FOR i = 0 TO 14
+        DIM bx = 24 + i * 48
+        DrawLight(bx, 44 + SIN(bx / FW * MATH.PI) * 34, i + 2, t)
+    NEXT i
+    ' the cat, asleep and breathing, dreaming in Zs
+    DIM cat = room{"cat"}
+    DIM breath = 1 + SIN(t * 2.2) * 0.03
+    GFX.DRAWIMAGE_EX(cat[0], 540, 930 + cat[2] * (1 - breath), cat[1], cat[2] * breath, 0)
+    FOR i = 0 TO 2
+        DIM zp = (t * 0.35 + i / 3) - INT(t * 0.35 + i / 3)
+        TEXT 560 + zp * 40 + SIN(t * 2 + i) * 8, 920 - zp * 90, IIF(i = 1, "Z", "z"), 255, 255, 255
     NEXT i
 ENDSUB
+
+' ---------------------------------------------------------------- bubble and effects
 
 FUNC Wrap(text$, max_w)
     DIM words = SPLIT(text$, " ")
@@ -230,12 +375,12 @@ ENDFUNC
 
 ' A bubble whose text has typed n_chars characters, its tail towards (tx, ty).
 SUB DrawBubble(text$, n_chars, tx, ty)
-    DIM bw = 600
+    DIM bw = 620
     DIM rows = Wrap(text$, bw - 60)
     DIM bh = 40 + LEN(rows) * 44
     DIM bx = (FW - bw) / 2
     DIM by = MAX([40, ty - 70 - bh])
-    DIM root_x = CLAMP(tx + 40, bx + 70, bx + bw - 70)
+    DIM root_x = CLAMP(tx, bx + 70, bx + bw - 70)
     DIM root_y = by + bh - 12
     DIM seg = 0
     FOR seg = 0 TO 9
@@ -243,55 +388,115 @@ SUB DrawBubble(text$, n_chars, tx, ty)
         DIM f1 = (seg + 1) / 10
         GFX.STROKE LERP(root_x, tx, f0), LERP(root_y, ty, f0), LERP(root_x, tx, f1), LERP(root_y, ty, f1), 34 - seg * 3, 255, 255, 255
     NEXT seg
+    ROUNDED_RECT bx, by + 6, bw, bh, 28, TRUE, 60, 30, 40
     ROUNDED_RECT bx, by, bw, bh, 28, TRUE, 255, 255, 255
     DIM remaining = n_chars
     DIM i = 0
     FOR i = 0 TO LEN(rows) - 1
         IF remaining <= 0 THEN EXITFOR
         DIM shown$ = LEFTW$(rows[i], remaining)
-        TEXT bx + 30, by + 22 + i * 44, shown$, 40, 30, 30
+        TEXT bx + 30, by + 22 + i * 44, shown$, 50, 30, 40
         remaining = remaining - LENW(rows[i]) - 1
+    NEXT i
+ENDSUB
+
+SUB DrawConfetti(t)
+    DIM i = 0
+    FOR i = 0 TO 44
+        DIM col = Bulb(i)
+        DIM cx = (i * 97) MOD FW + SIN(t * 2 + i) * 24
+        DIM cy = (t * (140 + (i MOD 5) * 40) + i * 53) - INT((t * (140 + (i MOD 5) * 40) + i * 53) / 1300) * 1300 - 20
+        DIM wob = ABS(SIN(t * 6 + i)) * 10 + 2
+        RECT cx, cy, 12, wob, TRUE, col[0], col[1], col[2]
+    NEXT i
+ENDSUB
+
+SUB DrawHearts(heart, t, x, y)
+    DIM i = 0
+    FOR i = 0 TO 5
+        DIM ph = (t * 0.5 + i / 6) - INT(t * 0.5 + i / 6)
+        DIM s = 0.5 + ph * 0.8
+        GFX.DRAWIMAGE_EX(heart[0], x + SIN(t * 3 + i * 2) * 60 - 24 * s, y - ph * 360, heart[1] * s, heart[2] * s, SIN(t * 4 + i) * 15)
     NEXT i
 ENDSUB
 
 ' ---------------------------------------------------------------- one frame
 
+FUNC IdlePose(x, y, sc, t, seed)
+    DIM bob = ABS(SIN(t * 2.6 + seed)) * 6
+    RETURN {"x": x, "y": y - bob, "scale": sc, "tilt": SIN(t * 1.5 + seed) * 2, "head": SIN(t * 1.9 + seed) * 4, "arm_l": 14 + SIN(t * 1.3 + seed) * 4, "arm_r": -14 - SIN(t * 1.4 + seed) * 4, "leg_l": 0, "leg_r": 0, "mouth": 0, "laugh": FALSE, "eyes": IIF(((INT(t * 1000) + INT(seed * 977)) MOD 3400) < 130, "blink", "open"), "tail": SIN(t * 2.4 + seed) * 6}
+ENDFUNC
+
 ' One frame of the story: t counts seconds since the program started (idle
 ' motion), st seconds since the story started, below 0 while it waits for
-' the tap.
+' the tap. Santa says the first line, Lina the second, and so on.
 EXPORT SUB FRAME(parts, story, t, st)
-    DrawRoom(t)
-    DIM ms_now = INT(t * 1000)
-    DIM pose = {"x": 380, "y": 1020, "scale": 1.0, "tilt": SIN(t * 1.6) * 2, "head": SIN(t * 2.1) * 4, "arm_l": 8 + SIN(t * 1.3) * 3, "arm_r": -8, "leg_l": 0, "leg_r": 0, "mouth": 0, "blink": (ms_now MOD 3200) < 120}
+    DIM room = parts{"room"}
+    DIM cast = [parts{"cast"}{"santa"}, parts{"cast"}{"lina"}]
+    DrawRoom(room, t)
+    DIM poses = [IdlePose(200, 1062, 1.0, t, 0), IdlePose(486, 1070, 0.92, t, 1.7)]
+    poses[0]{"head"} = poses[0]{"head"} + 5
+    poses[1]{"head"} = poses[1]{"head"} - 5
     DIM lines = story{"lines"}
     IF st < 0 THEN
-        DrawPuppet(parts, pose)
-        ROUNDED_RECT 160, 1110, 400, 90, 30, TRUE, 200, 30, 40
+        DrawFigure(cast[0], poses[0])
+        DrawFigure(cast[1], poses[1])
+        DIM pulse = SIN(t * 4) * 6
+        ROUNDED_RECT 150 - pulse, 1150 - pulse / 2, 420 + pulse * 2, 90 + pulse, 34, TRUE, 216, 34, 52
         DIM call$ = "Tippen!"
         IF story{"to"} <> "" THEN call$ = "Für " + story{"to"} + ": tippen!"
-        TEXT 220, 1138, call$, 255, 255, 255
+        DIM cw = GFX.TEXTSIZE(call$)[0]
+        TEXT (FW - cw) / 2, 1176, call$, 255, 255, 255
         RETURN
     ENDIF
     DIM idx = INT(st / PER_LINE)
     IF idx < LEN(lines) THEN
+        DIM who = idx MOD 2
+        DIM other = 1 - who
         DIM local_t = st - idx * PER_LINE
         DIM n_chars = INT(local_t * 22)
-        IF n_chars < LENW(lines[idx]) THEN pose{"mouth"} = ABS(SIN(local_t * 14))
-        IF idx = 0 THEN pose{"arm_r"} = -140 + SIN(local_t * 8) * 20
-        DrawPuppet(parts, pose)
-        DIM neck = TorsoPoint(pose, Joint("head"))
-        DrawBubble(lines[idx], n_chars, neck[0], neck[1] - 190)
-    ELSE
-        ' the happy end: a jump with both arms up
-        pose{"y"} = pose{"y"} - ABS(SIN(st * 5)) * 60
-        pose{"arm_l"} = 150 + SIN(st * 10) * 10
-        pose{"arm_r"} = -150 - SIN(st * 10) * 10
-        pose{"leg_l"} = 10 * SIN(st * 10)
-        pose{"leg_r"} = -10 * SIN(st * 10)
-        pose{"mouth"} = 0.8
-        DrawPuppet(parts, pose)
-        TEXT 120, 160, "Von " + story{"from"} + " für " + story{"to"}, 255, 240, 200
+        DIM talking = n_chars < LENW(lines[idx])
+        IF talking THEN
+            poses[who]{"mouth"} = ABS(SIN(local_t * 14))
+            poses[who]{"arm_r"} = -40 + SIN(local_t * 5) * 25
+        ELSE
+            ' the line is said: both have a laugh about it
+            poses[who]{"laugh"} = TRUE
+            poses[who]{"eyes"} = "happy"
+            poses[other]{"laugh"} = TRUE
+            poses[other]{"eyes"} = "happy"
+            poses[other]{"y"} = poses[other]{"y"} - ABS(SIN(local_t * 9)) * 18
+        ENDIF
+        IF idx = 0 ANDALSO talking THEN poses[0]{"arm_r"} = -150 + SIN(local_t * 9) * 22
+        DrawFigure(cast[0], poses[0])
+        DrawFigure(cast[1], poses[1])
+        DIM top = HeadTop(cast[who], poses[who])
+        DrawBubble(lines[idx], n_chars, top[0], top[1])
+        RETURN
     ENDIF
+    ' the happy end: both dance, confetti and hearts
+    DIM et = st - LEN(lines) * PER_LINE
+    DIM k = 0
+    FOR k = 0 TO 1
+        DIM beat = et * 6 + k * MATH.PI
+        poses[k]{"y"} = poses[k]{"y"} - ABS(SIN(beat)) * 50
+        poses[k]{"tilt"} = SIN(beat / 2) * 8
+        poses[k]{"arm_l"} = 140 + SIN(beat) * 25
+        poses[k]{"arm_r"} = -140 + SIN(beat) * 25
+        poses[k]{"leg_l"} = SIN(beat) * 14
+        poses[k]{"leg_r"} = -SIN(beat) * 14
+        poses[k]{"laugh"} = TRUE
+        poses[k]{"eyes"} = "happy"
+        poses[k]{"tail"} = SIN(beat) * 22
+    NEXT k
+    DrawHearts(room{"heart"}, et, 343, 760)
+    DrawFigure(cast[0], poses[0])
+    DrawFigure(cast[1], poses[1])
+    DrawConfetti(et)
+    DIM card$ = "Von " + story{"from"} + " für " + story{"to"}
+    DIM tw = GFX.TEXTSIZE(card$)[0]
+    ROUNDED_RECT (FW - tw) / 2 - 30, 150, tw + 60, 76, 30, TRUE, 216, 34, 52
+    TEXT (FW - tw) / 2, 168, card$, 255, 245, 220
 ENDSUB
 
 ' ---------------------------------------------------------------- music

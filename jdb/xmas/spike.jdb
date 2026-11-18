@@ -92,7 +92,7 @@ DIM fps_mark = TICK()
 
 ' XMAS_SHOTS=<dir> starts without a tap, saves frames at these story seconds and quits.
 DIM shot_dir$ = GETENV$("XMAS_SHOTS")
-DIM shot_times = [2, 8, XMASPLAY.LENGTH(story) + 1]
+DIM shot_times = [0.6, 2, 6.3, XMASPLAY.LENGTH(story) + 1.3]
 DIM shot_i = 0
 
 DO WHILE running
