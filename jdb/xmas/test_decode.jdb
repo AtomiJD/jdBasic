@@ -1,0 +1,145 @@
+' Attacks XMASPLAY.DECODE with broken, random and crafted links: nothing may
+' throw, and whatever decodes stays inside the editor's limits.
+'
+'   jdBasic jdb/xmas/test_decode.jdb
+OPTION "EXPLICIT"
+
+IMPORT XMASPLAY
+
+DIM passed = 0
+DIM failed = 0
+
+SUB Check(ok, what$)
+    IF ok THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL "; what$
+    ENDIF
+ENDSUB
+
+FUNC B64Url$(raw$)
+    DIM s$ = REPLACE$(REPLACE$(CODEC.BASE64_ENCODE$(raw$), "+", "-"), "/", "_")
+    DO WHILE ENDSWITH(s$, "=")
+        s$ = LEFT$(s$, LEN(s$) - 1)
+    LOOP
+    RETURN s$
+ENDFUNC
+
+' A version 2 code with a right checksum around any JSON text.
+FUNC Craft$(json$)
+    DIM packed$ = CODEC.DEFLATE$(json$, 9, "raw")
+    RETURN "2" + B64Url$(PACK$("<I", CODEC.CRC32(packed$)) + packed$)
+ENDFUNC
+
+' TRUE when the story keeps every limit the player relies on.
+FUNC InLimits(s)
+    IF NOT ISMAP(s) THEN RETURN FALSE
+    IF LENW(s{"f"}) > XMASPLAY.MAX_NAME ORELSE LENW(s{"t"}) > XMASPLAY.MAX_NAME THEN RETURN FALSE
+    IF LEN(s{"s"}) < 1 ORELSE LEN(s{"s"}) > XMASPLAY.MAX_SCENES THEN RETURN FALSE
+    DIM sc = NONE
+    FOR EACH sc IN s{"s"}
+        IF LEN(sc{"c"}) < 1 ORELSE LEN(sc{"c"}) > XMASPLAY.MAX_CAST THEN RETURN FALSE
+        IF LEN(sc{"l"}) > XMASPLAY.MAX_SCENE_LINES THEN RETURN FALSE
+        DIM ln = NONE
+        FOR EACH ln IN sc{"l"}
+            IF ln[0] < 0 ORELSE ln[0] >= LEN(sc{"c"}) THEN RETURN FALSE
+            IF LENW(ln[1]) > XMASPLAY.MAX_LINE ORELSE ln[1] = "" THEN RETURN FALSE
+        NEXT ln
+    NEXT sc
+    RETURN TRUE
+ENDFUNC
+
+' DECODE must answer NONE or a story in its limits, never throw.
+FUNC Safe(code$)
+    DIM s = NONE
+    TRY
+        s = XMASPLAY.DECODE(code$)
+    CATCH
+        PRINT "threw on "; LEFT$(code$, 40); ": "; ERRMSG$
+        RETURN FALSE
+    ENDTRY
+    IF ISNONE(s) THEN RETURN TRUE
+    RETURN InLimits(s)
+ENDFUNC
+
+' the demo goes there and back
+DIM demo = XMASPLAY.DEMO()
+DIM code$ = XMASPLAY.ENCODE$(demo)
+DIM back = XMASPLAY.DECODE(code$)
+Check(NOT ISNONE(back), "demo decodes")
+Check(JSON.STRINGIFY$(back) = JSON.STRINGIFY$(XMASPLAY.CLEAN(demo)), "demo comes back the same")
+Check(InLimits(back), "demo in limits")
+
+' a link of the first format still plays: two lines, Santa and Lina in turn
+DIM old = XMASPLAY.DECODE("1FYw9CgIxEEav8u3UwQNsp4VoZWFhIRaz2XFnID-QRATFa3kBL2YWXvOK994ULEml8UqHDF0ZsC-_rwbzKriIaWKvTZJDMJkEp8gDOTp6hXL32QqkPbli4fTCTmpOsxSpiNYWmcqab3D2yg9EDgPdHN1LjjTS1qvFPmu5Sx_T5w8")
+Check(NOT ISNONE(old), "v1 link decodes")
+IF NOT ISNONE(old) THEN
+    Check(LEN(old{"s"}) = 1 ANDALSO LEN(old{"s"}[0]{"l"}) = 2, "v1 link: one scene, two lines")
+    Check(old{"s"}[0]{"l"}[1][0] = 1, "v1 link: the second line is Lina's")
+ENDIF
+
+' every single character changed, every length cut
+DIM alphabet$ = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+DIM i = 0
+DIM accepted = 0
+FOR i = 1 TO LEN(code$) - 1
+    DIM c$ = MID$(code$, i, 1)
+    DIM swap$ = IIF(c$ = "A", "B", "A")
+    DIM bent$ = LEFT$(code$, i) + swap$ + MID$(code$, i + 1)
+    Check(Safe(bent$), "flip at " + STR$(i))
+    IF NOT ISNONE(XMASPLAY.DECODE(bent$)) THEN accepted = accepted + 1
+NEXT i
+Check(accepted = 0, "a changed character never passes the checksum (" + STR$(accepted) + " did)")
+FOR i = 0 TO LEN(code$) - 1
+    Check(Safe(LEFT$(code$, i)), "cut at " + STR$(i))
+NEXT i
+
+' random links
+RANDOMSEED(1048)
+FOR i = 1 TO 400
+    DIM n = INT(RND() * 300)
+    DIM junk$ = IIF(RND() < 0.5, "2", "1")
+    DIM k = 0
+    FOR k = 1 TO n
+        IF RND() < 0.9 THEN
+            junk$ = junk$ + MID$(alphabet$, INT(RND() * 64), 1)
+        ELSE
+            junk$ = junk$ + CHR$(INT(RND() * 255) + 1)
+        ENDIF
+    NEXT k
+    Check(Safe(junk$), "random link " + STR$(i))
+NEXT i
+
+' crafted links that pass the checksum
+Check(ISNONE(XMASPLAY.DECODE(Craft$(SPACE$(1000000)))), "a deflate bomb is refused")
+Check(ISNONE(XMASPLAY.DECODE(Craft$(REPEAT$("[", 5000) + REPEAT$("]", 5000)))), "deep nesting is refused")
+Check(Safe(Craft$("5")), "a number")
+Check(Safe(Craft$("[]")), "an empty list")
+Check(Safe(Craft$("null")), "null")
+Check(Safe(Craft$("{" + CHR$(34) + "s" + CHR$(34) + ":5}")), "scenes as a number")
+DIM q$ = CHR$(34)
+DIM wild$ = "{" + q$ + "f" + q$ + ":7," + q$ + "t" + q$ + ":[1]," + q$ + "m" + q$ + ":99," + q$ + "s" + q$ + ":[1," + q$ + "x" + q$ + ",{" + q$ + "b" + q$ + ":7," + q$ + "c" + q$ + ":" + q$ + "santa" + q$ + "," + q$ + "l" + q$ + ":[[99," + q$ + "hi" + q$ + "],[" + q$ + "x" + q$ + ",5],[0]]," + q$ + "a" + q$ + ":[]}]}"
+DIM w = XMASPLAY.DECODE(Craft$(wild$))
+Check(NOT ISNONE(w) ANDALSO InLimits(w), "wrong types are cleaned")
+IF NOT ISNONE(w) THEN
+    Check(w{"m"} = 0 ANDALSO w{"f"} = "" ANDALSO w{"s"}[0]{"b"} = "room" ANDALSO w{"s"}[0]{"a"} = "laugh", "wrong types fall back to defaults")
+ENDIF
+DIM many = {"f": REPEAT$("x", 500), "t": "y", "s": []}
+FOR i = 1 TO 5
+    many{"s"} = APPEND(many{"s"}, {"b": "snow", "c": ["santa", "lina", "santa", "nobody", "lina"], "l": [[0, REPEAT$("ä", 120)], [1, "a"], [2, "b"], [0, "c"], [1, "d"], [0, "e"]], "a": "hug"})
+NEXT i
+DIM m = XMASPLAY.DECODE(Craft$(JSON.STRINGIFY$(many)))
+Check(NOT ISNONE(m) ANDALSO InLimits(m), "too much of everything is cut to the limits")
+DIM brackets = {"f": "a", "t": "b", "s": [{"b": "room", "c": ["santa"], "l": [[0, REPEAT$("[", 70)]], "a": "dance"}]}
+DIM br = XMASPLAY.DECODE(XMASPLAY.ENCODE$(brackets))
+Check(NOT ISNONE(br), "brackets inside a bubble are text, not nesting")
+DIM gap = {"f": "a", "t": "b", "s": [{"b": "room", "c": ["santa"], "l": [[0, "  "], [0, ""]], "a": "dance"}, {"b": "snow", "c": ["lina"], "l": [[0, "hallo"]], "a": "hug"}]}
+DIM gp = XMASPLAY.DECODE(XMASPLAY.ENCODE$(gap))
+Check(NOT ISNONE(gp) ANDALSO LEN(gp{"s"}) = 1 ANDALSO gp{"s"}[0]{"b"} = "snow", "a scene without text is dropped")
+Check(ISNONE(XMASPLAY.DECODE("2" + REPEAT$("A", 2100))), "an overlong code is refused")
+Check(ISNONE(XMASPLAY.DECODE("")), "an empty code")
+Check(ISNONE(XMASPLAY.DECODE("9abc")), "an unknown version")
+
+PRINT "RESULTS: "; passed; " passed, "; failed; " failed"
+IF failed > 0 THEN END 1

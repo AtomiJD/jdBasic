@@ -62,7 +62,7 @@ ENDFUNC
 SUB OnTap(info)
     IF NOT started ANDALSO NOT asking THEN
         IF ask_mode THEN
-            AskText("Dein Gruß (max. 80 Zeichen)", XMASPLAY.MAX_LINE, story{"lines"}[0])
+            AskText("Dein Gruß (max. 80 Zeichen)", XMASPLAY.MAX_LINE, story{"s"}[0]{"l"}[0][1])
         ELSE
             started = TRUE
         ENDIF
@@ -92,7 +92,22 @@ DIM fps_mark = TICK()
 
 ' XMAS_SHOTS=<dir> starts without a tap, saves frames at these story seconds and quits.
 DIM shot_dir$ = GETENV$("XMAS_SHOTS")
-DIM shot_times = [0.6, 2, 6.3, XMASPLAY.LENGTH(story) + 1.3]
+DIM shot_times = [1, 18.6, 24, 34.4, XMASPLAY.LENGTH(story) + 1.5]
+IF GETENV$("XMAS_SHOTS_AT") <> "" THEN shot_times = SELECT(LAMBDA s -> VAL(s), SPLIT(GETENV$("XMAS_SHOTS_AT"), ","))
+
+' The story with its first bubble replaced.
+FUNC WithFirstLine(s, text$)
+    DIM scenes = s{"s"}
+    DIM sc = scenes[0]
+    DIM lines = sc{"l"}
+    lines[0] = [lines[0][0], text$]
+    sc{"l"} = lines
+    scenes[0] = sc
+    s{"s"} = scenes
+    RETURN s
+ENDFUNC
+
+DIM fallback = XMASPLAY.DEMO()
 DIM shot_i = 0
 
 DO WHILE running
@@ -100,12 +115,17 @@ DO WHILE running
     IF asking THEN
         DIM reply = TextReply()
         IF NOT ISNONE(reply) THEN
-            IF reply{"ok"} ANDALSO TRIM$(reply{"text"}) <> "" THEN story{"lines"}[0] = XMASPLAY.CLEANTEXT$(reply{"text"}, XMASPLAY.MAX_LINE)
+            IF reply{"ok"} ANDALSO TRIM$(reply{"text"}) <> "" THEN story = WithFirstLine(story, XMASPLAY.CLEANTEXT$(reply{"text"}, XMASPLAY.MAX_LINE))
             started = TRUE
         ENDIF
     ENDIF
     IF NOT started THEN t_run = ms_now
-    XMASPLAY.FRAME(parts, story, (ms_now - t_start) / 1000, IIF(started, (ms_now - t_run) / 1000, -1))
+    TRY
+        XMASPLAY.FRAME(parts, story, (ms_now - t_start) / 1000, IIF(started, (ms_now - t_run) / 1000, -1))
+    CATCH
+        PRINT "frame: "; ERRMSG$; " "; STACK$
+        story = fallback
+    ENDTRY
     frames = frames + 1
     IF ms_now - fps_mark >= 1000 THEN
         fps = frames

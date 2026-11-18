@@ -31,8 +31,55 @@ FUNC UnB64Url$(code$)
     RETURN CODEC.BASE64_DECODE$(s$)
 ENDFUNC
 
+' A link code: "2", then base64url of the CRC32 of the packed story (four
+' bytes, little-endian) and the story as JSON in raw deflate.
 EXPORT FUNC ENCODE$(story)
-    RETURN "1" + B64Url$(CODEC.DEFLATE$(JSON.STRINGIFY$(story), 9, "raw"))
+    DIM packed$ = CODEC.DEFLATE$(JSON.STRINGIFY$(story), 9, "raw")
+    RETURN "2" + B64Url$(PACK$("<I", CODEC.CRC32(packed$)) + packed$)
+ENDFUNC
+
+EXPORT DIM MAX_JSON = 8192
+EXPORT DIM MAX_NEST = 64
+
+' The JSON of a link code once its checks pass, else "".
+FUNC Unpack$(code$)
+    DIM bytes$ = UnB64Url$(MID$(code$, 1))
+    DIM packed$ = bytes$
+    IF LEFT$(code$, 1) = "2" THEN
+        IF LEN(bytes$) < 5 THEN RETURN ""
+        IF UNPACK("<I", bytes$)[0] <> CODEC.CRC32(MID$(bytes$, 4)) THEN RETURN ""
+        packed$ = MID$(bytes$, 4)
+    ENDIF
+    DIM json$ = CODEC.INFLATE$(packed$, "raw")
+    IF LEN(json$) > MAX_JSON THEN RETURN ""
+    IF Depth(json$) > MAX_NEST THEN RETURN ""
+    RETURN json$
+ENDFUNC
+
+' How deep the brackets of a JSON text nest, outside its strings.
+FUNC Depth(json$)
+    DIM deepest = 0
+    DIM level = 0
+    DIM in_str = FALSE
+    DIM i = 0
+    FOR i = 0 TO LEN(json$) - 1
+        DIM c = BYTEAT(json$, i)
+        IF in_str THEN
+            IF c = 92 THEN
+                i = i + 1
+            ELSEIF c = 34 THEN
+                in_str = FALSE
+            ENDIF
+        ELSEIF c = 34 THEN
+            in_str = TRUE
+        ELSEIF c = 91 ORELSE c = 123 THEN
+            level = level + 1
+            IF level > deepest THEN deepest = level
+        ELSEIF c = 93 ORELSE c = 125 THEN
+            level = level - 1
+        ENDIF
+    NEXT i
+    RETURN deepest
 ENDFUNC
 
 ' A text of at most n characters from a decoded value, "" for anything but a text.
@@ -41,29 +88,123 @@ EXPORT FUNC CLEANTEXT$(v, n)
     RETURN LEFTW$(TRIM$(v), n)
 ENDFUNC
 
+' ---------------------------------------------------------------- catalog
+
+' What a story may name, with its German and English label.
+EXPORT FUNC BACKGROUNDS()
+    RETURN [["room", "Kaminzimmer", "Fireside room"], ["snow", "Winternacht im Dorf", "Winter night in the village"]]
+ENDFUNC
+
+EXPORT FUNC CASTS()
+    RETURN [["santa", "Weihnachtsmann", "Santa"], ["lina", "Lina", "Lina"]]
+ENDFUNC
+
+EXPORT FUNC ACTIONS()
+    RETURN [["laugh", "Lachen", "Laugh"], ["dance", "Tanzen", "Dance"], ["gift", "Geschenk", "Present"], ["hug", "Umarmen", "Hug"], ["snowball", "Schneeballschlacht", "Snowball fight"]]
+ENDFUNC
+
+EXPORT FUNC MUSICS()
+    RETURN [["silent", "Stille Nacht", "Silent Night"]]
+ENDFUNC
+
+EXPORT DIM MAX_SCENES = 3
+EXPORT DIM MAX_CAST = 3
+EXPORT DIM MAX_SCENE_LINES = 4
+EXPORT DIM ACTION_LEN = 5
+
+FUNC Ids(table)
+    RETURN SELECT(LAMBDA row -> row[0], table)
+ENDFUNC
+
+' ---------------------------------------------------------------- the story
+
+' A story: from, to, music, and up to three scenes, each with a background,
+' a cast of one to three, up to four bubbles [speaker, text] and an action.
+'   {"f": "...", "t": "...", "m": 0, "s": [{"b": "room", "c": ["santa", "lina"], "l": [[0, "..."]], "a": "gift"}]}
+
+FUNC CleanScene(sc)
+    IF NOT ISMAP(sc) THEN RETURN NONE
+    DIM b$ = CLEANTEXT$(sc{"b"} ?? "", 16)
+    IF FIND_IN_ARRAY(Ids(BACKGROUNDS()), b$) < 0 THEN b$ = "room"
+    DIM known = Ids(CASTS())
+    DIM cast = []
+    IF ISARR(sc{"c"} ?? NONE) THEN cast = TAKE(MAX_CAST, UNIQUE(FILTER(LAMBDA c -> ISSTR(c) ANDALSO FIND_IN_ARRAY(known, c) >= 0, sc{"c"})))
+    IF LEN(cast) = 0 THEN cast = ["santa", "lina"]
+    DIM lines = []
+    IF ISARR(sc{"l"} ?? NONE) THEN
+        DIM item = NONE
+        FOR EACH item IN TAKE(MAX_SCENE_LINES, sc{"l"})
+            IF ISARR(item) ANDALSO LEN(item) >= 2 THEN
+                DIM text$ = CLEANTEXT$(item[1], MAX_LINE)
+                DIM who = 0
+                IF ISNUM(item[0]) THEN who = CLAMP(INT(item[0]), 0, LEN(cast) - 1)
+                IF text$ <> "" THEN lines = APPEND(lines, [[who, text$]])
+            ENDIF
+        NEXT item
+    ENDIF
+    DIM a$ = CLEANTEXT$(sc{"a"} ?? "", 16)
+    IF FIND_IN_ARRAY(Ids(ACTIONS()), a$) < 0 THEN a$ = "laugh"
+    RETURN {"b": b$, "c": cast, "l": lines, "a": a$}
+ENDFUNC
+
+' A decoded value held to the editor's limits, or NONE.
+EXPORT FUNC CLEAN(raw)
+    IF NOT ISMAP(raw) ORELSE NOT ISARR(raw{"s"} ?? NONE) THEN RETURN NONE
+    DIM scenes = []
+    DIM sc = NONE
+    FOR EACH sc IN TAKE(MAX_SCENES, raw{"s"})
+        DIM clean = CleanScene(sc)
+        IF NOT ISNONE(clean) THEN
+            IF LEN(clean{"l"}) > 0 THEN scenes = APPEND(scenes, clean)
+        ENDIF
+    NEXT sc
+    IF LEN(scenes) = 0 THEN RETURN NONE
+    DIM m = 0
+    IF ISNUM(raw{"m"} ?? NONE) THEN m = CLAMP(INT(raw{"m"}), 0, LEN(MUSICS()) - 1)
+    RETURN {"f": CLEANTEXT$(raw{"f"} ?? "", MAX_NAME), "t": CLEANTEXT$(raw{"t"} ?? "", MAX_NAME), "m": m, "s": scenes}
+ENDFUNC
+
+' A story of the first link format: lines said in turn by Santa and Lina in the room.
+FUNC FromV1(raw)
+    IF NOT ISMAP(raw) ORELSE NOT ISARR(raw{"lines"} ?? NONE) THEN RETURN NONE
+    DIM lines = []
+    DIM i = 0
+    DIM v = NONE
+    FOR EACH v IN TAKE(MAX_SCENE_LINES, raw{"lines"})
+        lines = APPEND(lines, [[i MOD 2, v]])
+        i = i + 1
+    NEXT v
+    RETURN {"f": raw{"from"} ?? "", "t": raw{"to"} ?? "", "m": 0, "s": [{"b": "room", "c": ["santa", "lina"], "l": lines, "a": "dance"}]}
+ENDFUNC
+
 ' The story a link carries, held to the editor's limits, or NONE.
 EXPORT FUNC DECODE(code$)
-    IF LEFT$(code$, 1) <> "1" ORELSE LEN(code$) > MAX_CODE THEN RETURN NONE
+    DIM ver$ = LEFT$(code$, 1)
+    IF (ver$ <> "1" ANDALSO ver$ <> "2") ORELSE LEN(code$) > MAX_CODE THEN RETURN NONE
     DIM raw = NONE
     TRY
-        raw = JSON.PARSE(CODEC.INFLATE$(UnB64Url$(MID$(code$, 1)), "raw"))
+        DIM json$ = Unpack$(code$)
+        IF json$ = "" THEN RETURN NONE
+        raw = JSON.PARSE(json$)
+        IF ver$ = "1" THEN raw = FromV1(raw)
+        RETURN CLEAN(raw)
     CATCH
         RETURN NONE
     ENDTRY
-    IF NOT ISMAP(raw) THEN RETURN NONE
-    IF NOT ISARR(raw{"lines"} ?? NONE) THEN RETURN NONE
-    DIM lines = FILTER(LAMBDA s -> s <> "", SELECT(LAMBDA v -> CLEANTEXT$(v, MAX_LINE), TAKE(MAX_LINES, raw{"lines"})))
-    IF LEN(lines) = 0 THEN RETURN NONE
-    RETURN {"lines": lines, "from": CLEANTEXT$(raw{"from"} ?? "", MAX_NAME), "to": CLEANTEXT$(raw{"to"} ?? "", MAX_NAME)}
 ENDFUNC
 
 EXPORT FUNC DEMO()
-    RETURN {"lines": ["Ho ho ho! Frohe Weihnachten, schön, dass du da bist!", "Oh, der Weihnachtsmann! Hast du Kekse mitgebracht?", "Nur die guten mit Zimt. Und ganz viel Liebe!", "Hihi, dann darfst du bleiben. Frohes Fest!"], "from": "Santa und Lina", "to": "dich"}
+    RETURN {"f": "Santa und Lina", "t": "dich", "m": 0, "s": [{"b": "room", "c": ["santa", "lina"], "l": [[0, "Ho ho ho! Frohe Weihnachten, schön, dass du da bist!"], [1, "Oh, der Weihnachtsmann! Hast du Kekse mitgebracht?"], [0, "Viel besser: ein Geschenk, nur für dich!"]], "a": "gift"}, {"b": "snow", "c": ["lina", "santa"], "l": [[0, "Draußen schneit es! Komm, wir spielen!"], [1, "Hohoho, ich werfe aber sehr gut!"]], "a": "snowball"}]}
+ENDFUNC
+
+' Seconds a scene lasts: its bubbles, then its action.
+EXPORT FUNC SCENELEN(sc)
+    RETURN LEN(sc{"l"}) * PER_LINE + ACTION_LEN
 ENDFUNC
 
 ' Seconds from the first bubble to the end card.
 EXPORT FUNC LENGTH(story)
-    RETURN LEN(story{"lines"}) * PER_LINE
+    RETURN SUM(SELECT(LAMBDA s -> SCENELEN(s), story{"s"}))
 ENDFUNC
 
 ' ---------------------------------------------------------------- pictures
@@ -357,6 +498,96 @@ SUB DrawRoom(room, t)
     NEXT i
 ENDSUB
 
+' A roof: a triangle of width w and height h with its tip at (cx, top), in strips.
+SUB Roof(cx, top, w, h, r, g, b)
+    DIM k = 0
+    FOR k = 0 TO h STEP 3
+        DIM rw = w * k / h
+        RECT cx - rw / 2, top + k, rw, 3, TRUE, r, g, b
+    NEXT k
+ENDSUB
+
+SUB House(x, y, w, h, wall, t, seed)
+    RECT x, y, w, h, TRUE, wall[0], wall[1], wall[2]
+    Roof(x + w / 2, y - h * 0.6, w + 40, h * 0.6, 150, 70, 70)
+    Roof(x + w / 2, y - h * 0.6 - 6, w + 44, 26, 250, 250, 255)
+    DIM lit = 0.85 + SIN(t * 3 + seed) * 0.15
+    RECT x + w * 0.18, y + h * 0.3, w * 0.24, h * 0.3, TRUE, 255 * lit, 210 * lit, 110 * lit
+    RECT x + w * 0.58, y + h * 0.3, w * 0.24, h * 0.3, TRUE, 255 * lit, 200 * lit, 100 * lit
+    RECT x + w * 0.4, y + h * 0.55, w * 0.2, h * 0.45, TRUE, 110, 66, 44
+ENDSUB
+
+SUB Snowman(x, y, t)
+    CIRCLE x, y, 62, TRUE, 236, 242, 252
+    CIRCLE x, y - 88, 44, TRUE, 246, 250, 255
+    CIRCLE x, y - 152, 34, TRUE, 252, 253, 255
+    DIM wave = SIN(t * 3) * 18
+    GFX.STROKE x - 40, y - 96, x - 92, y - 130 - wave, 6, 110, 70, 40
+    GFX.STROKE x + 40, y - 96, x + 90, y - 112, 6, 110, 70, 40
+    RECT x - 46, y - 124, 92, 16, TRUE, 216, 40, 60
+    RECT x + 12, y - 124, 18, 46, TRUE, 216, 40, 60
+    ROUNDED_RECT x - 30, y - 222, 60, 46, 6, TRUE, 40, 36, 44
+    RECT x - 44, y - 182, 88, 10, TRUE, 40, 36, 44
+    RECT x - 30, y - 192, 60, 8, TRUE, 216, 40, 60
+    CIRCLE x - 12, y - 160, 5, TRUE, 40, 36, 44
+    CIRCLE x + 12, y - 160, 5, TRUE, 40, 36, 44
+    GFX.STROKE x, y - 150, x + 26, y - 146, 9, 255, 140, 40
+    GFX.STROKE x + 26, y - 146, x + 38, y - 144, 4, 255, 140, 40
+    DRAWCOLOR 255, 140, 160
+    ELLIPSE x - 22, y - 140, 7, 4, TRUE
+    ELLIPSE x + 22, y - 140, 7, 4, TRUE
+    CIRCLE x, y - 70, 6, TRUE, 40, 36, 44
+    CIRCLE x, y - 98, 6, TRUE, 40, 36, 44
+ENDSUB
+
+SUB Lantern(x, y, t)
+    RECT x - 5, y, 10, 220, TRUE, 50, 50, 64
+    DIM glow = 34 + SIN(t * 2.4 + x) * 5
+    CIRCLE x, y - 6, glow, TRUE, 90, 90, 110
+    CIRCLE x, y - 6, glow * 0.6, TRUE, 170, 150, 110
+    ROUNDED_RECT x - 16, y - 30, 32, 40, 6, TRUE, 255, 220, 140
+    RECT x - 20, y - 36, 40, 8, TRUE, 50, 50, 64
+ENDSUB
+
+SUB DrawSnowland(room, t)
+    RECT 0, 0, FW, 300, TRUE, 18, 24, 60
+    RECT 0, 300, FW, 300, TRUE, 28, 38, 88
+    RECT 0, 600, FW, 300, TRUE, 46, 62, 120
+    DIM i = 0
+    FOR i = 0 TO 39
+        DIM tw = (INT(t * 3) + i) MOD 7
+        CIRCLE (i * 131) MOD FW, (i * 71) MOD 560 + 20, IIF(tw = 0, 3, 1.5), TRUE, 255, 255, 230
+    NEXT i
+    CIRCLE 590, 150, 46, TRUE, 255, 244, 200
+    CIRCLE 574, 140, 10, TRUE, 238, 226, 186
+    CIRCLE 604, 168, 7, TRUE, 238, 226, 186
+    DRAWCOLOR 206, 222, 246
+    ELLIPSE 140, 760, 300, 150, TRUE
+    DRAWCOLOR 222, 234, 252
+    ELLIPSE 600, 780, 340, 160, TRUE
+    House(40, 650, 130, 110, [200, 120, 90], t, 1)
+    House(470, 640, 150, 120, [120, 150, 200], t, 2)
+    DIM trees = [[180, 610, 0.42], [380, 560, 0.5], [620, 620, 0.4]]
+    FOR i = 0 TO LEN(trees) - 1
+        DrawPic(room{"tree"}, trees[i][0], trees[i][1], trees[i][2])
+    NEXT i
+    RECT 0, 880, FW, FH - 880, TRUE, 236, 242, 252
+    DRAWCOLOR 214, 226, 246
+    ELLIPSE 360, 890, 420, 30, TRUE
+    FOR i = 0 TO 24
+        DIM sp = (INT(t * 4) + i * 3) MOD 9
+        IF sp = 0 THEN CIRCLE (i * 89) MOD FW, 920 + (i * 37) MOD 340, 3, TRUE, 255, 255, 255
+    NEXT i
+    Lantern(30, 690, t)
+    Lantern(690, 700, t)
+    Snowman(360, 860, t)
+    FOR i = 0 TO 59
+        DIM fx = (i * 97 + INT(t * 20 * (1 + i MOD 3) + SIN(t + i) * 12)) MOD FW
+        DIM fy = (i * 53 + INT(t * 50 * (1 + i MOD 2))) MOD FH
+        CIRCLE fx, fy, 2 + i MOD 3, TRUE, 255, 255, 255
+    NEXT i
+ENDSUB
+
 ' ---------------------------------------------------------------- bubble and effects
 
 FUNC Wrap(text$, max_w)
@@ -431,73 +662,262 @@ FUNC IdlePose(x, y, sc, t, seed)
     RETURN {"x": x, "y": y - bob, "scale": sc, "tilt": SIN(t * 1.5 + seed) * 2, "head": SIN(t * 1.9 + seed) * 4, "arm_l": 14 + SIN(t * 1.3 + seed) * 4, "arm_r": -14 - SIN(t * 1.4 + seed) * 4, "leg_l": 0, "leg_r": 0, "mouth": 0, "laugh": FALSE, "eyes": IIF(((INT(t * 1000) + INT(seed * 977)) MOD 3400) < 130, "blink", "open"), "tail": SIN(t * 2.4 + seed) * 6}
 ENDFUNC
 
+FUNC BaseScale(name$)
+    IF name$ = "lina" THEN RETURN 0.88
+    RETURN 0.95
+ENDFUNC
+
+' Where the figures of a scene stand: [x, y, scale factor] for one to three.
+FUNC Slots(n)
+    IF n = 1 THEN RETURN [[360, 1070, 1.0]]
+    IF n = 2 THEN RETURN [[168, 1070, 1.0], [548, 1074, 1.0]]
+    RETURN [[120, 1074, 0.8], [360, 1086, 0.8], [600, 1074, 0.8]]
+ENDFUNC
+
+SUB Backdrop(room, b$, t)
+    IF b$ = "snow" THEN
+        DrawSnowland(room, t)
+    ELSE
+        DrawRoom(room, t)
+    ENDIF
+ENDSUB
+
+FUNC Dance(p, beat)
+    p{"y"} = p{"y"} - ABS(SIN(beat)) * 50
+    p{"tilt"} = SIN(beat / 2) * 8
+    p{"arm_l"} = 140 + SIN(beat) * 25
+    p{"arm_r"} = -140 + SIN(beat) * 25
+    p{"leg_l"} = SIN(beat) * 14
+    p{"leg_r"} = -SIN(beat) * 14
+    p{"laugh"} = TRUE
+    p{"eyes"} = "happy"
+    p{"tail"} = SIN(beat) * 22
+    RETURN p
+ENDFUNC
+
+' The poses of an action at its time at.
+FUNC ActionPoses(a$, poses, at)
+    DIM n = LEN(poses)
+    DIM k = 0
+    IF a$ = "dance" THEN
+        FOR k = 0 TO n - 1
+            poses[k] = Dance(poses[k], at * 6 + k * MATH.PI)
+        NEXT k
+    ELSEIF a$ = "gift" THEN
+        IF at > 1.4 THEN
+            FOR k = 0 TO n - 1
+                poses[k]{"arm_l"} = 150 + SIN(at * 8 + k) * 15
+                poses[k]{"arm_r"} = -150 - SIN(at * 8 + k) * 15
+                poses[k]{"eyes"} = "happy"
+                poses[k]{"laugh"} = TRUE
+                poses[k]{"y"} = poses[k]{"y"} - ABS(SIN(at * 7 + k)) * 20
+            NEXT k
+        ELSE
+            FOR k = 0 TO n - 1
+                poses[k]{"mouth"} = 0.6
+            NEXT k
+        ENDIF
+    ELSEIF a$ = "hug" ANDALSO n >= 2 THEN
+        DIM f = MIN([1, at / 1.2])
+        DIM cx = (poses[0]{"x"} + poses[1]{"x"}) / 2
+        poses[0]{"x"} = LERP(poses[0]{"x"}, cx - 92, f)
+        poses[1]{"x"} = LERP(poses[1]{"x"}, cx + 92, f)
+        poses[0]{"arm_r"} = -75 - f * 15
+        poses[1]{"arm_l"} = 75 + f * 15
+        poses[0]{"tilt"} = f * 6
+        poses[1]{"tilt"} = -f * 6
+        FOR k = 0 TO n - 1
+            poses[k]{"eyes"} = IIF(f >= 1, "happy", poses[k]{"eyes"})
+        NEXT k
+    ELSEIF a$ = "snowball" ANDALSO n >= 2 THEN
+        DIM thrower = INT(at / 1.2) MOD 2
+        DIM p = at / 1.2 - INT(at / 1.2)
+        IF thrower = 0 THEN
+            poses[0]{"arm_r"} = -160 + p * 130
+        ELSE
+            poses[1]{"arm_l"} = 160 - p * 130
+        ENDIF
+        DIM target = 1 - thrower
+        IF p > 0.8 THEN
+            poses[target]{"eyes"} = "happy"
+            poses[target]{"laugh"} = TRUE
+            poses[target]{"tilt"} = SIN(p * 40) * 6
+        ENDIF
+        poses[thrower]{"mouth"} = 0.5
+    ELSE
+        FOR k = 0 TO n - 1
+            poses[k]{"laugh"} = TRUE
+            poses[k]{"eyes"} = "happy"
+            poses[k]{"y"} = poses[k]{"y"} - ABS(SIN(at * 9 + k)) * 22
+        NEXT k
+    ENDIF
+    RETURN poses
+ENDFUNC
+
+SUB Sparkle(x, y, r, w)
+    GFX.STROKE x - r, y, x + r, y, w, 255, 250, 210
+    GFX.STROKE x, y - r, x, y + r, w, 255, 250, 210
+ENDSUB
+
+' What an action shows besides the figures.
+SUB ActionFx(a$, room, poses, at)
+    DIM n = LEN(poses)
+    DIM i = 0
+    IF a$ = "gift" THEN
+        DIM gx = poses[0]{"x"} + 180
+        IF n >= 2 THEN gx = (poses[0]{"x"} + poses[1]{"x"}) / 2
+        DIM fall = MAX([0, 1 - at * 2])
+        DIM by = 1150 - fall * 700 - ABS(SIN(MIN([at, 0.9]) * 7)) * (1 - MIN([at, 0.9])) * 30
+        ROUNDED_RECT gx - 56, by - 96, 112, 96, 8, TRUE, 120, 200, 255
+        RECT gx - 9, by - 96, 18, 96, TRUE, 255, 214, 70
+        DIM ly = by - 112
+        DIM lx = gx - 64
+        DIM lang = 0
+        IF at > 1.4 THEN
+            ly = ly - (at - 1.4) * 520 + (at - 1.4) * (at - 1.4) * 140
+            lx = lx + (at - 1.4) * 90
+            lang = (at - 1.4) * 260
+            FOR i = 0 TO 9
+                DIM sa = i * 0.63 + at
+                DIM sr = 40 + (at - 1.4) * 160
+                Sparkle(gx + COS(sa) * sr, by - 110 - ABS(SIN(sa)) * sr, 10, 4)
+            NEXT i
+            DrawHearts(room{"heart"}, at, gx, by - 120)
+        ENDIF
+        ROUNDED_RECT lx, ly, 128, 24, 8, TRUE, 90, 170, 240
+        RECT lx + 55, ly, 18, 24, TRUE, 255, 214, 70
+        DRAWCOLOR 255, 214, 70
+        ELLIPSE lx + 50, ly - 6, 16, 9, TRUE
+        ELLIPSE lx + 78, ly - 6, 16, 9, TRUE
+    ELSEIF a$ = "hug" ANDALSO n >= 2 THEN
+        IF at > 1.0 THEN DrawHearts(room{"heart"}, at, (poses[0]{"x"} + poses[1]{"x"}) / 2, 700)
+    ELSEIF a$ = "snowball" ANDALSO n >= 2 THEN
+        DIM thrower = INT(at / 1.2) MOD 2
+        DIM p = at / 1.2 - INT(at / 1.2)
+        DIM target = 1 - thrower
+        DIM x0 = poses[thrower]{"x"} + IIF(thrower = 0, 70, -70)
+        DIM y0 = poses[thrower]{"y"} - 220
+        DIM x1 = poses[target]{"x"}
+        DIM y1 = poses[target]{"y"} - 330
+        IF p <= 0.82 THEN
+            DIM q = p / 0.82
+            CIRCLE LERP(x0, x1, q), LERP(y0, y1, q) - SIN(q * MATH.PI) * 180, 19, TRUE, 150, 175, 215
+            CIRCLE LERP(x0, x1, q), LERP(y0, y1, q) - SIN(q * MATH.PI) * 180, 16, TRUE, 250, 252, 255
+            CIRCLE LERP(x0, x1, q) - 5, LERP(y0, y1, q) - SIN(q * MATH.PI) * 180 - 5, 6, TRUE, 255, 255, 255
+        ELSE
+            DIM sp = (p - 0.82) / 0.18
+            FOR i = 0 TO 7
+                DIM ang = i * 0.785
+                CIRCLE x1 + COS(ang) * sp * 70, y1 + SIN(ang) * sp * 70, 9 * (1 - sp) + 2, TRUE, 250, 252, 255
+            NEXT i
+        ENDIF
+    ELSEIF a$ = "laugh" THEN
+        FOR i = 0 TO n - 1
+            DIM hp = (at * 0.8 + i * 0.3) - INT(at * 0.8 + i * 0.3)
+            TEXT poses[i]{"x"} - 40 + SIN(at * 4 + i) * 20, poses[i]{"y"} - 420 - hp * 120, "Ha ha!", 255, 240, 120
+        NEXT i
+    ENDIF
+ENDSUB
+
+' The figures of a scene in their places, facing the middle.
+FUNC ScenePoses(sc, t)
+    DIM cast = sc{"c"}
+    DIM slots = Slots(LEN(cast))
+    DIM poses = []
+    DIM k = 0
+    FOR k = 0 TO LEN(cast) - 1
+        DIM p = IdlePose(slots[k][0], slots[k][1], BaseScale(cast[k]) * slots[k][2], t, k * 1.7)
+        p{"head"} = p{"head"} + IIF(slots[k][0] < FW / 2, 5, IIF(slots[k][0] > FW / 2, -5, 0))
+        poses = APPEND(poses, p)
+    NEXT k
+    RETURN poses
+ENDFUNC
+
+SUB DrawCast(parts, sc, poses)
+    DIM k = 0
+    FOR k = 0 TO LEN(poses) - 1
+        DrawFigure(parts{"cast"}{sc{"c"}[k]}, poses[k])
+    NEXT k
+ENDSUB
+
 ' One frame of the story: t counts seconds since the program started (idle
 ' motion), st seconds since the story started, below 0 while it waits for
-' the tap. Santa says the first line, Lina the second, and so on.
+' the tap. The scenes play one after the other, each its bubbles and then its
+' action; after the last one everybody dances under confetti.
 EXPORT SUB FRAME(parts, story, t, st)
     DIM room = parts{"room"}
-    DIM cast = [parts{"cast"}{"santa"}, parts{"cast"}{"lina"}]
-    DrawRoom(room, t)
-    DIM poses = [IdlePose(168, 1068, 0.95, t, 0), IdlePose(548, 1074, 0.88, t, 1.7)]
-    poses[0]{"head"} = poses[0]{"head"} + 5
-    poses[1]{"head"} = poses[1]{"head"} - 5
-    DIM lines = story{"lines"}
+    DIM scenes = story{"s"}
+    DIM si = 0
+    DIM rest = MAX([0, st])
+    DO WHILE si < LEN(scenes) - 1 ANDALSO rest >= SCENELEN(scenes[si])
+        rest = rest - SCENELEN(scenes[si])
+        si = si + 1
+    LOOP
+    DIM sc = scenes[si]
+    Backdrop(room, sc{"b"}, t)
+    DIM poses = ScenePoses(sc, t)
+    DIM lines = sc{"l"}
     IF st < 0 THEN
-        DrawFigure(cast[0], poses[0])
-        DrawFigure(cast[1], poses[1])
+        DrawCast(parts, sc, poses)
         DIM pulse = SIN(t * 4) * 6
         ROUNDED_RECT 150 - pulse, 1150 - pulse / 2, 420 + pulse * 2, 90 + pulse, 34, TRUE, 216, 34, 52
         DIM call$ = "Tippen!"
-        IF story{"to"} <> "" THEN call$ = "Für " + story{"to"} + ": tippen!"
+        IF story{"t"} <> "" THEN call$ = "Für " + story{"t"} + ": tippen!"
         DIM cw = GFX.TEXTSIZE(call$)[0]
         TEXT (FW - cw) / 2, 1176, call$, 255, 255, 255
         RETURN
     ENDIF
-    DIM idx = INT(st / PER_LINE)
-    IF idx < LEN(lines) THEN
-        DIM who = idx MOD 2
-        DIM other = 1 - who
-        DIM local_t = st - idx * PER_LINE
+    DIM talk_len = LEN(lines) * PER_LINE
+    IF rest < talk_len THEN
+        DIM idx = INT(rest / PER_LINE)
+        DIM who = lines[idx][0]
+        DIM text$ = lines[idx][1]
+        DIM local_t = rest - idx * PER_LINE
         DIM n_chars = INT(local_t * 22)
-        DIM talking = n_chars < LENW(lines[idx])
-        IF talking THEN
+        DIM k = 0
+        IF n_chars < LENW(text$) THEN
             poses[who]{"mouth"} = ABS(SIN(local_t * 14))
-            poses[who]{"arm_r"} = -40 + SIN(local_t * 5) * 25
+            IF poses[who]{"x"} <= FW / 2 THEN
+                poses[who]{"arm_r"} = -40 + SIN(local_t * 5) * 25
+            ELSE
+                poses[who]{"arm_l"} = 40 - SIN(local_t * 5) * 25
+            ENDIF
+            IF idx = 0 ANDALSO si = 0 THEN poses[who]{"arm_r"} = -150 + SIN(local_t * 9) * 22
         ELSE
-            ' the line is said: both have a laugh about it
-            poses[who]{"laugh"} = TRUE
-            poses[who]{"eyes"} = "happy"
-            poses[other]{"laugh"} = TRUE
-            poses[other]{"eyes"} = "happy"
-            poses[other]{"y"} = poses[other]{"y"} - ABS(SIN(local_t * 9)) * 18
+            ' the line is said: everybody has a laugh about it
+            FOR k = 0 TO LEN(poses) - 1
+                poses[k]{"laugh"} = TRUE
+                poses[k]{"eyes"} = "happy"
+                IF k <> who THEN poses[k]{"y"} = poses[k]{"y"} - ABS(SIN(local_t * 9)) * 18
+            NEXT k
         ENDIF
-        IF idx = 0 ANDALSO talking THEN poses[0]{"arm_r"} = -150 + SIN(local_t * 9) * 22
-        DrawFigure(cast[0], poses[0])
-        DrawFigure(cast[1], poses[1])
-        DIM top = HeadTop(cast[who], poses[who])
-        DrawBubble(lines[idx], n_chars, top[0], top[1])
+        DrawCast(parts, sc, poses)
+        DIM top = HeadTop(parts{"cast"}{sc{"c"}[who]}, poses[who])
+        DrawBubble(text$, n_chars, top[0], top[1])
         RETURN
     ENDIF
-    ' the happy end: both dance, confetti and hearts
-    DIM et = st - LEN(lines) * PER_LINE
-    DIM k = 0
-    FOR k = 0 TO 1
-        DIM beat = et * 6 + k * MATH.PI
-        poses[k]{"y"} = poses[k]{"y"} - ABS(SIN(beat)) * 50
-        poses[k]{"tilt"} = SIN(beat / 2) * 8
-        poses[k]{"arm_l"} = 140 + SIN(beat) * 25
-        poses[k]{"arm_r"} = -140 + SIN(beat) * 25
-        poses[k]{"leg_l"} = SIN(beat) * 14
-        poses[k]{"leg_r"} = -SIN(beat) * 14
-        poses[k]{"laugh"} = TRUE
-        poses[k]{"eyes"} = "happy"
-        poses[k]{"tail"} = SIN(beat) * 22
-    NEXT k
+    DIM at = rest - talk_len
+    IF si < LEN(scenes) - 1 ORELSE at < ACTION_LEN THEN
+        poses = ActionPoses(sc{"a"}, poses, at)
+        DrawCast(parts, sc, poses)
+        ActionFx(sc{"a"}, room, poses, at)
+        RETURN
+    ENDIF
+    ' the happy end
+    DIM et = at - ACTION_LEN
+    DIM j = 0
+    FOR j = 0 TO LEN(poses) - 1
+        poses[j] = Dance(poses[j], et * 6 + j * MATH.PI)
+    NEXT j
     DrawHearts(room{"heart"}, et, 360, 760)
-    DrawFigure(cast[0], poses[0])
-    DrawFigure(cast[1], poses[1])
+    DrawCast(parts, sc, poses)
     DrawConfetti(et)
-    DIM card$ = "Von " + story{"from"} + " für " + story{"to"}
+    DIM card$ = "Frohe Weihnachten!"
+    IF story{"f"} <> "" ANDALSO story{"t"} <> "" THEN
+        card$ = "Von " + story{"f"} + " für " + story{"t"}
+    ELSEIF story{"f"} <> "" THEN
+        card$ = "Von " + story{"f"}
+    ENDIF
     DIM tw = GFX.TEXTSIZE(card$)[0]
     ROUNDED_RECT (FW - tw) / 2 - 30, 150, tw + 60, 76, 30, TRUE, 216, 34, 52
     TEXT (FW - tw) / 2, 168, card$, 255, 245, 220
