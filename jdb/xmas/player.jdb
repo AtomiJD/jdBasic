@@ -1,6 +1,7 @@
 ' The player of the Christmas story cards: plays the story of a link full
 ' screen, its music starts with the first tap. At the end one button plays it
-' again, the other offers a link to the editor for a greeting back. Desktop: run from jdb/xmas, an optional argument is a story code.
+' again, the other offers a link to the editor for a greeting back.
+' Desktop: run from jdb/xmas, an optional argument is a story code.
 ' Browser: the page hands the code over as "s" in /url_params.json; "debug"
 ' shows the frame rate, "mute" keeps it silent.
 OPTION "EXPLICIT"
