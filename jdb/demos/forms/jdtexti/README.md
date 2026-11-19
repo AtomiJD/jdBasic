@@ -80,6 +80,10 @@ document on the right. Both panes are editable and kept in step:
 - Printing from the rendered view (focused, or shown alone) prints it as
   shown, with headings, tables and pictures; in dark mode it goes to paper
   drawn light. From the source pane the source prints as plain text.
+- The bar between the panes can be dragged; the panes follow when the
+  button is let go, and the split is kept for the next start.
+- Pictures in PNG and JPEG are shown as they are, GIF, BMP and TIFF as a
+  PNG made from them; any other file shows its `[alt]` text.
 - Dark mode darkens both panes. Saving under another folder resolves
   relative image paths against the new one.
 - Undo and Redo (Ctrl+Z, Ctrl+Y) step one history, the source's, from

@@ -86,6 +86,14 @@ DIM mdv AS DOUBLE = 0
 DIM mdprint AS DOUBLE = 0
 DIM md_on AS INTEGER = 0
 DIM md_layout AS INTEGER = 1
+' The bar between source and view: where it sits as a share of the width,
+' and while it is dragged, where in the bar the mouse took hold.
+DIM split_bar AS DOUBLE = 0
+DIM split_pct AS DOUBLE = 50.0
+DIM split_drag AS INTEGER = 0
+DIM split_grab AS INTEGER = 0
+DIM SPLIT_W AS INTEGER = 6
+DIM SPLIT_MIN AS INTEGER = 80
 DIM md_doc AS MAP
 DIM md_dirty_view AS INTEGER = 0
 DIM md_dirty_src AS INTEGER = 0
@@ -158,6 +166,7 @@ SUB LAYOUT()
         FORM.SET(md_bar[i], "VISIBLE", md_on = 1)
     NEXT
     IF NOT md_on THEN
+        FORM.SET(split_bar, "VISIBLE", FALSE)
         FORM.SET(mdv, "VISIBLE", FALSE)
         FORM.SET(txt, "VISIBLE", TRUE)
         FORM.SET(txt, "Y", 0)
@@ -169,18 +178,52 @@ SUB LAYOUT()
     FORM.SET(mdv, "Y", top)
     FORM.SET(mdv, "HEIGHT", h)
     IF md_layout = 2 THEN
+        FORM.SET(split_bar, "VISIBLE", FALSE)
         FORM.SET(txt, "VISIBLE", FALSE)
         FORM.SET(mdv, "X", 0)
         FORM.SET(mdv, "WIDTH", client_w)
     ELSE
-        DIM half AS INTEGER = INT(client_w / 2)
+        DIM left_w AS INTEGER = SPLIT_LEFT(INT(client_w * split_pct / 100))
         FORM.SET(txt, "VISIBLE", TRUE)
         FORM.SET(txt, "Y", top)
-        FORM.SET(txt, "WIDTH", half)
+        FORM.SET(txt, "WIDTH", left_w)
         FORM.SET(txt, "HEIGHT", h)
-        FORM.SET(mdv, "X", half)
-        FORM.SET(mdv, "WIDTH", client_w - half)
+        FORM.SET(split_bar, "X", left_w)
+        FORM.SET(split_bar, "Y", top)
+        FORM.SET(split_bar, "HEIGHT", h)
+        FORM.SET(split_bar, "VISIBLE", TRUE)
+        FORM.SET(mdv, "X", left_w + SPLIT_W)
+        FORM.SET(mdv, "WIDTH", client_w - left_w - SPLIT_W)
     ENDIF
+ENDSUB
+
+' The width of the source pane for a wanted one, leaving both panes usable.
+FUNC SPLIT_LEFT(want AS INTEGER) AS INTEGER
+    DIM hi AS INTEGER = client_w - SPLIT_W - SPLIT_MIN
+    IF want > hi THEN want = hi
+    IF want < SPLIT_MIN THEN want = SPLIT_MIN
+    RETURN want
+ENDFUNC
+
+' Dragging moves only the bar; the panes follow when the button is let go.
+SUB SPLITBAR_MOUSEDOWN(e)
+    IF CINT(e[0]{"button"}) <> 1 THEN RETURN
+    split_drag = 1
+    split_grab = CINT(e[0]{"x"})
+ENDSUB
+
+SUB SPLITBAR_MOUSEMOVE(e)
+    IF NOT split_drag THEN RETURN
+    DIM bar_x AS INTEGER = CINT(FORM.GET(split_bar, "X"))
+    FORM.SET(split_bar, "X", SPLIT_LEFT(bar_x + CINT(e[0]{"x"}) - split_grab))
+ENDSUB
+
+SUB SPLITBAR_MOUSEUP(e)
+    IF NOT split_drag THEN RETURN
+    split_drag = 0
+    IF client_w > 0 THEN split_pct = 100.0 * CINT(FORM.GET(split_bar, "X")) / client_w
+    LAYOUT()
+    SAVE_SETTINGS()
 ENDSUB
 
 SUB APPLY_COLORS()
@@ -192,6 +235,7 @@ SUB APPLY_COLORS()
     ENDIF
     FORM.SET(txt, "BACKCOLOR", back)
     FORM.SET(txt, "FORECOLOR", fore)
+    IF split_bar <> 0 THEN FORM.SET(split_bar, "COLOR", IIF(dark_on, $3C3C3C, $D8D8D8))
     IF mdv = 0 THEN RETURN
     FORM.SET(mdv, "BACKCOLOR", back)
     IF md_on THEN
@@ -312,7 +356,9 @@ SUB LOAD_SETTINGS()
     font_size = REG_GET_INT("FontSize", font_size)
     font_bold = REG_GET_INT("FontBold", font_bold)
     font_italic = REG_GET_INT("FontItalic", font_italic)
+    split_pct = VAL(REG_GET$("SplitPercent", STR$(split_pct)))
     IF font_size < 1 THEN font_size = 11
+    IF split_pct < 5 ORELSE split_pct > 95 THEN split_pct = 50.0
 ENDSUB
 
 SUB SAVE_SETTINGS()
@@ -323,6 +369,7 @@ SUB SAVE_SETTINGS()
     REG_PUT("FontSize", STR$(font_size))
     REG_PUT("FontBold", STR$(font_bold))
     REG_PUT("FontItalic", STR$(font_italic))
+    REG_PUT("SplitPercent", STR$(ROUND(split_pct, 1)))
 ENDSUB
 
 ' ── Markdown ────────────────────────────────────────────────────
@@ -1812,6 +1859,9 @@ FORM.SET(mdv, "VISIBLE", FALSE)
 mdprint = FORM.RICHTEXT(frm, "mdprint", 0, 0, client_w, client_h - SB_HEIGHT)
 FORM.SET(mdprint, "MAXLENGTH", 0)
 FORM.SET(mdprint, "VISIBLE", FALSE)
+split_bar = FORM.SHAPE(frm, "splitbar", 0, 0, SPLIT_W, 10, $D8D8D8)
+FORM.SET(split_bar, "CURSOR", "SIZEWE")
+FORM.SET(split_bar, "VISIBLE", FALSE)
 
 DIM bar_spec AS ARRAY = [["btnMdB", "B", 30], ["btnMdI", "I", 30], ["btnMdS", "S", 30], ["btnMdCode", "</>", 40], _
     ["btnMdH1", "H1", 36], ["btnMdH2", "H2", 36], ["btnMdH3", "H3", 36], ["btnMdPara", "Text", 44], _

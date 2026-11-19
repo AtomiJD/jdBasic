@@ -1130,8 +1130,16 @@ LRESULT CALLBACK ctl_sub_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
             case WM_KILLFOCUS:   queue_event(it.name, "LOSTFOCUS", info_map(it)); break;
             case WM_KEYDOWN:     queue_key(it, "KEYDOWN", (int)wp); break;
             case WM_KEYUP:       queue_key(it, "KEYUP", (int)wp); break;
-            case WM_LBUTTONDOWN: queue_mouse(it, "MOUSEDOWN", 1, lp); break;
-            case WM_LBUTTONUP:   queue_mouse(it, "MOUSEUP", 1, lp); break;
+            case WM_LBUTTONDOWN:
+                // A shape keeps the mouse while the button is down, so it can
+                // be dragged (a splitter bar) past the controls beside it.
+                if (it.kind == "SHAPE") SetCapture(hwnd);
+                queue_mouse(it, "MOUSEDOWN", 1, lp);
+                break;
+            case WM_LBUTTONUP:
+                if (it.kind == "SHAPE" && GetCapture() == hwnd) ReleaseCapture();
+                queue_mouse(it, "MOUSEUP", 1, lp);
+                break;
             case WM_RBUTTONDOWN: queue_mouse(it, "MOUSEDOWN", 2, lp); break;
             case WM_RBUTTONUP:   queue_mouse(it, "MOUSEUP", 2, lp); break;
             case WM_MOUSEMOVE:   queue_mouse(it, "MOUSEMOVE", 0, lp); break;
@@ -2642,6 +2650,8 @@ void set_prop(int handle, FormsItem& it, const std::string& prop, const Value& v
         else if (c == "IBEAM" || c == "TEXT") id = (LPCWSTR)IDC_IBEAM;
         else if (c == "CROSS") id = (LPCWSTR)IDC_CROSS;
         else if (c == "SIZEALL") id = (LPCWSTR)IDC_SIZEALL;
+        else if (c == "SIZEWE") id = (LPCWSTR)IDC_SIZEWE;
+        else if (c == "SIZENS") id = (LPCWSTR)IDC_SIZENS;
         else if (c == "NO") id = (LPCWSTR)IDC_NO;
         g_cursors[handle] = LoadCursorW(nullptr, id);
     } else if (prop == "COLOR" && it.kind == "SHAPE") {
@@ -3243,6 +3253,7 @@ const std::vector<const char*>& events_of(const std::string& kind) {
     static const std::vector<const char*> text_ev  = { "CHANGE", JDF_INPUT_EV };
     static const std::vector<const char*> list_ev  = { "CLICK", "DBLCLICK", JDF_INPUT_EV };
     static const std::vector<const char*> tick_ev  = { "TICK" };
+    static const std::vector<const char*> mouse_ev = { "MOUSEDOWN", "MOUSEUP", "MOUSEMOVE" };
     static const std::vector<const char*> none_ev  = {};
 #undef JDF_INPUT_EV
     if (is_form_kind(kind)) return form_ev;
@@ -3253,6 +3264,7 @@ const std::vector<const char*>& events_of(const std::string& kind) {
         kind == "RICHTEXT")  return text_ev;
     if (kind == "LISTBOX" || kind == "LISTVIEW" || kind == "TREEVIEW") return list_ev;
     if (kind == "TIMER")    return tick_ev;
+    if (kind == "SHAPE")    return mouse_ev;
     return none_ev;
 }
 

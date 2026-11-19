@@ -32,7 +32,13 @@ Range: `v1.3.0..HEAD`.
 - **MDRICH** embeds GIF, BMP and TIFF pictures as PNG, so jdTexti shows them
   in the view and in print; RTF itself has no GIF picture. Pictures are read
   once per file version, and the document is joined in one step, so drawing
-  a long document with many pictures again is faster than before.
+  a long document with many pictures again is faster than before. A
+  picture is converted only when its first bytes say GIF, BMP or TIFF, so a
+  document cannot hand its files to any other installed image decoder.
+- **`FORM.SHAPE`** fires `MOUSEDOWN`, `MOUSEUP` and `MOUSEMOVE` and keeps the
+  mouse while the left button is down, so a thin shape can be dragged as a
+  splitter bar; `CURSOR` takes `SIZEWE` and `SIZENS`. jdTexti uses it for
+  the bar between source and view, whose position it remembers.
 
 ## Changed
 

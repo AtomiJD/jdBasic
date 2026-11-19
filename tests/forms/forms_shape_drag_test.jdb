@@ -1,0 +1,91 @@
+' A shape keeps the mouse while the left button is down: a drag that leaves
+' it still reports MOUSEMOVE and MOUSEUP to the shape, x relative to it.
+'
+'   jdbasic tests/forms/forms_shape_drag_test.jdb        (needs a FORMS build)
+'
+' Driven by posted messages, as Windows would post them, so the cursor is
+' left alone. GetCapture tells whether the shape holds the mouse. Posted
+' coordinates are device pixels, reported ones logical units, so the checks
+' compare positions rather than numbers.
+DECLARE FUNC PostMessageW LIB "user32" ALIAS "PostMessageW" (h AS INTEGER, m AS INTEGER, w AS INTEGER, l AS INTEGER) AS INTEGER
+DECLARE FUNC GetCapture LIB "user32" ALIAS "GetCapture" () AS INTEGER
+
+CONST WM_MOUSEMOVE = 512
+CONST WM_LBUTTONDOWN = 513
+CONST WM_LBUTTONUP = 514
+CONST MK_LBUTTON = 1
+
+DIM pass = 0
+DIM fail = 0
+DIM seen AS MAP = {}
+DIM phase = 0
+
+SUB CHECK(what$, got$, want$)
+    IF got$ = want$ THEN
+        pass = pass + 1
+    ELSE
+        fail = fail + 1
+        PRINT "FAIL "; what$; "  got ["; got$; "] want ["; want$; "]"
+    ENDIF
+ENDSUB
+
+SUB NOTE(key$, v)
+    seen{key$} = v
+ENDSUB
+
+FUNC GOT(key$)
+    IF TYPEOF(seen{key$}) = "NONE" THEN RETURN "-"
+    RETURN "" + seen{key$}
+ENDFUNC
+
+' x in the low word as a signed 16-bit value, y in the high word
+FUNC POINT_LP(x, y)
+    RETURN (x + 65536) MOD 65536 + y * 65536
+ENDFUNC
+
+DIM frm = FORM.CREATE("shape drag", 320, 200, "SDF")
+DIM bar = FORM.SHAPE(frm, "BAR", 150, 0, 6, 200, $808080)
+DIM tmr = FORM.TIMER(frm, "SDT", 200)
+FORM.SET(bar, "CURSOR", "SIZEWE")
+FORM.SET(bar, "CURSOR", "SIZENS")
+
+SUB BAR_MOUSEDOWN(e)
+    NOTE("down_x", e[0]{"x"})
+    NOTE("down_button", e[0]{"button"})
+ENDSUB
+
+SUB BAR_MOUSEMOVE(e)
+    NOTE("move_x", e[0]{"x"})
+ENDSUB
+
+SUB BAR_MOUSEUP(e)
+    NOTE("up_x", e[0]{"x"})
+ENDSUB
+
+SUB SDT_TICK(e)
+    phase = phase + 1
+    DIM hb = FORM.GET(bar, "HWND")
+    IF phase = 1 THEN
+        DIM r1 = PostMessageW(hb, WM_LBUTTONDOWN, MK_LBUTTON, POINT_LP(3, 50))
+    ELSEIF phase = 2 THEN
+        NOTE("captured", GetCapture() = hb)
+        DIM r2 = PostMessageW(hb, WM_MOUSEMOVE, MK_LBUTTON, POINT_LP(-40, 50))
+    ELSEIF phase = 3 THEN
+        DIM r3 = PostMessageW(hb, WM_LBUTTONUP, 0, POINT_LP(-60, 50))
+    ELSEIF phase = 4 THEN
+        NOTE("released", GetCapture() <> hb)
+        FORM.CLOSE(frm)
+    ENDIF
+ENDSUB
+
+FORM.RUN(frm)
+
+CHECK("MOUSEDOWN on the shape", GOT("down_button"), "1")
+CHECK("MOUSEDOWN x relative to the shape", STR$(VAL(GOT("down_x")) >= 0 ANDALSO VAL(GOT("down_x")) < 6), "TRUE")
+CHECK("the shape holds the mouse while the button is down", GOT("captured"), "TRUE")
+CHECK("MOUSEMOVE left of the shape is negative", STR$(VAL(GOT("move_x")) < 0), "TRUE")
+CHECK("MOUSEUP further left than the move", STR$(VAL(GOT("up_x")) < VAL(GOT("move_x"))), "TRUE")
+CHECK("the mouse is let go after MOUSEUP", GOT("released"), "TRUE")
+
+PRINT "RESULTS: "; pass; " passed, "; fail; " failed"
+IF fail > 0 THEN END 1
