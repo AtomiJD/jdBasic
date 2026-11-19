@@ -689,6 +689,14 @@ void VM::register_system_builtins() {
                                cap.empty()  ? nullptr : cap.c_str());
         return Value::make_i64(rc);
     });
+
+    // IMAGE.CONVERT(src$, dst$) -> int rc (0 = ok); format from dst$'s extension.
+    register_native("IMAGE.CONVERT", 2, 2, [](const std::vector<Value>& args) -> Value {
+        if (args[0].type != ValueType::STRING) return Value::make_i64(-6);
+        if (args[1].type != ValueType::STRING) return Value::make_i64(-1);
+        return Value::make_i64(jdb_imgconvert(args[0].as_string()->data.c_str(),
+                                              args[1].as_string()->data.c_str()));
+    });
 #endif
 
 #ifndef JDB_LEAN

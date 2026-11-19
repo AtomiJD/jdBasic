@@ -80,6 +80,8 @@ extern "C" int jdb_stdin_getc(int timeout_us);
 // OS.SCREENSHOT backing (src/screencap.cpp). GDI+WIC on Windows, stub
 // elsewhere. rc 0 = ok, negative = error.
 extern "C" int jdb_screencap(const char* path, const char* mode, const char* caption);
+// IMAGE.CONVERT backing (src/screencap.cpp). WIC on Windows, -100 elsewhere.
+extern "C" int jdb_imgconvert(const char* src, const char* dst);
 
 #ifdef PICOCALC
 extern "C" int  picocalc_gfx_buffered(void);

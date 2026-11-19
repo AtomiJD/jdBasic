@@ -1607,6 +1607,14 @@ File and directory names are UTF-8 like every other string. On Windows a program
     rc = OS.SCREENSHOT("calc.bmp", "client", "Calculator")
     IF rc <> 0 THEN PRINT "capture failed: "; rc
     ```
+* **`IMAGE.CONVERT(src$, dst$) -> INTEGER`**: Reads the image file `src$` and writes it to `dst$` in the format chosen from `dst$`'s extension, without opening a window. Returns `0` on success (negative on error). **Windows only** (returns `-100` on other platforms); reading and writing go through the Windows Imaging Component, so `src$` may be any format WIC decodes (PNG, JPEG, GIF, BMP, TIFF, ICO, ...) whatever its extension. The target formats and extensions are those of `OS.SCREENSHOT` (`.png`, `.jpg`/`.jpeg`, `.bmp`, `.tif`/`.tiff`, `.gif`); any other extension writes PNG. Of an animated GIF or a multi-page TIFF only the first frame is written. Transparency survives into PNG; a JPEG or BMP target has none. `dst$` is overwritten if it exists, and may be the same file as `src$`. The width and height come out as they went in.
+
+    Errors: `-1` an empty `dst$`, or one that cannot be written; `-4` the encoder failed; `-5` the image has more than 100 million pixels; `-6` `src$` is empty, missing or not an image WIC can read.
+
+    ```basic
+    rc = IMAGE.CONVERT("diagram.gif", "diagram.png")
+    IF rc <> 0 THEN PRINT "conversion failed: "; rc
+    ```
 
 #### Setting EXE file properties (`.jdb.props` sidecar)
 
@@ -5365,7 +5373,7 @@ Every documented builtin, linked to the section that describes it.
 
 **H** · [HELP](#type-inspection) · [HELP$](#type-inspection) · [HISTEDGES](#array--matrix-functions) · [HISTOGRAM](#array--matrix-functions) · [HOUR](#system-and-time-functions) · [HTTP.CLEARCOOKIES](#http-functions) · [HTTP.CLEARHEADERS](#http-functions) · [HTTP.CLEARPARAMS](#http-functions) · [HTTP.DELETE$](#http-functions) · [HTTP.FOLLOWREDIRECTS](#http-functions) · [HTTP.GET$](#http-functions) · [HTTP.GETCOOKIE$](#http-functions) · [HTTP.GET_ASYNC](#http-functions) · [HTTP.POST$](#http-functions) · [HTTP.POST_ASYNC](#http-functions) · [HTTP.PUT$](#http-functions) · [HTTP.PUT_ASYNC](#http-functions) · [HTTP.REQUEST](#http-functions) · [HTTP.SERVER.LOG](#http-functions) · [HTTP.SERVER.ON_GET](#http-functions) · [HTTP.SERVER.ON_NOTFOUND](#http-functions) · [HTTP.SERVER.ON_POST](#http-functions) · [HTTP.SERVER.START](#http-functions) · [HTTP.SERVER.STOP](#http-functions) · [HTTP.SERVER.WAIT](#http-functions) · [HTTP.SETCOOKIE](#http-functions) · [HTTP.SETHEADER](#http-functions) · [HTTP.SETPARAM](#http-functions) · [HTTP.SETTIMEOUT](#http-functions) · [HTTP.STATUSCODE](#http-functions)
 
-**I** · [IF](#system--flow-control) · [IIF](#matharithmeticround-functions) · [IMPORT](#system--flow-control) · [INDEXOF](#array--matrix-functions) · [INPUT](#console-io-functions) · [INPUTBOX$](#native-windows-forms-form) · [INPUT_HIDDEN$](#console-io-functions) · [INSERT$](#string-functions) · [INSTR](#string-functions) · [INT](#matharithmeticround-functions) · [INTEGRATE](#array--matrix-functions) · [INVERT](#array--matrix-functions) · [IOTA](#array--matrix-functions) · [ISARR](#type-inspection) · [ISBOOL](#type-inspection) · [ISMAP](#type-inspection) · [ISNONE](#type-inspection) · [ISNUM](#type-inspection) · [ISSTR](#type-inspection)
+**I** · [IF](#system--flow-control) · [IIF](#matharithmeticround-functions) · [IMAGE.CONVERT](#os-functions) · [IMPORT](#system--flow-control) · [INDEXOF](#array--matrix-functions) · [INPUT](#console-io-functions) · [INPUTBOX$](#native-windows-forms-form) · [INPUT_HIDDEN$](#console-io-functions) · [INSERT$](#string-functions) · [INSTR](#string-functions) · [INT](#matharithmeticround-functions) · [INTEGRATE](#array--matrix-functions) · [INVERT](#array--matrix-functions) · [IOTA](#array--matrix-functions) · [ISARR](#type-inspection) · [ISBOOL](#type-inspection) · [ISMAP](#type-inspection) · [ISNONE](#type-inspection) · [ISNUM](#type-inspection) · [ISSTR](#type-inspection)
 
 **J** · [JDB.ALIASES](#type-inspection) · [JDB.CHECK$](#type-inspection) · [JDB.GLOBAL_GET](#type-inspection) · [JOIN](#string-functions) · [JOY.AXIS](#mouse--joystick--gamepad-input) · [JOY.BUTTON](#mouse--joystick--gamepad-input) · [JOY.COUNT](#mouse--joystick--gamepad-input) · [JOY.HAT](#mouse--joystick--gamepad-input) · [JOY.NAME$](#mouse--joystick--gamepad-input) · [JSON.PARSE](#json-functions) · [JSON.STRINGIFY$](#json-functions)
 

@@ -26,6 +26,13 @@ Range: `v1.3.0..HEAD`.
   Shift, AltGr and dead keys applied. Before, a program had only key codes
   and could not read an umlaut or a shifted character. The window sends text
   from the moment a handler is registered.
+- **`IMAGE.CONVERT(src$, dst$)`** (#1057): converts an image file to the
+  format of the target's extension (PNG, JPEG, BMP, TIFF, GIF) without a
+  window, through the Windows Imaging Component. Windows only.
+- **MDRICH** embeds GIF, BMP and TIFF pictures as PNG, so jdTexti shows them
+  in the view and in print; RTF itself has no GIF picture. Pictures are read
+  once per file version, and the document is joined in one step, so drawing
+  a long document with many pictures again is faster than before.
 
 ## Changed
 

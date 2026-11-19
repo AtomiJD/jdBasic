@@ -1,0 +1,445 @@
+' IMAGE.CONVERT(src$, dst$): reads an image file through WIC and writes it in
+' the format of dst$'s extension. The sources are built here as bytes: a
+' 24-bit BMP, a 1x1 GIF with a transparent colour, a two-frame GIF and a
+' 1-bit BMP of more than 100 million pixels. Every output is checked by its
+' signature and the width and height in its header.
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Check(label$, actual$, expected$)
+    IF actual$ = expected$ THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: " + label$
+        PRINT "  expected " + expected$
+        PRINT "  got      " + actual$
+    ENDIF
+ENDSUB
+
+SUB Ok(label$, cond)
+    IF cond THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: " + label$
+    ENDIF
+ENDSUB
+
+SUB Finish()
+    PRINT ""
+    PRINT "IMAGE.CONVERT TEST RESULTS"
+    PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+    IF failed > 0 THEN END 1
+ENDSUB
+
+' ---------------------------------------------------------------- bytes
+
+FUNC ReadFile$(path$)
+    IF NOT FILE.EXISTS(path$) THEN RETURN ""
+    RETURN BINREADER$(path$)
+ENDFUNC
+
+FUNC Rd16(d$ AS STRING, off AS INTEGER, little AS INTEGER) AS INTEGER
+    IF LEN(d$) < off + 2 THEN RETURN -1
+    DIM r AS ARRAY = []
+    IF little THEN
+        r = UNPACK("<s", d$, off)
+    ELSE
+        r = UNPACK(">s", d$, off)
+    ENDIF
+    RETURN CLNG(r[0])
+ENDFUNC
+
+FUNC Rd32(d$ AS STRING, off AS INTEGER, little AS INTEGER) AS INTEGER
+    IF LEN(d$) < off + 4 THEN RETURN -1
+    DIM r AS ARRAY = []
+    IF little THEN
+        r = UNPACK("<i", d$, off)
+    ELSE
+        r = UNPACK(">i", d$, off)
+    ENDIF
+    RETURN CLNG(r[0])
+ENDFUNC
+
+FUNC RdS32(d$ AS STRING, off AS INTEGER) AS INTEGER
+    IF LEN(d$) < off + 4 THEN RETURN -1
+    DIM r AS ARRAY = UNPACK("<n", d$, off)
+    RETURN CLNG(r[0])
+ENDFUNC
+
+FUNC Kind$(d$)
+    IF LEN(d$) < 8 THEN RETURN "none"
+    DIM b0 AS INTEGER = BYTEAT(d$, 0)
+    DIM b1 AS INTEGER = BYTEAT(d$, 1)
+    DIM b2 AS INTEGER = BYTEAT(d$, 2)
+    DIM b3 AS INTEGER = BYTEAT(d$, 3)
+    IF b0 = 137 ANDALSO b1 = 80 ANDALSO b2 = 78 ANDALSO b3 = 71 ANDALSO BYTEAT(d$, 4) = 13 ANDALSO BYTEAT(d$, 5) = 10 ANDALSO BYTEAT(d$, 6) = 26 ANDALSO BYTEAT(d$, 7) = 10 THEN RETURN "PNG"
+    IF b0 = 255 ANDALSO b1 = 216 ANDALSO b2 = 255 THEN RETURN "JPEG"
+    IF b0 = 66 ANDALSO b1 = 77 THEN RETURN "BMP"
+    IF b0 = 71 ANDALSO b1 = 73 ANDALSO b2 = 70 ANDALSO b3 = 56 THEN RETURN "GIF"
+    IF b0 = 73 ANDALSO b1 = 73 ANDALSO b2 = 42 ANDALSO b3 = 0 THEN RETURN "TIFF"
+    IF b0 = 77 ANDALSO b1 = 77 ANDALSO b2 = 0 ANDALSO b3 = 42 THEN RETURN "TIFF"
+    RETURN "other"
+ENDFUNC
+
+FUNC JpegDims$(d$)
+    DIM n AS INTEGER = LEN(d$)
+    DIM p AS INTEGER = 2
+    DIM m AS INTEGER = 0
+    WHILE p + 9 < n
+        IF BYTEAT(d$, p) <> 255 THEN RETURN "?"
+        m = BYTEAT(d$, p + 1)
+        IF m = 255 THEN
+            p = p + 1
+        ELSEIF m >= 192 ANDALSO m <= 207 ANDALSO m <> 196 ANDALSO m <> 200 ANDALSO m <> 204 THEN
+            RETURN STR$(Rd16(d$, p + 7, 0)) + "x" + STR$(Rd16(d$, p + 5, 0))
+        ELSE
+            p = p + 2 + Rd16(d$, p + 2, 0)
+        ENDIF
+    WEND
+    RETURN "?"
+ENDFUNC
+
+FUNC TiffDims$(d$)
+    DIM little AS INTEGER = 0
+    IF BYTEAT(d$, 0) = 73 THEN little = 1
+    DIM ifd AS INTEGER = Rd32(d$, 4, little)
+    DIM cnt AS INTEGER = Rd16(d$, ifd, little)
+    DIM w AS INTEGER = -1
+    DIM h AS INTEGER = -1
+    DIM k AS INTEGER = 0
+    DIM ent AS INTEGER = 0
+    DIM tag AS INTEGER = 0
+    DIM v AS INTEGER = 0
+    FOR k = 0 TO cnt - 1
+        ent = ifd + 2 + 12 * k
+        tag = Rd16(d$, ent, little)
+        IF Rd16(d$, ent + 2, little) = 3 THEN
+            v = Rd16(d$, ent + 8, little)
+        ELSE
+            v = Rd32(d$, ent + 8, little)
+        ENDIF
+        IF tag = 256 THEN w = v
+        IF tag = 257 THEN h = v
+    NEXT k
+    RETURN STR$(w) + "x" + STR$(h)
+ENDFUNC
+
+' "WxH" read from the header of whatever format the bytes are in
+FUNC Dims$(d$)
+    DIM k$ AS STRING = Kind$(d$)
+    IF k$ = "PNG" THEN RETURN STR$(Rd32(d$, 16, 0)) + "x" + STR$(Rd32(d$, 20, 0))
+    IF k$ = "BMP" THEN RETURN STR$(Rd32(d$, 18, 1)) + "x" + STR$(ABS(RdS32(d$, 22)))
+    IF k$ = "GIF" THEN RETURN STR$(Rd16(d$, 6, 1)) + "x" + STR$(Rd16(d$, 8, 1))
+    IF k$ = "JPEG" THEN RETURN JpegDims$(d$)
+    IF k$ = "TIFF" THEN RETURN TiffDims$(d$)
+    RETURN "?"
+ENDFUNC
+
+FUNC FileKind$(path$)
+    RETURN Kind$(ReadFile$(path$))
+ENDFUNC
+
+FUNC FileDims$(path$)
+    RETURN Dims$(ReadFile$(path$))
+ENDFUNC
+
+' A 24-bit bottom-up BMP, every row padded to four bytes
+FUNC MakeBmp$(w, h)
+    DIM rowBytes AS INTEGER = INT((w * 3 + 3) / 4) * 4
+    DIM pixSize AS INTEGER = rowBytes * h
+    DIM out$ AS STRING = PACK$("<2a6i2s6i", "BM", 54 + pixSize, 0, 54, 40, w, h, 1, 24, 0, pixSize, 2835, 2835, 0, 0)
+    DIM y AS INTEGER = 0
+    DIM x AS INTEGER = 0
+    DIM row$ AS STRING = ""
+    FOR y = 0 TO h - 1
+        row$ = ""
+        FOR x = 0 TO w - 1
+            row$ = row$ + PACK$("<3b", (x * 40) MOD 256, (y * 60) MOD 256, 200)
+        NEXT x
+        IF rowBytes > w * 3 THEN row$ = row$ + PACK$(STR$(rowBytes - w * 3) + "x")
+        out$ = out$ + row$
+    NEXT y
+    RETURN out$
+ENDFUNC
+
+' A 1-bit BMP of w x h pixels, all of colour 0
+FUNC MakeBigBmp$(w, h)
+    DIM rowBytes AS INTEGER = INT((w + 31) / 32) * 4
+    DIM pixSize AS INTEGER = rowBytes * h
+    DIM out$ AS STRING = PACK$("<2a6i2s6i", "BM", 62 + pixSize, 0, 62, 40, w, h, 1, 1, 0, pixSize, 2835, 2835, 2, 0)
+    out$ = out$ + PACK$("<8b", 0, 0, 0, 0, 255, 255, 255, 0)
+    out$ = out$ + PACK$(STR$(pixSize) + "x")
+    RETURN out$
+ENDFUNC
+
+' The 1x1 GIF89a whose only pixel is colour 0, the transparent index
+FUNC MakeTransparentGif$()
+    DIM g$ AS STRING = PACK$("<6a2s3b", "GIF89a", 1, 1, 128, 0, 0)
+    g$ = g$ + PACK$("<6b", 0, 0, 0, 255, 255, 255)
+    g$ = g$ + PACK$("<4bs2b", 33, 249, 4, 1, 0, 0, 0)
+    g$ = g$ + PACK$("<b4sb", 44, 0, 0, 1, 1, 0)
+    g$ = g$ + PACK$("<6b", 2, 2, 68, 1, 0, 59)
+    RETURN g$
+ENDFUNC
+
+' A 1x1 GIF89a with two frames: the first pixel red (index 0), the second blue (index 1)
+FUNC MakeTwoFrameGif$()
+    DIM g$ AS STRING = PACK$("<6a2s3b", "GIF89a", 1, 1, 128, 0, 0)
+    g$ = g$ + PACK$("<6b", 255, 0, 0, 0, 0, 255)
+    g$ = g$ + PACK$("<4bs2b", 33, 249, 4, 0, 10, 0, 0)
+    g$ = g$ + PACK$("<b4sb", 44, 0, 0, 1, 1, 0)
+    g$ = g$ + PACK$("<5b", 2, 2, 68, 1, 0)
+    g$ = g$ + PACK$("<4bs2b", 33, 249, 4, 0, 10, 0, 0)
+    g$ = g$ + PACK$("<b4sb", 44, 0, 0, 1, 1, 0)
+    g$ = g$ + PACK$("<5b", 2, 2, 76, 1, 0)
+    g$ = g$ + PACK$("<b", 59)
+    RETURN g$
+ENDFUNC
+
+' "R,G,B" of the first pixel stored in a 24- or 32-bit BMP
+FUNC BmpFirstPixel$(d$)
+    IF Kind$(d$) <> "BMP" THEN RETURN "not a BMP"
+    DIM off AS INTEGER = Rd32(d$, 10, 1)
+    DIM bpp AS INTEGER = Rd16(d$, 28, 1)
+    IF bpp <> 24 ANDALSO bpp <> 32 THEN RETURN "bpp " + STR$(bpp)
+    IF LEN(d$) < off + 3 THEN RETURN "short"
+    RETURN STR$(BYTEAT(d$, off + 2)) + "," + STR$(BYTEAT(d$, off + 1)) + "," + STR$(BYTEAT(d$, off))
+ENDFUNC
+
+FUNC PngHasAlpha(d$)
+    IF Kind$(d$) <> "PNG" THEN RETURN FALSE
+    DIM ct AS INTEGER = BYTEAT(d$, 25)
+    IF ct = 6 ORELSE ct = 4 THEN RETURN TRUE
+    RETURN INSTR(d$, "tRNS") >= 0
+ENDFUNC
+
+FUNC ConvertInFunc(a$, b$)
+    DIM rc AS INTEGER = IMAGE.CONVERT(a$, b$)
+    RETURN rc
+ENDFUNC
+
+' ---------------------------------------------------------------- not Windows
+
+IF OS.GETOS$() <> "WINDOWS" THEN
+    Check("on another platform IMAGE.CONVERT returns -100", STR$(IMAGE.CONVERT("a.bmp", "b.png")), "-100")
+    Finish()
+    END
+ENDIF
+
+' ---------------------------------------------------------------- setup
+
+DIM base$ AS STRING = MKTEMP$("icv")
+MKDIR base$
+DIM made AS ARRAY = []
+
+FUNC P$(name$)
+    DIM full$ AS STRING = PATH.JOIN$(base$, name$)
+    made = APPEND(made, full$)
+    RETURN full$
+ENDFUNC
+
+DIM bmp$ AS STRING = P$("src.bmp")
+BINWRITER bmp$, MakeBmp$(5, 3)
+Check("the hand-made source BMP is 5x3", FileDims$(bmp$), "5x3")
+
+DIM rc AS INTEGER = 0
+DIM out$ AS STRING = ""
+
+' ---------------------------------------------------------------- each target extension
+
+out$ = P$("t.png")
+rc = IMAGE.CONVERT(bmp$, out$)
+Check("BMP to .png returns 0", STR$(rc), "0")
+Check(".png writes PNG", FileKind$(out$), "PNG")
+Check(".png keeps width and height", FileDims$(out$), "5x3")
+
+out$ = P$("t.jpg")
+rc = IMAGE.CONVERT(bmp$, out$)
+Check("BMP to .jpg returns 0", STR$(rc), "0")
+Check(".jpg writes JPEG", FileKind$(out$), "JPEG")
+Check(".jpg keeps width and height", FileDims$(out$), "5x3")
+
+out$ = P$("t.jpeg")
+rc = IMAGE.CONVERT(bmp$, out$)
+Check("BMP to .jpeg returns 0", STR$(rc), "0")
+Check(".jpeg writes JPEG", FileKind$(out$), "JPEG")
+Check(".jpeg keeps width and height", FileDims$(out$), "5x3")
+
+out$ = P$("t.bmp")
+rc = IMAGE.CONVERT(bmp$, out$)
+Check("BMP to .bmp returns 0", STR$(rc), "0")
+Check(".bmp writes BMP", FileKind$(out$), "BMP")
+Check(".bmp keeps width and height", FileDims$(out$), "5x3")
+
+out$ = P$("t.tif")
+rc = IMAGE.CONVERT(bmp$, out$)
+Check("BMP to .tif returns 0", STR$(rc), "0")
+Check(".tif writes TIFF", FileKind$(out$), "TIFF")
+Check(".tif keeps width and height", FileDims$(out$), "5x3")
+
+out$ = P$("t.tiff")
+rc = IMAGE.CONVERT(bmp$, out$)
+Check("BMP to .tiff returns 0", STR$(rc), "0")
+Check(".tiff writes TIFF", FileKind$(out$), "TIFF")
+Check(".tiff keeps width and height", FileDims$(out$), "5x3")
+
+out$ = P$("t.gif")
+rc = IMAGE.CONVERT(bmp$, out$)
+Check("BMP to .gif returns 0", STR$(rc), "0")
+Check(".gif writes GIF", FileKind$(out$), "GIF")
+Check(".gif keeps width and height", FileDims$(out$), "5x3")
+
+' ---------------------------------------------------------------- any other extension writes PNG
+
+out$ = P$("t.webp")
+Check("an unknown extension returns 0", STR$(IMAGE.CONVERT(bmp$, out$)), "0")
+Check("an unknown extension (.webp) writes PNG", FileKind$(out$), "PNG")
+Check("an unknown extension keeps width and height", FileDims$(out$), "5x3")
+
+out$ = P$("noextension")
+Check("a dst without extension returns 0", STR$(IMAGE.CONVERT(bmp$, out$)), "0")
+Check("a dst without extension writes PNG", FileKind$(out$), "PNG")
+
+' ---------------------------------------------------------------- src read by content, not extension
+
+DIM disguised$ AS STRING = P$("bmp_inside.dat")
+BINWRITER disguised$, MakeBmp$(7, 2)
+out$ = P$("from_dat.png")
+Check("a BMP named .dat is read whatever its extension", STR$(IMAGE.CONVERT(disguised$, out$)), "0")
+Check("the .dat source comes out as a 7x2 PNG", FileKind$(out$) + " " + FileDims$(out$), "PNG 7x2")
+
+' ---------------------------------------------------------------- chain BMP -> PNG -> GIF -> PNG
+
+DIM c1$ AS STRING = P$("chain1.png")
+DIM c2$ AS STRING = P$("chain2.gif")
+DIM c3$ AS STRING = P$("chain3.png")
+Check("chain step BMP to PNG returns 0", STR$(IMAGE.CONVERT(bmp$, c1$)), "0")
+Check("chain step PNG to GIF returns 0", STR$(IMAGE.CONVERT(c1$, c2$)), "0")
+Check("chain step GIF to PNG returns 0", STR$(IMAGE.CONVERT(c2$, c3$)), "0")
+Check("the GIF of the chain is 5x3", FileKind$(c2$) + " " + FileDims$(c2$), "GIF 5x3")
+Check("the end of the chain is a 5x3 PNG", FileKind$(c3$) + " " + FileDims$(c3$), "PNG 5x3")
+DIM c4$ AS STRING = P$("chain4.tif")
+DIM c5$ AS STRING = P$("chain5.jpg")
+DIM c6$ AS STRING = P$("chain6.bmp")
+Check("chain step PNG to TIFF returns 0", STR$(IMAGE.CONVERT(c3$, c4$)), "0")
+Check("chain step TIFF to JPEG returns 0", STR$(IMAGE.CONVERT(c4$, c5$)), "0")
+Check("chain step JPEG to BMP returns 0", STR$(IMAGE.CONVERT(c5$, c6$)), "0")
+Check("a TIFF source and a JPEG source keep 5x3 into BMP", FileKind$(c6$) + " " + FileDims$(c6$), "BMP 5x3")
+
+' ---------------------------------------------------------------- overwrite and in place
+
+DIM existing$ AS STRING = P$("existing.png")
+TXTWRITER existing$, "old content that is not an image"
+Check("an existing dst is overwritten (rc)", STR$(IMAGE.CONVERT(bmp$, existing$)), "0")
+Check("an existing dst is overwritten with a PNG", FileKind$(existing$) + " " + FileDims$(existing$), "PNG 5x3")
+Check("overwriting a dst a second time returns 0", STR$(IMAGE.CONVERT(disguised$, existing$)), "0")
+Check("the second overwrite holds the new image", FileDims$(existing$), "7x2")
+
+DIM inplace$ AS STRING = P$("inplace.png")
+BINWRITER inplace$, MakeBmp$(6, 4)
+Check("the in-place source holds BMP bytes before", FileKind$(inplace$), "BMP")
+Check("dst may be the same file as src (rc)", STR$(IMAGE.CONVERT(inplace$, inplace$)), "0")
+Check("converted in place, the file is now a 6x4 PNG", FileKind$(inplace$) + " " + FileDims$(inplace$), "PNG 6x4")
+
+DIM inplace2$ AS STRING = P$("inplace2.bmp")
+BINWRITER inplace2$, MakeBmp$(3, 9)
+Check("in place to the same format returns 0", STR$(IMAGE.CONVERT(inplace2$, inplace2$)), "0")
+Check("in place to the same format keeps a 3x9 BMP", FileKind$(inplace2$) + " " + FileDims$(inplace2$), "BMP 3x9")
+
+' ---------------------------------------------------------------- one pixel, transparency, frames
+
+DIM tgif$ AS STRING = P$("transparent.gif")
+BINWRITER tgif$, MakeTransparentGif$()
+DIM tpng$ AS STRING = P$("transparent.png")
+Check("a 1x1 transparent GIF converts to PNG (rc)", STR$(IMAGE.CONVERT(tgif$, tpng$)), "0")
+Check("a 1x1 image stays 1x1", FileDims$(tpng$), "1x1")
+Ok("transparency survives into PNG (colour type 4 or 6, or a tRNS chunk)", PngHasAlpha(ReadFile$(tpng$)))
+DIM tjpg$ AS STRING = P$("transparent.jpg")
+Check("a transparent GIF converts to JPEG (rc)", STR$(IMAGE.CONVERT(tgif$, tjpg$)), "0")
+Check("the JPEG of a transparent GIF is a 1x1 JPEG", FileKind$(tjpg$) + " " + FileDims$(tjpg$), "JPEG 1x1")
+DIM tbmp$ AS STRING = P$("transparent.bmp")
+Check("a transparent GIF converts to BMP (rc)", STR$(IMAGE.CONVERT(tgif$, tbmp$)), "0")
+Check("the BMP of a transparent GIF is a 1x1 BMP", FileKind$(tbmp$) + " " + FileDims$(tbmp$), "BMP 1x1")
+
+DIM anim$ AS STRING = P$("anim.gif")
+BINWRITER anim$, MakeTwoFrameGif$()
+DIM frame$ AS STRING = P$("frame.bmp")
+Check("an animated GIF converts (rc)", STR$(IMAGE.CONVERT(anim$, frame$)), "0")
+Check("of an animated GIF the first frame (red) is written", BmpFirstPixel$(ReadFile$(frame$)), "255,0,0")
+DIM framePng$ AS STRING = P$("frame.png")
+Check("an animated GIF to PNG returns 0", STR$(IMAGE.CONVERT(anim$, framePng$)), "0")
+Check("an animated GIF to PNG is 1x1", FileDims$(framePng$), "1x1")
+
+' ---------------------------------------------------------------- argument forms
+
+DIM cells AS ARRAY = [bmp$, P$("cell.png")]
+Check("src and dst from array cells (rc)", STR$(IMAGE.CONVERT(cells[0], cells[1])), "0")
+Check("dst from an array cell gets a PNG", FileKind$(cells[1]), "PNG")
+
+DIM fields AS MAP
+fields{"src"} = bmp$
+fields{"dst"} = P$("field.gif")
+Check("src and dst from map fields (rc)", STR$(IMAGE.CONVERT(fields{"src"}, fields{"dst"})), "0")
+Check("dst from a map field gets a GIF", FileKind$(fields{"dst"}), "GIF")
+
+DIM unused$ AS STRING = P$("joined.bmp")
+Check("src and dst from function calls (rc)", STR$(IMAGE.CONVERT(PATH.JOIN$(base$, "src.bmp"), PATH.JOIN$(base$, "joined.bmp"))), "0")
+Check("dst from a function call gets a 5x3 BMP", FileKind$(unused$) + " " + FileDims$(unused$), "BMP 5x3")
+
+DIM stem$ AS STRING = PATH.JOIN$(base$, "expr")
+DIM exprOut$ AS STRING = P$("expr.tiff")
+Check("src and dst from expressions (rc)", STR$(IMAGE.CONVERT(base$ + "\" + "src" + ".bmp", stem$ + "." + "tiff")), "0")
+Check("dst from an expression gets a TIFF", FileKind$(exprOut$), "TIFF")
+
+DIM funcOut$ AS STRING = P$("infunc.jpg")
+Check("called inside a FUNC returns 0", STR$(ConvertInFunc(bmp$, funcOut$)), "0")
+Check("called inside a FUNC writes a 5x3 JPEG", FileKind$(funcOut$) + " " + FileDims$(funcOut$), "JPEG 5x3")
+
+Ok("the return value works in an expression", IMAGE.CONVERT(bmp$, P$("expr2.png")) + 1 = 1)
+
+' ---------------------------------------------------------------- errors -6
+
+DIM errOut$ AS STRING = P$("err.png")
+Check("an empty src returns -6", STR$(IMAGE.CONVERT("", errOut$)), "-6")
+DIM missing$ AS STRING = PATH.JOIN$(base$, "does_not_exist.bmp")
+Check("a missing src returns -6", STR$(IMAGE.CONVERT(missing$, errOut$)), "-6")
+DIM textFile$ AS STRING = P$("note.png")
+TXTWRITER textFile$, "this is a text file, not an image"
+Check("a text file that is not an image returns -6", STR$(IMAGE.CONVERT(textFile$, errOut$)), "-6")
+DIM emptyFile$ AS STRING = P$("empty.bmp")
+BINWRITER emptyFile$, ""
+Check("an empty src file returns -6", STR$(IMAGE.CONVERT(emptyFile$, errOut$)), "-6")
+Check("a -6 from inside a FUNC", STR$(ConvertInFunc(missing$, errOut$)), "-6")
+
+' ---------------------------------------------------------------- errors -1
+
+Check("an empty dst returns -1", STR$(IMAGE.CONVERT(bmp$, "")), "-1")
+DIM noDir$ AS STRING = PATH.JOIN$(base$, "no_such_folder", "x.png")
+Check("a dst in a folder that does not exist returns -1", STR$(IMAGE.CONVERT(bmp$, noDir$)), "-1")
+Ok("no file appears for a dst in a missing folder", NOT FILE.EXISTS(noDir$))
+DIM subDir$ AS STRING = PATH.JOIN$(base$, "sub.png")
+MKDIR subDir$
+Check("a dst that is a directory cannot be written: -1", STR$(IMAGE.CONVERT(bmp$, subDir$)), "-1")
+
+' ---------------------------------------------------------------- error -5
+
+DIM big$ AS STRING = P$("big.bmp")
+BINWRITER big$, MakeBigBmp$(10001, 10000)
+Check("an image of 100010000 pixels (over 100 million) returns -5", STR$(IMAGE.CONVERT(big$, P$("big.png"))), "-5")
+
+' ---------------------------------------------------------------- cleanup
+
+DIM ci AS INTEGER = 0
+FOR ci = 0 TO LEN(made) - 1
+    IF FILE.EXISTS(made[ci]) THEN KILL made[ci]
+NEXT ci
+RMDIR subDir$
+RMDIR base$
+Ok("the temp folder is removed", NOT FILE.EXISTS(base$))
+
+Finish()

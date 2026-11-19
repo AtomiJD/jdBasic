@@ -22,14 +22,18 @@ enum {
     SC_E_CAPTURE   = -3,
     SC_E_ENCODE    = -4,
     SC_E_SIZE      = -5,
+    SC_E_DECODE    = -6,
     SC_UNSUPPORTED = -100
 };
+
+static const unsigned long long SC_MAX_PIXELS = 100000000ull;
 
 #ifdef _WIN32
 
 #include <windows.h>
 #include <wincodec.h>
 #include <vector>
+#include <new>
 
 static GUID sc_container_for_ext(const std::string& path) {
     size_t dot = path.find_last_of('.');
@@ -40,6 +44,16 @@ static GUID sc_container_for_ext(const std::string& path) {
     if (ext == "tif" || ext == "tiff") return GUID_ContainerFormatTiff;
     if (ext == "gif")                  return GUID_ContainerFormatGif;
     return GUID_ContainerFormatPng;  // default + .png
+}
+
+static std::wstring sc_wide(const char* utf8) {
+    std::wstring w;
+    int wn = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, NULL, 0);
+    if (wn > 0) {
+        w.resize((size_t)wn - 1);
+        MultiByteToWideChar(CP_UTF8, 0, utf8, -1, &w[0], wn);
+    }
+    return w;
 }
 
 // Encode a top-down 32bpp BGRA buffer to `wpath` in the given container.
@@ -84,6 +98,15 @@ static int sc_wic_write(const wchar_t* wpath, const uint8_t* bgra,
     {
         WICPixelFormatGUID fmt = GUID_WICPixelFormat32bppBGRA;
         frame->SetPixelFormat(&fmt);
+        if (IsEqualGUID(fmt, GUID_WICPixelFormat8bppIndexed)) {
+            // An indexed container (GIF) takes a palette made from the pixels.
+            IWICPalette* pal = NULL;
+            if (SUCCEEDED(factory->CreatePalette(&pal)) && pal) {
+                if (SUCCEEDED(pal->InitializeFromBitmap(bitmap, 256, TRUE)))
+                    frame->SetPalette(pal);
+                pal->Release();
+            }
+        }
     }
     hr = frame->WriteSource(bitmap, NULL);   // WIC converts to the container fmt
     if (FAILED(hr)) goto done;
@@ -158,13 +181,7 @@ extern "C" int jdb_screencap(const char* path_utf8, const char* mode,
             bi.bmiHeader.biCompression = BI_RGB;
             std::vector<uint8_t> buf((size_t)w * (size_t)h * 4u);
             if (GetDIBits(mem, bmp, 0, (UINT)h, buf.data(), &bi, DIB_RGB_COLORS)) {
-                int wn = MultiByteToWideChar(CP_UTF8, 0, path_utf8, -1, NULL, 0);
-                std::wstring wpath;
-                if (wn > 0) {
-                    wpath.resize((size_t)wn - 1);
-                    MultiByteToWideChar(CP_UTF8, 0, path_utf8, -1, &wpath[0], wn);
-                }
-                rc = sc_wic_write(wpath.c_str(), buf.data(), w, h,
+                rc = sc_wic_write(sc_wide(path_utf8).c_str(), buf.data(), w, h,
                                   sc_container_for_ext(path_utf8));
             }
         }
@@ -173,6 +190,63 @@ extern "C" int jdb_screencap(const char* path_utf8, const char* mode,
     if (bmp) DeleteObject(bmp);
     if (mem) DeleteDC(mem);
     ReleaseDC(NULL, screen);
+    return rc;
+}
+
+// Decode the first frame of `src` (any WIC format) to 32bpp BGRA, then encode
+// it to `dst` by its extension. The source is closed before the target is
+// opened, so src and dst may name the same file.
+extern "C" int jdb_imgconvert(const char* src_utf8, const char* dst_utf8) {
+    if (!src_utf8 || !*src_utf8) return SC_E_DECODE;
+    if (!dst_utf8 || !*dst_utf8) return SC_E_PATH;
+
+    bool did_co = false;
+    HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    if (hr == S_OK || hr == S_FALSE) did_co = true;
+
+    IWICImagingFactory*    factory = NULL;
+    IWICBitmapDecoder*     decoder = NULL;
+    IWICBitmapFrameDecode* frame   = NULL;
+    IWICFormatConverter*   conv    = NULL;
+    std::vector<uint8_t> buf;
+    UINT w = 0, h = 0;
+    int rc = SC_E_DECODE;
+
+    hr = CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER,
+                          IID_PPV_ARGS(&factory));
+    if (FAILED(hr) || !factory) goto done;
+    hr = factory->CreateDecoderFromFilename(sc_wide(src_utf8).c_str(), NULL,
+            GENERIC_READ, WICDecodeMetadataCacheOnDemand, &decoder);
+    if (FAILED(hr)) goto done;
+    hr = decoder->GetFrame(0, &frame);
+    if (FAILED(hr)) goto done;
+    hr = frame->GetSize(&w, &h);
+    if (FAILED(hr) || w == 0 || h == 0) goto done;
+    if ((unsigned long long)w * h > SC_MAX_PIXELS) { rc = SC_E_SIZE; goto done; }
+    hr = factory->CreateFormatConverter(&conv);
+    if (FAILED(hr)) goto done;
+    hr = conv->Initialize(frame, GUID_WICPixelFormat32bppBGRA,
+            WICBitmapDitherTypeNone, NULL, 0.0, WICBitmapPaletteTypeCustom);
+    if (FAILED(hr)) goto done;
+    try {
+        buf.resize((size_t)w * 4u * (size_t)h);
+    } catch (const std::bad_alloc&) {
+        rc = SC_E_SIZE;
+        goto done;
+    }
+    hr = conv->CopyPixels(NULL, w * 4u, (UINT)buf.size(), buf.data());
+    if (FAILED(hr)) goto done;
+    rc = SC_OK;
+
+done:
+    if (conv)    conv->Release();
+    if (frame)   frame->Release();
+    if (decoder) decoder->Release();
+    if (factory) factory->Release();
+    if (rc == SC_OK)
+        rc = sc_wic_write(sc_wide(dst_utf8).c_str(), buf.data(), (int)w, (int)h,
+                          sc_container_for_ext(dst_utf8));
+    if (did_co) CoUninitialize();
     return rc;
 }
 
@@ -335,4 +409,10 @@ extern "C" int jdb_screencap(const char*, const char*, const char*) {
     return SC_UNSUPPORTED;
 }
 
+#endif
+
+#if !defined(_WIN32)
+extern "C" int jdb_imgconvert(const char*, const char*) {
+    return SC_UNSUPPORTED;
+}
 #endif

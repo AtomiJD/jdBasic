@@ -2863,6 +2863,16 @@ window/client; empty = foreground window.
 Example: OS.SCREENSHOT("shot.png")
 Example: OS.SCREENSHOT("calc.jpg", "client", "Calculator")
 
+[IMAGE.CONVERT]
+Syntax: IMAGE.CONVERT(src$, dst$) -> INTEGER
+Description: Convert an image file without a window (Windows only; returns
+-100 elsewhere). Reads any format the Windows Imaging Component decodes and
+writes the format of dst$'s extension: .png .jpg/.jpeg .bmp .tif/.tiff .gif,
+anything else PNG. Only the first frame of an animated GIF or multi-page TIFF.
+Returns 0 on success; -1 dst$ empty or not writable, -4 encoder failed,
+-5 more than 100 million pixels, -6 src$ empty, missing or not an image.
+Example: rc = IMAGE.CONVERT("diagram.gif", "diagram.png")
+
 [OUTER]
 Syntax: OUTER(vectorA, vectorB, operator)
 Description: Creates an outer product table from two vectors and an operator.

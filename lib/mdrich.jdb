@@ -36,6 +36,7 @@ DIM LINK_MARK_RGB AS INTEGER = 8355713  ' 127,127,129  an image stand-in inside 
 DIM LINK_RAW_RGB AS INTEGER = 8355969   ' 127,128,129  verbatim Markdown inside a link
 DIM NUM_RGB AS INTEGER = 8355714        ' 127,127,130  the number of an ordered item
 DIM MAX_PICT_BYTES AS INTEGER = 8388608  ' larger pictures show as their [alt] text
+DIM gPictCache AS MAP                    ' path -> [size|mtime, RTF picture]
 DIM CODE_FONT AS STRING = "Consolas"
 DIM CODE_BG_RGB AS INTEGER = 15790320  ' 240,240,240
 DIM HEAD_SIZES AS ARRAY = [44, 36, 30, 26, 24, 23]
@@ -820,11 +821,43 @@ FUNC Be16(s$, p)
     RETURN BYTEAT(s$, p) * 256 + BYTEAT(s$, p + 1)
 ENDFUNC
 
-' A PNG or JPEG file as an RTF picture, or "" when it cannot be read.
+' The bytes of an image file in another format (GIF, BMP, TIFF, ...) as a
+' PNG, or "" when it cannot be converted.
+FUNC PngBytes$(path$)
+    DIM tmp$ = MKTEMP$("mdr") + ".png"
+    DIM png$ = ""
+    TRY
+        IF IMAGE.CONVERT(path$, tmp$) = 0 THEN png$ = BINREADER$(tmp$)
+    CATCH
+        png$ = ""
+    ENDTRY
+    IF FILE.EXISTS(tmp$) THEN KILL tmp$
+    RETURN png$
+ENDFUNC
+
+' An image file as an RTF picture, or "" when it cannot be read. A picture
+' is read again only when the file's size or change time differs.
 FUNC PictRtf$(path$)
     IF path$ = "" ORELSE NOT FILE.EXISTS(path$) THEN RETURN ""
+    DIM st = FILE.STAT(path$)
+    DIM stamp$ = STR$(st{"size"}) + "|" + st{"mtime"}
+    DIM key$ = LCASE$(PATH.NORMALIZE$(PATH.ABS$(path$)))
+    IF MAP.EXISTS(gPictCache, key$) THEN
+        DIM hit = gPictCache{key$}
+        IF hit[0] = stamp$ THEN RETURN hit[1]
+    ENDIF
+    DIM pict$ = ReadPictRtf$(path$)
+    gPictCache{key$} = [stamp$, pict$]
+    RETURN pict$
+ENDFUNC
+
+' PNG and JPEG are embedded as they are, other formats as a PNG.
+FUNC ReadPictRtf$(path$)
     IF FILE.SIZE(path$) > MAX_PICT_BYTES THEN RETURN ""
     DIM data$ = BINREADER$(path$)
+    DIM is_jpeg = LEN(data$) > 4 ANDALSO BYTEAT(data$, 0) = 255 ANDALSO BYTEAT(data$, 1) = 216
+    IF LEFT$(data$, 4) <> CHR$(137) + "PNG" ANDALSO NOT is_jpeg THEN data$ = PngBytes$(path$)
+    IF LEN(data$) > MAX_PICT_BYTES THEN RETURN ""
     DIM kind$ = ""
     DIM w = 0
     DIM h = 0
@@ -949,19 +982,19 @@ ENDFUNC
 ' get an empty paragraph between them, which belongs to the first, or
 ' RichEdit would draw them as one.
 EXPORT FUNC JOINRTF$(parts, kinds)
-    DIM out$ = ""
+    DIM pieces = []
     DIM k = 0
     FOR k = 0 TO LEN(parts) - 1
-        out$ = out$ + parts[k]
+        pieces = APPEND(pieces, parts[k])
         IF kinds[k] <> "table" THEN
-            out$ = out$ + "\par" + NL_CH
+            pieces = APPEND(pieces, "\par" + NL_CH)
         ELSEIF k + 1 < LEN(parts) ANDALSO kinds[k + 1] = "table" THEN
-            out$ = out$ + "\pard\par" + NL_CH
+            pieces = APPEND(pieces, "\pard\par" + NL_CH)
         ELSE
-            out$ = out$ + NL_CH
+            pieces = APPEND(pieces, NL_CH)
         ENDIF
     NEXT k
-    RETURN out$
+    RETURN JOIN(pieces, "")
 ENDFUNC
 
 EXPORT FUNC RTF$(b, opts = 0)
