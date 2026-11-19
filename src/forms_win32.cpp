@@ -981,6 +981,7 @@ LRESULT CALLBACK form_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                         if (it->second.buddy) g_byhwnd.erase(it->second.buddy);
                         if (it->second.hwnd && it->second.kind != "TOOLBTN")
                             g_byhwnd.erase(it->second.hwnd);
+                        g_shape_held.erase(it->second.hwnd);
                         g_tab_pages.erase(it->first);
                         for (auto nit = g_tree_nodes.begin(); nit != g_tree_nodes.end();) {
                             if (nit->second.tree == it->first) {
