@@ -96,7 +96,7 @@ EXPORT FUNC BACKGROUNDS()
 ENDFUNC
 
 EXPORT FUNC CASTS()
-    RETURN [["santa", "Weihnachtsmann", "Santa"], ["lina", "Lina", "Lina"], ["rudi", "Rudi (Rentier)", "Rudi (reindeer)"], ["pip", "Pip (Wichtel)", "Pip (elf)"], ["pino", "Pino (Pinguin)", "Pino (penguin)"]]
+    RETURN [["santa", "Weihnachtsmann", "Santa"], ["lina", "Lina", "Lina"], ["rudi", "Rudi (Rentier)", "Rudi (reindeer)"], ["pip", "Pip (Wichtel)", "Pip (elf)"], ["pino", "Pino (Pinguin)", "Pino (penguin)"], ["vally", "Vally (Häschen)", "Vally (bunny)"], ["moehrchen", "Möhrchen (Häschen)", "Möhrchen (bunny)"], ["hasi", "Hasi (Häschen)", "Hasi (bunny)"]]
 ENDFUNC
 
 EXPORT FUNC ACTIONS()
@@ -257,9 +257,9 @@ ENDFUNC
 ' becomes the recipient when the story plays.
 EXPORT FUNC TEMPLATES(l$)
     IF l$ = "en" THEN
-        RETURN [["-", NONE], ["Classic", {"m": 0, "g": 0, "s": [{"b": "room", "c": ["santa", "lina"], "l": [[0, "Ho ho ho! Merry Christmas, {name}!"], ["wave", 0, 1], [1, "Santa! Is that a present for {name}?"], [0, "Of course! Wrapped with lots of love."], ["gift", 0, 1], [1, "Hihi, how lovely!"], ["hug", 1, 0]]}, {"b": "snow", "c": ["santa", "lina"], "l": [[0, "And now: out into the snow!"], ["dance", 0, 1], [1, "Merry Christmas and a happy new year!"]]}]}], ["Funny", {"m": 1, "g": 2, "s": [{"b": "workshop", "c": ["pip", "santa"], "l": [[1, "Pip, are all the presents ready?"], [0, "(Uh oh... some are still missing!)"], [0, "Er... almost. I will magic up the rest!"], ["magic", 0, 0], [1, "Hohoho, that does not count!"], ["laugh", 0, 1]]}, {"b": "forest", "c": ["rudi", "pino"], "l": [[1, "Rudi, bet I am faster?"], ["slide", 1, 1], [0, "Hey! Just you wait..."], ["snowball", 0, 1], [1, "Haha! Merry Christmas, {name}!"]]}]}], ["Short and sweet", {"m": 2, "g": 0, "s": [{"b": "room", "c": ["lina", "pino"], "l": [[0, "Hello {name}! I am thinking of you."], ["wave", 0, 1], [1, "Me too!"], ["hug", 0, 1], [0, "Merry Christmas!"]]}]}], ["For kids", {"m": 1, "g": 4, "s": [{"b": "snow", "c": ["rudi", "pip", "pino"], "l": [[0, "Hello {name}! I am Rudi."], ["glow", 0, 0], [1, "And I am Pip, the elf!"], ["magic", 1, 1], [2, "And I am Pino! Look at this!"], ["slide", 2, 2], [0, "Merry Christmas, {name}!"], ["dance", 0, 1]]}]}]]
+        RETURN [["-", NONE], ["Classic", {"m": 0, "g": 0, "s": [{"b": "room", "c": ["santa", "lina"], "l": [[0, "Ho ho ho! Merry Christmas, {name}!"], ["wave", 0, 1], [1, "Santa! Is that a present for {name}?"], [0, "Of course! Wrapped with lots of love."], ["gift", 0, 1], [1, "Hihi, how lovely!"], ["hug", 1, 0]]}, {"b": "snow", "c": ["santa", "lina"], "l": [[0, "And now: out into the snow!"], ["dance", 0, 1], [1, "Merry Christmas and a happy new year!"]]}]}], ["Funny", {"m": 1, "g": 2, "s": [{"b": "workshop", "c": ["pip", "santa"], "l": [[1, "Pip, are all the presents ready?"], [0, "(Uh oh... some are still missing!)"], [0, "Er... almost. I will magic up the rest!"], ["magic", 0, 0], [1, "Hohoho, that does not count!"], ["laugh", 0, 1]]}, {"b": "forest", "c": ["rudi", "pino"], "l": [[1, "Rudi, bet I am faster?"], ["slide", 1, 1], [0, "Hey! Just you wait..."], ["snowball", 0, 1], [1, "Haha! Merry Christmas, {name}!"]]}]}], ["Short and sweet", {"m": 2, "g": 0, "s": [{"b": "room", "c": ["lina", "pino"], "l": [[0, "Hello {name}! I am thinking of you."], ["wave", 0, 1], [1, "Me too!"], ["hug", 0, 1], [0, "Merry Christmas!"]]}]}], ["For kids", {"m": 1, "g": 4, "s": [{"b": "snow", "c": ["rudi", "pip", "pino"], "l": [[0, "Hello {name}! I am Rudi."], ["glow", 0, 0], [1, "And I am Pip, the elf!"], ["magic", 1, 1], [2, "And I am Pino! Look at this!"], ["slide", 2, 2], [0, "Merry Christmas, {name}!"], ["dance", 0, 1]]}]}], ["Bunnies", {"m": 1, "g": 3, "s": [{"b": "snow", "c": ["vally", "moehrchen", "hasi"], "l": [[0, "Hello {name}! We are the bunnies!"], ["wave", 1, 0], [1, "(Does {name} like carrots...?)"], [2, "We brought you something!!"], ["magic", 2, 2], [0, "Hihi, merry Christmas!"], ["dance", 0, 1]]}]}]]
     ENDIF
-    RETURN [["-", NONE], ["Klassisch", {"m": 0, "g": 0, "s": [{"b": "room", "c": ["santa", "lina"], "l": [[0, "Ho ho ho! Frohe Weihnachten, {name}!"], ["wave", 0, 1], [1, "Der Weihnachtsmann! Ist das ein Geschenk für {name}?"], [0, "Natürlich! Mit ganz viel Liebe eingepackt."], ["gift", 0, 1], [1, "Hihi, wie schön!"], ["hug", 1, 0]]}, {"b": "snow", "c": ["santa", "lina"], "l": [[0, "Und jetzt: ab in den Schnee!"], ["dance", 0, 1], [1, "Frohes Fest und ein gutes neues Jahr!"]]}]}], ["Lustig", {"m": 1, "g": 2, "s": [{"b": "workshop", "c": ["pip", "santa"], "l": [[1, "Pip, sind alle Geschenke fertig?"], [0, "(Oh oh... da fehlen noch welche!)"], [0, "Äh... fast. Ich zaubere schnell den Rest!"], ["magic", 0, 0], [1, "Hohoho, das zählt aber nicht!"], ["laugh", 0, 1]]}, {"b": "forest", "c": ["rudi", "pino"], "l": [[1, "Rudi, wetten, ich bin schneller?"], ["slide", 1, 1], [0, "Hey! Na warte..."], ["snowball", 0, 1], [1, "Haha! Frohe Weihnachten, {name}!"]]}]}], ["Kurz & lieb", {"m": 2, "g": 0, "s": [{"b": "room", "c": ["lina", "pino"], "l": [[0, "Hallo {name}! Ich denk ganz fest an dich."], ["wave", 0, 1], [1, "Ich auch!"], ["hug", 0, 1], [0, "Frohe Weihnachten!"]]}]}], ["Für Kinder", {"m": 1, "g": 4, "s": [{"b": "snow", "c": ["rudi", "pip", "pino"], "l": [[0, "Hallo {name}! Ich bin Rudi."], ["glow", 0, 0], [1, "Und ich bin Pip, der Wichtel!"], ["magic", 1, 1], [2, "Und ich bin Pino! Guckt mal!"], ["slide", 2, 2], [0, "Frohe Weihnachten, {name}!"], ["dance", 0, 1]]}]}]]
+    RETURN [["-", NONE], ["Klassisch", {"m": 0, "g": 0, "s": [{"b": "room", "c": ["santa", "lina"], "l": [[0, "Ho ho ho! Frohe Weihnachten, {name}!"], ["wave", 0, 1], [1, "Der Weihnachtsmann! Ist das ein Geschenk für {name}?"], [0, "Natürlich! Mit ganz viel Liebe eingepackt."], ["gift", 0, 1], [1, "Hihi, wie schön!"], ["hug", 1, 0]]}, {"b": "snow", "c": ["santa", "lina"], "l": [[0, "Und jetzt: ab in den Schnee!"], ["dance", 0, 1], [1, "Frohes Fest und ein gutes neues Jahr!"]]}]}], ["Lustig", {"m": 1, "g": 2, "s": [{"b": "workshop", "c": ["pip", "santa"], "l": [[1, "Pip, sind alle Geschenke fertig?"], [0, "(Oh oh... da fehlen noch welche!)"], [0, "Äh... fast. Ich zaubere schnell den Rest!"], ["magic", 0, 0], [1, "Hohoho, das zählt aber nicht!"], ["laugh", 0, 1]]}, {"b": "forest", "c": ["rudi", "pino"], "l": [[1, "Rudi, wetten, ich bin schneller?"], ["slide", 1, 1], [0, "Hey! Na warte..."], ["snowball", 0, 1], [1, "Haha! Frohe Weihnachten, {name}!"]]}]}], ["Kurz & lieb", {"m": 2, "g": 0, "s": [{"b": "room", "c": ["lina", "pino"], "l": [[0, "Hallo {name}! Ich denk ganz fest an dich."], ["wave", 0, 1], [1, "Ich auch!"], ["hug", 0, 1], [0, "Frohe Weihnachten!"]]}]}], ["Für Kinder", {"m": 1, "g": 4, "s": [{"b": "snow", "c": ["rudi", "pip", "pino"], "l": [[0, "Hallo {name}! Ich bin Rudi."], ["glow", 0, 0], [1, "Und ich bin Pip, der Wichtel!"], ["magic", 1, 1], [2, "Und ich bin Pino! Guckt mal!"], ["slide", 2, 2], [0, "Frohe Weihnachten, {name}!"], ["dance", 0, 1]]}]}], ["Häschen", {"m": 1, "g": 3, "s": [{"b": "snow", "c": ["vally", "moehrchen", "hasi"], "l": [[0, "Hallo {name}! Wir sind die Häschen!"], ["wave", 1, 0], [1, "(Ob {name} Möhren mag...?)"], [2, "Wir haben dir was mitgebracht!!"], ["magic", 2, 2], [0, "Hihi, frohe Weihnachten!"], ["dance", 0, 1]]}]}]]
 ENDFUNC
 
 ' Seconds a scene lasts: its bubbles, then its action.
@@ -365,6 +365,16 @@ FUNC CastDef(name$)
     ENDIF
     IF name$ = "pino" THEN
         RETURN {"piv": {"torso": [85, 166], "head": [125, 226], "arm": [21, 10], "leg": [30, 8]}, "joint": {"head": [85, 16], "arm_l": [24, 62], "arm_r": [146, 62], "leg_l": [60, 166], "leg_r": [110, 166]}, "eyes": [[98, 156], [152, 156]], "eye": [15, 20], "iris": [70, 110, 190], "mouth": [125, 203], "tails": []}
+    ENDIF
+    IF name$ = "vally" ORELSE name$ = "moehrchen" ORELSE name$ = "hasi" THEN
+        DIM bunny = {"piv": {"torso": [85, 160], "head": [130, 236], "arm": [23, 14], "leg": [28, 6], "tail": [36, 12]}, "joint": {"head": [85, 14], "arm_l": [36, 40], "arm_r": [134, 40], "leg_l": [62, 156], "leg_r": [108, 156]}, "eyes": [[96, 158], [164, 158]], "eye": [16, 21], "iris": [70, 140, 200], "mouth": [130, 207], "tails": [[46, 120], [214, 120]]}
+        IF name$ = "vally" THEN
+            bunny{"iris"} = [150, 92, 50]
+            bunny{"mouth"} = [130, 212]
+            bunny{"patch"} = 0
+        ENDIF
+        IF name$ = "moehrchen" THEN bunny{"iris"} = [130, 90, 200]
+        RETURN bunny
     ENDIF
     IF name$ = "lina" THEN
         RETURN {"piv": {"torso": [85, 160], "head": [130, 228], "arm": [23, 14], "leg": [26, 6], "tail": [36, 13]}, "joint": {"head": [85, 12], "arm_l": [40, 40], "arm_r": [130, 40], "leg_l": [62, 158], "leg_r": [108, 158]}, "eyes": [[100, 160], [160, 160]], "eye": [17, 23], "iris": [40, 160, 165], "mouth": [130, 207], "tails": [[42, 116], [218, 116]]}
@@ -516,7 +526,17 @@ SUB DrawFigure(c, pose)
     ENDIF
     FOR i = 0 TO 1
         DIM ep = PartPoint(hj[0], hj[1], piv{"head"}, head_ang, sc, c{"eyes"}[i])
-        DrawEye(ep[0], ep[1], c{"eye"}[0] * sc, c{"eye"}[1] * sc, c{"iris"}, pose{"eyes"})
+        IF i = (c{"patch"} ?? -1) THEN
+            DIM strap = PartPoint(hj[0], hj[1], piv{"head"}, head_ang, sc, [c{"eyes"}[i][0] - 50, c{"eyes"}[i][1] - 40])
+            GFX.STROKE ep[0], ep[1], strap[0], strap[1], 6 * sc, 106, 42, 64
+            DRAWCOLOR 106, 42, 64
+            ELLIPSE ep[0], ep[1], c{"eye"}[0] * 1.45 * sc, c{"eye"}[1] * 1.2 * sc, TRUE
+            DRAWCOLOR 240, 138, 168
+            ELLIPSE ep[0], ep[1], c{"eye"}[0] * 1.2 * sc, c{"eye"}[1] * 0.98 * sc, TRUE
+            CIRCLE ep[0] - 6 * sc, ep[1] - 8 * sc, 4 * sc, TRUE, 255, 220, 230
+        ELSE
+            DrawEye(ep[0], ep[1], c{"eye"}[0] * sc, c{"eye"}[1] * sc, c{"iris"}, pose{"eyes"})
+        ENDIF
     NEXT i
     DIM mp = PartPoint(hj[0], hj[1], piv{"head"}, head_ang, sc, c{"mouth"})
     DrawMouth(mp[0], mp[1], sc, pose{"mouth"}, pose{"laugh"})
@@ -970,6 +990,7 @@ FUNC BaseScale(name$)
     IF name$ = "lina" THEN RETURN 0.88
     IF name$ = "rudi" THEN RETURN 0.9
     IF name$ = "pip" ORELSE name$ = "pino" THEN RETURN 0.84
+    IF name$ = "vally" ORELSE name$ = "moehrchen" ORELSE name$ = "hasi" THEN RETURN 0.84
     RETURN 0.95
 ENDFUNC
 

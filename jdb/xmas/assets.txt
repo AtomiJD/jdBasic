@@ -24,6 +24,21 @@ art/santa_arm.rgbz
 art/santa_head.rgbz
 art/santa_leg.rgbz
 art/santa_torso.rgbz
+art/hasi_arm.rgbz
+art/hasi_head.rgbz
+art/hasi_leg.rgbz
+art/hasi_tail.rgbz
+art/hasi_torso.rgbz
+art/moehrchen_arm.rgbz
+art/moehrchen_head.rgbz
+art/moehrchen_leg.rgbz
+art/moehrchen_tail.rgbz
+art/moehrchen_torso.rgbz
+art/vally_arm.rgbz
+art/vally_head.rgbz
+art/vally_leg.rgbz
+art/vally_tail.rgbz
+art/vally_torso.rgbz
 art/bg_room.jpg 540x960
 art/bg_snow.jpg 540x960
 art/bg_workshop.jpg 540x960
