@@ -1669,6 +1669,11 @@ EXPORT FUNC PATTERNS(m, g)
 ENDFUNC
 
 ' Starts carol m of MUSICS() in genre g of GENRES() on the sequencer.
+' Stops the music.
+EXPORT SUB SILENCE()
+    SOUND.RESET
+ENDSUB
+
 EXPORT SUB MUSIC(m, g)
     DIM p = PATTERNS(m, g)
     SOUND.INIT

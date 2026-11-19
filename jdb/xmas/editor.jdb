@@ -25,8 +25,8 @@ DIM name_col = IIF(lang$ = "de", 1, 2)
 
 ' The editor's own words in German or English.
 FUNC T$(key$)
-    DIM de = {"title": "Weihnachtsgruß", "template": "Vorlage", "from": "Von", "to": "Für", "scene": "Szene", "place": "Ort", "action": "Aktion", "figure": "Figur", "add_fig": "+ Figur", "del_fig": "- Figur", "steps": "Ablauf", "add_line": "+ Sprechblase", "add_act": "+ Aktion", "add_scene": "+ Szene", "del_scene": "- letzte Szene", "music": "Musik", "song": "Lied", "style": "Stil", "play": "Musik an", "preview": "Vorschau", "restart": "Von vorn", "share": "Teilen", "copy": "Link kopieren", "copied": "kopiert", "chars": "Zeichen", "bubble_tip": "(In Klammern) wird ein Gedanke, ein Ruf endet mit !!"}
-    DIM en = {"title": "Christmas greeting", "template": "Template", "from": "From", "to": "For", "scene": "Scene", "place": "Place", "action": "Action", "figure": "Figure", "add_fig": "+ Figure", "del_fig": "- Figure", "steps": "Sequence", "add_line": "+ Bubble", "add_act": "+ Action", "add_scene": "+ Scene", "del_scene": "- Last scene", "music": "Music", "song": "Song", "style": "Style", "play": "Music on", "preview": "Preview", "restart": "Restart", "share": "Share", "copy": "Copy link", "copied": "copied", "chars": "characters", "bubble_tip": "(In parentheses) makes a thought, a shout ends in !!"}
+    DIM de = {"title": "Weihnachtsgruß", "template": "Vorlage", "from": "Von", "to": "Für", "scene": "Szene", "place": "Ort", "action": "Aktion", "figure": "Figur", "add_fig": "+ Figur", "del_fig": "- Figur", "steps": "Ablauf", "add_line": "+ Sprechblase", "add_act": "+ Aktion", "add_scene": "+ Szene", "del_scene": "- letzte Szene", "music": "Musik", "song": "Lied", "style": "Stil", "play": "Musik an", "stop": "Musik aus", "lines_full": "Sprechblasen voll", "acts_full": "Aktionen voll", "preview": "Vorschau", "restart": "Von vorn", "share": "Teilen", "copy": "Link kopieren", "copied": "kopiert", "chars": "Zeichen", "bubble_tip": "(In Klammern) wird ein Gedanke, ein Ruf endet mit !!"}
+    DIM en = {"title": "Christmas greeting", "template": "Template", "from": "From", "to": "For", "scene": "Scene", "place": "Place", "action": "Action", "figure": "Figure", "add_fig": "+ Figure", "del_fig": "- Figure", "steps": "Sequence", "add_line": "+ Bubble", "add_act": "+ Action", "add_scene": "+ Scene", "del_scene": "- Last scene", "music": "Music", "song": "Song", "style": "Style", "play": "Music on", "stop": "Music off", "lines_full": "Bubbles full", "acts_full": "Actions full", "preview": "Preview", "restart": "Restart", "share": "Share", "copy": "Copy link", "copied": "copied", "chars": "characters", "bubble_tip": "(In parentheses) makes a thought, a shout ends in !!"}
     IF lang$ = "en" THEN RETURN en{key$}
     RETURN de{key$}
 ENDFUNC
@@ -374,14 +374,16 @@ DO WHILE running
                     IF move_up > 0 THEN lines = SwapSteps(lines, move_up - 1)
                     IF move_down >= 0 THEN lines = SwapSteps(lines, move_down)
                     IF drop_at >= 0 THEN lines = WithoutStep(lines, drop_at)
-                    DIM drew_add = FALSE
                     IF n_said < XMASPLAY.MAX_SCENE_LINES THEN
-                        drew_add = TRUE
                         IF GUI.BUTTON(T$("add_line")) THEN lines = APPEND(lines, [[n_said MOD LEN(cast), ""]])
+                    ELSE
+                        GUI.TEXT(T$("lines_full") + " (" + STR$(XMASPLAY.MAX_SCENE_LINES) + ")")
                     ENDIF
+                    GUI.SAME_LINE
                     IF n_done < XMASPLAY.MAX_SCENE_ACTIONS THEN
-                        IF drew_add THEN GUI.SAME_LINE
                         IF GUI.BUTTON(T$("add_act")) THEN lines = APPEND(lines, [["laugh", 0, MIN([1, LEN(cast) - 1])]])
+                    ELSE
+                        GUI.TEXT(T$("acts_full") + " (" + STR$(XMASPLAY.MAX_SCENE_ACTIONS) + ")")
                     ENDIF
                     sc{"l"} = lines
                     scenes[si] = sc
@@ -407,7 +409,15 @@ DO WHILE running
         DIM play_now = (song <> doc{"m"} ORELSE style <> doc{"g"}) ANDALSO music_on
         doc{"m"} = song
         doc{"g"} = style
-        IF NOT music_on ANDALSO GUI.BUTTON(T$("play")) THEN play_now = TRUE
+        IF music_on THEN
+            IF GUI.BUTTON(T$("stop")) THEN
+                music_on = FALSE
+                play_now = FALSE
+                XMASPLAY.SILENCE
+            ENDIF
+        ELSEIF GUI.BUTTON(T$("play")) THEN
+            play_now = TRUE
+        ENDIF
         IF play_now THEN
             music_on = TRUE
             TRY
