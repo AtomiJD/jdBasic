@@ -37,6 +37,7 @@ DIM LINK_RAW_RGB AS INTEGER = 8355969   ' 127,128,129  verbatim Markdown inside 
 DIM NUM_RGB AS INTEGER = 8355714        ' 127,127,130  the number of an ordered item
 DIM MAX_PICT_BYTES AS INTEGER = 8388608  ' larger pictures show as their [alt] text
 DIM gPictCache AS MAP                    ' path -> [size|mtime, RTF picture]
+DIM PICT_CACHE_MAX AS INTEGER = 200
 DIM CODE_FONT AS STRING = "Consolas"
 DIM CODE_BG_RGB AS INTEGER = 15790320  ' 240,240,240
 DIM HEAD_SIZES AS ARRAY = [44, 36, 30, 26, 24, 23]
@@ -840,6 +841,7 @@ ENDFUNC
 FUNC PictRtf$(path$)
     IF path$ = "" ORELSE NOT FILE.EXISTS(path$) THEN RETURN ""
     DIM st = FILE.STAT(path$)
+    IF NOT st{"exists"} ORELSE NOT MAP.EXISTS(st, "mtime") THEN RETURN ReadPictRtf$(path$)
     DIM stamp$ = STR$(st{"size"}) + "|" + st{"mtime"}
     DIM key$ = LCASE$(PATH.NORMALIZE$(PATH.ABS$(path$)))
     IF MAP.EXISTS(gPictCache, key$) THEN
@@ -847,6 +849,7 @@ FUNC PictRtf$(path$)
         IF hit[0] = stamp$ THEN RETURN hit[1]
     ENDIF
     DIM pict$ = ReadPictRtf$(path$)
+    IF MAP.SIZE(gPictCache) >= PICT_CACHE_MAX THEN MAP.CLEAR(gPictCache)
     gPictCache{key$} = [stamp$, pict$]
     RETURN pict$
 ENDFUNC

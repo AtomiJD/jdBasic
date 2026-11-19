@@ -189,4 +189,32 @@ nh{"level"} = 2
 TESTKIT.EQ(MDRICH.MD$(nh, [R("Part", "b")]), "## Part" + NL$, "a new heading")
 TESTKIT.EQ(MDRICH.MD$(MDRICH.NEWBLOCK("para"), [R("Plain ", ""), R("x", "i")]), "Plain *x*" + NL$, "a new paragraph")
 
+' Bytes from a list of codes.
+FUNC Bytes$(codes)
+    DIM out$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(codes) - 1
+        out$ = out$ + CHR$(codes[k])
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+IF UCASE$(OS.GETOS$()) = "WINDOWS" THEN
+    TESTKIT.SUITE("pictures in other formats")
+    DIM pic_dir$ = MKTEMP$("mdp")
+    MKDIR pic_dir$
+    DIM gif_codes = [71, 73, 70, 56, 57, 97, 1, 0, 1, 0, 128, 0, 0, 255, 0, 0, 0, 0, 0, 44, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 68, 1, 0, 59]
+    DIM bmp_codes = [66, 77, 58, 0, 0, 0, 0, 0, 0, 0, 54, 0, 0, 0, 40, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 24, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 0, 0]
+    BINWRITER pic_dir$ + "/dot.gif", Bytes$(gif_codes)
+    DIM pic_block = One("![dot](dot.gif)" + NL$)
+    DIM gif_rtf$ = MDRICH.RTF$(pic_block, {"base": pic_dir$})
+    TESTKIT.ISTRUE(INSTR(gif_rtf$, "\pngblip\picw1\pich1") >= 0, "a GIF is embedded as a PNG")
+    TESTKIT.EQ(MDRICH.RTF$(pic_block, {"base": pic_dir$}), gif_rtf$, "the same picture again")
+    BINWRITER pic_dir$ + "/dot.gif", Bytes$(bmp_codes)
+    DIM bmp_rtf$ = MDRICH.RTF$(pic_block, {"base": pic_dir$})
+    TESTKIT.ISTRUE(INSTR(bmp_rtf$, "\pngblip\picw1\pich1") >= 0 ANDALSO bmp_rtf$ <> gif_rtf$, "a changed file is read again")
+    KILL pic_dir$ + "/dot.gif"
+    RMDIR pic_dir$
+ENDIF
+
 TESTKIT.REPORT()
