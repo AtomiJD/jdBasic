@@ -211,7 +211,10 @@ EXPORT FUNC CLEAN(raw)
     DIM g = 0
     IF ISNUM(raw{"g"} ?? NONE) THEN g = INT(raw{"g"})
     IF g < 0 ORELSE g >= LEN(GENRES()) THEN g = 0
-    RETURN {"f": CLEANTEXT$(raw{"f"} ?? "", MAX_NAME), "t": CLEANTEXT$(raw{"t"} ?? "", MAX_NAME), "m": m, "g": g, "s": scenes}
+    DIM e = 0
+    IF ISNUM(raw{"e"} ?? NONE) THEN e = INT(raw{"e"})
+    IF e < 0 ORELSE e >= LEN(GREETINGS()) THEN e = 0
+    RETURN {"f": CLEANTEXT$(raw{"f"} ?? "", MAX_NAME), "t": CLEANTEXT$(raw{"t"} ?? "", MAX_NAME), "m": m, "g": g, "e": e, "s": scenes}
 ENDFUNC
 
 ' A story of the first link format: lines said in turn by Santa and Lina in the room.
@@ -1527,7 +1530,8 @@ EXPORT SUB FRAME(parts, story, t, st)
     DrawCast(parts, sc, poses)
     DrawConfetti(et)
     DIM lang$ = parts{"lang"} ?? "de"
-    DIM rows = [Say$(lang$, "merry")]
+    DIM greet = GREETINGS()[CLAMP(INT(story{"e"} ?? 0), 0, LEN(GREETINGS()) - 1)]
+    DIM rows = [IIF(lang$ = "en", greet[2], greet[1])]
     DIM names$ = ""
     IF story{"f"} <> "" ANDALSO story{"t"} <> "" THEN
         names$ = Say$(lang$, "from") + " " + story{"f"} + " " + Say$(lang$, "for_low") + " " + story{"t"}
@@ -1542,6 +1546,15 @@ EXPORT SUB FRAME(parts, story, t, st)
         DIM rw = GFX.TEXTSIZE(rows[ri])[0]
         TEXT (FW - rw) / 2, 160 + ri * 44, rows[ri], 255, 245, 220
     NEXT ri
+    IF MAP.EXISTS(parts, "font") THEN
+        SETFONT parts{"font"}, 21
+        DIM note$ = Say$(lang$, "by_sender")
+        DIM nw = GFX.TEXTSIZE(note$)[0]
+        DIM ny = 140 + 40 + LEN(rows) * 44 + 12
+        ROUNDED_RECT (FW - nw) / 2 - 14, ny, nw + 28, 34, 17, TRUE, 60, 24, 36
+        TEXT (FW - nw) / 2, ny + 6, note$, 255, 225, 215
+        SETFONT parts{"font"}, 30
+    ENDIF
     IF et > 4 ANDALSO NOT (parts{"buttons"} ?? FALSE) THEN
         DIM again$ = Say$(lang$, "again")
         TEXT (FW - GFX.TEXTSIZE(again$)[0]) / 2, 1200, again$, 255, 255, 255
@@ -1576,8 +1589,8 @@ ENDFUNC
 
 ' The player's own words in German or English.
 EXPORT FUNC SAY$(lang$, key$)
-    DIM de = {"tap": "Tippen!", "tap_low": "tippen!", "for": "Für", "for_low": "für", "from": "Von", "merry": "Frohe Weihnachten!", "again": "Nochmal? Tippen!", "again_btn": "Nochmal", "reply": "Antworten", "reply_head": "Du willst antworten? Schick dir diesen Link und öffne ihn an einem Computer: Dort baust du deinen Gruß zurück.", "reply_title": "Antwort auf einen Weihnachtsgruß", "reply_text": "Am Computer öffnen, um zu antworten:", "send": "Link senden", "copy": "Link kopieren", "close": "Schließen", "copied": "Kopiert! Jetzt am Computer öffnen."}
-    DIM en = {"tap": "Tap!", "tap_low": "tap!", "for": "For", "for_low": "for", "from": "From", "merry": "Merry Christmas!", "again": "Again? Tap!", "again_btn": "Again", "reply": "Reply", "reply_head": "Want to reply? Send yourself this link and open it on a computer: that is where you make your greeting back.", "reply_title": "Reply to a Christmas greeting", "reply_text": "Open on a computer to reply:", "send": "Send link", "copy": "Copy link", "close": "Close", "copied": "Copied! Now open it on a computer."}
+    DIM de = {"tap": "Tippen!", "tap_low": "tippen!", "for": "Für", "for_low": "für", "from": "Von", "merry": "Frohe Weihnachten!", "by_sender": "Text vom Absender", "again": "Nochmal? Tippen!", "again_btn": "Nochmal", "reply": "Antworten", "reply_head": "Du willst antworten? Schick dir diesen Link und öffne ihn an einem Computer: Dort baust du deinen Gruß zurück.", "reply_title": "Antwort auf einen Weihnachtsgruß", "reply_text": "Am Computer öffnen, um zu antworten:", "send": "Link senden", "copy": "Link kopieren", "close": "Schließen", "copied": "Kopiert! Jetzt am Computer öffnen."}
+    DIM en = {"tap": "Tap!", "tap_low": "tap!", "for": "For", "for_low": "for", "from": "From", "merry": "Merry Christmas!", "by_sender": "Words by the sender", "again": "Again? Tap!", "again_btn": "Again", "reply": "Reply", "reply_head": "Want to reply? Send yourself this link and open it on a computer: that is where you make your greeting back.", "reply_title": "Reply to a Christmas greeting", "reply_text": "Open on a computer to reply:", "send": "Send link", "copy": "Copy link", "close": "Close", "copied": "Copied! Now open it on a computer."}
     IF lang$ = "en" THEN RETURN en{key$}
     RETURN de{key$}
 ENDFUNC
@@ -1598,6 +1611,11 @@ FUNC Song(m)
     ENDIF
     ' Stille Nacht (Franz Xaver Gruber, 1818), 6/8
     RETURN {"bpm": 92, "bars": ["g4@3 a4 g4@2 e4@6", "g4@3 a4 g4@2 e4@6", "d5@4 d5@2 b4@6", "c5@4 c5@2 g4@6", "a4@4 a4@2 c5@3 b4 a4@2", "g4@3 a4 g4@2 e4@6", "a4@4 a4@2 c5@3 b4 a4@2", "g4@3 a4 g4@2 e4@6", "d5@4 d5@2 f5@3 d5 b4@2", "c5@12", "e5@12", "c5@3 g4 e4@2 g4@3 f4 d4@2", "c4@12", "~@12"], "roots": ["c2", "c2", "g1", "c2", "f1", "c2", "f1", "c2", "g1", "c2", "c2", "g1", "c2", "c2"], "chords": ["C", "C", "G7", "C", "F", "C", "F", "C", "G7", "C", "C", "G7", "C", "C"], "bells": ["e6", "~", "~", "~", "~", "~", "~", "~", "~", "c6", "e6", "~", "c6", "~"], "sleigh": FALSE}
+ENDFUNC
+
+' The greeting of the end card: [id, German, English].
+EXPORT FUNC GREETINGS()
+    RETURN [["christmas", "Frohe Weihnachten!", "Merry Christmas!"], ["holidays", "Frohe Feiertage!", "Happy holidays!"], ["winter", "Schöne Winterzeit!", "Happy winter days!"], ["newyear", "Ein gutes neues Jahr!", "Happy New Year!"]]
 ENDFUNC
 
 EXPORT FUNC GENRES()

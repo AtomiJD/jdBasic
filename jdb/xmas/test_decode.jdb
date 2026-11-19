@@ -193,6 +193,18 @@ Check(ISNONE(XMASPLAY.DECODE("2" + REPEAT$("A", 2100))), "an overlong code is re
 Check(ISNONE(XMASPLAY.DECODE("")), "an empty code")
 Check(ISNONE(XMASPLAY.DECODE("9abc")), "an unknown version")
 
+' the closing greeting: kept through a link, a stranger becomes the first
+DIM greet_story = {"f": "a", "t": "b", "e": 2, "s": [{"b": "snow", "c": ["santa", "lina"], "l": [[0, "hallo"]]}]}
+DIM greet_back = XMASPLAY.DECODE(XMASPLAY.ENCODE$(XMASPLAY.CLEAN(greet_story)))
+Check(NOT ISNONE(greet_back) ANDALSO greet_back{"e"} = 2, "the closing greeting survives a link")
+DIM bad_e = NONE
+FOR EACH bad_e IN [-1, 4, 99, "x", [1], 1.7]
+    greet_story{"e"} = bad_e
+    DIM ge = XMASPLAY.CLEAN(greet_story)
+    Check(NOT ISNONE(ge) ANDALSO ISNUM(ge{"e"}) ANDALSO ge{"e"} >= 0 ANDALSO ge{"e"} < LEN(XMASPLAY.GREETINGS()), "a closing greeting of " + JSON.STRINGIFY$(bad_e) + " is mended")
+NEXT bad_e
+Check(XMASPLAY.CLEAN({"s": [{"b": "snow", "c": ["santa"], "l": [[0, "x"]]}]}){"e"} = 0, "a story without one says Merry Christmas")
+
 ' the reply link: the sender's name as a URL query, bytes outside the plain
 ' set percent-encoded, nothing when there is no sender
 Check(XMASPLAY.URLENC$("aZ9-_.~") = "aZ9-_.~", "plain characters stay")

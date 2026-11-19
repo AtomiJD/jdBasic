@@ -25,8 +25,8 @@ DIM name_col = IIF(lang$ = "de", 1, 2)
 
 ' The editor's own words in German or English.
 FUNC T$(key$)
-    DIM de = {"title": "Weihnachtsgruß", "template": "Vorlage", "from": "Von", "to": "Für", "scene": "Szene", "place": "Ort", "action": "Aktion", "figure": "Figur", "add_fig": "+ Figur", "del_fig": "- Figur", "steps": "Ablauf", "add_line": "+ Sprechblase", "add_act": "+ Aktion", "add_scene": "+ Szene", "del_scene": "- letzte Szene", "music": "Musik", "song": "Lied", "style": "Stil", "play": "Musik an", "stop": "Musik aus", "lines_full": "Sprechblasen voll", "acts_full": "Aktionen voll", "preview": "Vorschau", "restart": "Von vorn", "share": "Teilen", "copy": "Link kopieren", "copied": "kopiert", "chars": "Zeichen", "bubble_tip": "(In Klammern) wird ein Gedanke, ein Ruf endet mit !!"}
-    DIM en = {"title": "Christmas greeting", "template": "Template", "from": "From", "to": "For", "scene": "Scene", "place": "Place", "action": "Action", "figure": "Figure", "add_fig": "+ Figure", "del_fig": "- Figure", "steps": "Sequence", "add_line": "+ Bubble", "add_act": "+ Action", "add_scene": "+ Scene", "del_scene": "- Last scene", "music": "Music", "song": "Song", "style": "Style", "play": "Music on", "stop": "Music off", "lines_full": "Bubbles full", "acts_full": "Actions full", "preview": "Preview", "restart": "Restart", "share": "Share", "copy": "Copy link", "copied": "copied", "chars": "characters", "bubble_tip": "(In parentheses) makes a thought, a shout ends in !!"}
+    DIM de = {"title": "Weihnachtsgruß", "template": "Vorlage", "from": "Von", "to": "Für", "greeting": "Gruß am Ende", "scene": "Szene", "place": "Ort", "action": "Aktion", "figure": "Figur", "add_fig": "+ Figur", "del_fig": "- Figur", "steps": "Ablauf", "add_line": "+ Sprechblase", "add_act": "+ Aktion", "add_scene": "+ Szene", "del_scene": "- letzte Szene", "music": "Musik", "song": "Lied", "style": "Stil", "play": "Musik an", "stop": "Musik aus", "lines_full": "Sprechblasen voll", "acts_full": "Aktionen voll", "preview": "Vorschau", "restart": "Von vorn", "share": "Teilen", "copy": "Link kopieren", "copied": "kopiert", "chars": "Zeichen", "bubble_tip": "(In Klammern) wird ein Gedanke, ein Ruf endet mit !!"}
+    DIM en = {"title": "Christmas greeting", "template": "Template", "from": "From", "to": "For", "greeting": "Closing words", "scene": "Scene", "place": "Place", "action": "Action", "figure": "Figure", "add_fig": "+ Figure", "del_fig": "- Figure", "steps": "Sequence", "add_line": "+ Bubble", "add_act": "+ Action", "add_scene": "+ Scene", "del_scene": "- Last scene", "music": "Music", "song": "Song", "style": "Style", "play": "Music on", "stop": "Music off", "lines_full": "Bubbles full", "acts_full": "Actions full", "preview": "Preview", "restart": "Restart", "share": "Share", "copy": "Copy link", "copied": "copied", "chars": "characters", "bubble_tip": "(In parentheses) makes a thought, a shout ends in !!"}
     IF lang$ = "en" THEN RETURN en{key$}
     RETURN de{key$}
 ENDFUNC
@@ -87,6 +87,7 @@ SETFONT font$, 30
 GUI.THEME "DARK"
 
 DIM parts = XMASPLAY.LOADPARTS(art_dir$)
+parts{"font"} = font$
 DIM frame_img = GFX.NEWTARGET(XMASPLAY.FW, XMASPLAY.FH, TRUE)
 DIM pw = XMASPLAY.FW * PREVIEW_SCALE
 DIM ph = XMASPLAY.FH * PREVIEW_SCALE
@@ -229,6 +230,7 @@ DO WHILE running
 
     GFX.TARGET frame_img
     TRY
+        parts{"lang"} = lang$
         XMASPLAY.FRAME(parts, story, (ms_now - t_start) / 1000, st)
     CATCH
         copied$ = "Vorschau: " + ERRMSG$
@@ -266,6 +268,7 @@ DO WHILE running
         ENDIF
         doc{"f"} = XMASPLAY.CLEANTEXT$(GUI.INPUT$(T$("from"), doc{"f"}), XMASPLAY.MAX_NAME)
         doc{"t"} = XMASPLAY.CLEANTEXT$(GUI.INPUT$(T$("to"), doc{"t"}), XMASPLAY.MAX_NAME)
+        doc{"e"} = GUI.COMBO(T$("greeting"), doc{"e"} ?? 0, Column(XMASPLAY.GREETINGS(), name_col))
         DIM scenes = doc{"s"}
         IF GUI.BEGIN_TAB_BAR("scenes") THEN
             DIM si = 0
