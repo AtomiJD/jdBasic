@@ -208,6 +208,7 @@ std::map<int, std::string> g_tooltips;
 // Per-control GDI resources, freed in the destroy cascade.
 std::map<int, HBRUSH>  g_shape_brushes;   // SHAPE fill
 std::map<int, int>     g_shape_colors;    // SHAPE fill as 0xRRGGBB
+std::set<HWND>         g_shape_held;      // SHAPEs holding the mouse (left button down)
 std::map<int, HBITMAP> g_pictures;        // PICTURE bitmaps
 
 // Appearance a control carries beyond its text. Windows asks the *parent*
@@ -1133,12 +1134,26 @@ LRESULT CALLBACK ctl_sub_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
             case WM_LBUTTONDOWN:
                 // A shape keeps the mouse while the button is down, so it can
                 // be dragged (a splitter bar) past the controls beside it.
-                if (it.kind == "SHAPE") SetCapture(hwnd);
+                if (it.kind == "SHAPE") {
+                    g_shape_held.insert(hwnd);
+                    SetCapture(hwnd);
+                }
                 queue_mouse(it, "MOUSEDOWN", 1, lp);
                 break;
             case WM_LBUTTONUP:
-                if (it.kind == "SHAPE" && GetCapture() == hwnd) ReleaseCapture();
+                g_shape_held.erase(hwnd);
                 queue_mouse(it, "MOUSEUP", 1, lp);
+                if (it.kind == "SHAPE" && GetCapture() == hwnd) ReleaseCapture();
+                break;
+            case WM_CAPTURECHANGED:
+                // The mouse was taken away mid-drag (a dialog, Alt+Tab): the
+                // drag ends where the pointer is, as if the button came up.
+                if (g_shape_held.erase(hwnd)) {
+                    POINT pt;
+                    GetCursorPos(&pt);
+                    ScreenToClient(hwnd, &pt);
+                    queue_mouse(it, "MOUSEUP", 1, MAKELPARAM((WORD)(short)pt.x, (WORD)(short)pt.y));
+                }
                 break;
             case WM_RBUTTONDOWN: queue_mouse(it, "MOUSEDOWN", 2, lp); break;
             case WM_RBUTTONUP:   queue_mouse(it, "MOUSEUP", 2, lp); break;

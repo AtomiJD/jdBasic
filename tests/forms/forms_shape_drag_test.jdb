@@ -9,6 +9,7 @@
 ' compare positions rather than numbers.
 DECLARE FUNC PostMessageW LIB "user32" ALIAS "PostMessageW" (h AS INTEGER, m AS INTEGER, w AS INTEGER, l AS INTEGER) AS INTEGER
 DECLARE FUNC GetCapture LIB "user32" ALIAS "GetCapture" () AS INTEGER
+DECLARE FUNC ReleaseCapture LIB "user32" ALIAS "ReleaseCapture" () AS INTEGER
 
 CONST WM_MOUSEMOVE = 512
 CONST WM_LBUTTONDOWN = 513
@@ -59,7 +60,8 @@ SUB BAR_MOUSEMOVE(e)
 ENDSUB
 
 SUB BAR_MOUSEUP(e)
-    NOTE("up_x", e[0]{"x"})
+    NOTE("ups", VAL(GOT("ups")) + 1)
+    IF GOT("ups") = "1" THEN NOTE("up_x", e[0]{"x"})
 ENDSUB
 
 SUB SDT_TICK(e)
@@ -74,6 +76,12 @@ SUB SDT_TICK(e)
         DIM r3 = PostMessageW(hb, WM_LBUTTONUP, 0, POINT_LP(-60, 50))
     ELSEIF phase = 4 THEN
         NOTE("released", GetCapture() <> hb)
+        NOTE("ups_after_release", GOT("ups"))
+        DIM r4 = PostMessageW(hb, WM_LBUTTONDOWN, MK_LBUTTON, POINT_LP(3, 50))
+    ELSEIF phase = 5 THEN
+        ' something else takes the mouse mid-drag
+        DIM r5 = ReleaseCapture()
+    ELSEIF phase = 6 THEN
         FORM.CLOSE(frm)
     ENDIF
 ENDSUB
@@ -86,6 +94,8 @@ CHECK("the shape holds the mouse while the button is down", GOT("captured"), "TR
 CHECK("MOUSEMOVE left of the shape is negative", STR$(VAL(GOT("move_x")) < 0), "TRUE")
 CHECK("MOUSEUP further left than the move", STR$(VAL(GOT("up_x")) < VAL(GOT("move_x"))), "TRUE")
 CHECK("the mouse is let go after MOUSEUP", GOT("released"), "TRUE")
+CHECK("letting go fires MOUSEUP once", GOT("ups_after_release"), "1")
+CHECK("losing the mouse mid-drag fires MOUSEUP", GOT("ups"), "2")
 
 PRINT "RESULTS: "; pass; " passed, "; fail; " failed"
 IF fail > 0 THEN END 1

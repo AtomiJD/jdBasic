@@ -200,6 +200,7 @@ ENDSUB
 ' The width of the source pane for a wanted one, leaving both panes usable.
 FUNC SPLIT_LEFT(want AS INTEGER) AS INTEGER
     DIM hi AS INTEGER = client_w - SPLIT_W - SPLIT_MIN
+    IF hi < SPLIT_MIN THEN RETURN MAX([0, INT((client_w - SPLIT_W) / 2)])
     IF want > hi THEN want = hi
     IF want < SPLIT_MIN THEN want = SPLIT_MIN
     RETURN want
