@@ -822,8 +822,15 @@ FUNC Be16(s$, p)
     RETURN BYTEAT(s$, p) * 256 + BYTEAT(s$, p + 1)
 ENDFUNC
 
-' The bytes of an image file in another format (GIF, BMP, TIFF, ...) as a
-' PNG, or "" when it cannot be converted.
+' GIF, BMP or TIFF, by the file's first bytes.
+FUNC IsConvertible(data$)
+    DIM head$ = LEFT$(data$, 4)
+    IF LEFT$(head$, 3) = "GIF" ORELSE LEFT$(head$, 2) = "BM" THEN RETURN TRUE
+    RETURN head$ = "II*" + CHR$(0) ORELSE head$ = "MM" + CHR$(0) + "*"
+ENDFUNC
+
+' The bytes of a GIF, BMP or TIFF file as a PNG, or "" when it cannot be
+' converted.
 FUNC PngBytes$(path$)
     DIM tmp$ = MKTEMP$("mdr") + ".png"
     DIM png$ = ""
@@ -854,12 +861,16 @@ FUNC PictRtf$(path$)
     RETURN pict$
 ENDFUNC
 
-' PNG and JPEG are embedded as they are, other formats as a PNG.
+' PNG and JPEG are embedded as they are, GIF, BMP and TIFF as a PNG.
 FUNC ReadPictRtf$(path$)
     IF FILE.SIZE(path$) > MAX_PICT_BYTES THEN RETURN ""
     DIM data$ = BINREADER$(path$)
     DIM is_jpeg = LEN(data$) > 4 ANDALSO BYTEAT(data$, 0) = 255 ANDALSO BYTEAT(data$, 1) = 216
-    IF LEFT$(data$, 4) <> CHR$(137) + "PNG" ANDALSO NOT is_jpeg THEN data$ = PngBytes$(path$)
+    IF LEFT$(data$, 4) <> CHR$(137) + "PNG" ANDALSO NOT is_jpeg THEN
+        ' only these formats reach a decoder; a document cannot pick another one
+        IF NOT IsConvertible(data$) THEN RETURN ""
+        data$ = PngBytes$(path$)
+    ENDIF
     IF LEN(data$) > MAX_PICT_BYTES THEN RETURN ""
     DIM kind$ = ""
     DIM w = 0

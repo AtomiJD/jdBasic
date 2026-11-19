@@ -213,7 +213,14 @@ IF UCASE$(OS.GETOS$()) = "WINDOWS" THEN
     BINWRITER pic_dir$ + "/dot.gif", Bytes$(bmp_codes)
     DIM bmp_rtf$ = MDRICH.RTF$(pic_block, {"base": pic_dir$})
     TESTKIT.ISTRUE(INSTR(bmp_rtf$, "\pngblip\picw1\pich1") >= 0 ANDALSO bmp_rtf$ <> gif_rtf$, "a changed file is read again")
+    DIM ico_codes = [0, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 32, 0, 48, 0, 0, 0, 22, 0, 0, 0, 40, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 1, 0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 0, 0, 255, 0, 0, 0, 0]
+    BINWRITER pic_dir$ + "/icon.gif", Bytes$(ico_codes)
+    TESTKIT.EQ(IMAGE.CONVERT(pic_dir$ + "/icon.gif", pic_dir$ + "/icon.png"), 0, "the icon is an image WIC reads")
+    DIM ico_rtf$ = MDRICH.RTF$(One("![icon](icon.gif)" + NL$), {"base": pic_dir$})
+    TESTKIT.ISTRUE(INSTR(ico_rtf$, "{\cf3 [icon]}") >= 0 ANDALSO INSTR(ico_rtf$, "\pict") < 0, "an icon named .gif is not drawn, its alt text shows")
     KILL pic_dir$ + "/dot.gif"
+    KILL pic_dir$ + "/icon.gif"
+    KILL pic_dir$ + "/icon.png"
     RMDIR pic_dir$
 ENDIF
 
