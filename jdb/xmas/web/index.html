@@ -45,7 +45,8 @@
     var s = q.get('s');
     if (s && /^[0-9A-Za-z_-]{1,2048}$/.test(s)) { location.replace(base + 'player&s=' + encodeURIComponent(s)); return; }
     var wide = window.matchMedia('(pointer: fine) and (min-width: 1000px)').matches;
-    if (wide && !q.has('info')) { location.replace(base + 'editor'); return; }
+    var to = (q.get('to') || '').slice(0, 30);
+    if (wide && !q.has('info')) { location.replace(base + 'editor' + (to ? '&to=' + encodeURIComponent(to) : '')); return; }
     var de = (lang || (navigator.language || 'de').slice(0, 2)) === 'de';
     document.getElementById('demo').href = base + 'player';
     document.documentElement.lang = de ? 'de' : 'en';
@@ -57,6 +58,9 @@
     document.getElementById('hint').textContent = de
       ? 'Eigene Grüße erstellst du am PC: einfach diese Seite dort öffnen.'
       : 'Make your own on a computer: just open this page there.';
+    if (q.has('to')) document.getElementById('hint').textContent = de
+      ? 'Du willst antworten? Öffne diesen Link an einem Computer, dort baust du deinen Gruß' + (to ? ' an ' + to : '') + '.'
+      : 'Want to reply? Open this link on a computer, that is where you make your greeting' + (to ? ' for ' + to : '') + '.';
     document.getElementById('info').hidden = false;
   })();
 </script>

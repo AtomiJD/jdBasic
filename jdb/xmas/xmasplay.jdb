@@ -1521,17 +1521,42 @@ EXPORT SUB FRAME(parts, story, t, st)
         DIM rw = GFX.TEXTSIZE(rows[ri])[0]
         TEXT (FW - rw) / 2, 160 + ri * 44, rows[ri], 255, 245, 220
     NEXT ri
-    IF et > 4 THEN
+    IF et > 4 ANDALSO NOT (parts{"buttons"} ?? FALSE) THEN
         DIM again$ = Say$(lang$, "again")
         TEXT (FW - GFX.TEXTSIZE(again$)[0]) / 2, 1200, again$, 255, 255, 255
     ENDIF
 ENDSUB
 
 
+' text$ for a URL query: letters, digits and -_.~ stay, every other byte
+' becomes %XX.
+EXPORT FUNC URLENC$(text$)
+    DIM out$ = ""
+    DIM i = 0
+    FOR i = 0 TO LEN(text$) - 1
+        DIM c$ = MID$(text$, i, 1)
+        IF INSTR("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.~", c$) >= 0 THEN
+            out$ = out$ + c$
+        ELSE
+            out$ = out$ + "%" + RIGHT$("0" + HEX$(ASC(c$)), 2)
+        ENDIF
+    NEXT i
+    RETURN out$
+ENDFUNC
+
+' The link that opens the editor for a greeting back to sender$, in the
+' viewer's language: base$ is the page of the cards.
+EXPORT FUNC REPLYLINK$(base$, sender$, lang$)
+    DIM link$ = base$ + "?lang=" + lang$
+    DIM to$ = CLEANTEXT$(sender$, MAX_NAME)
+    IF to$ <> "" THEN link$ = link$ + "&to=" + URLENC$(to$)
+    RETURN link$
+ENDFUNC
+
 ' The player's own words in German or English.
-FUNC Say$(lang$, key$)
-    DIM de = {"tap": "Tippen!", "tap_low": "tippen!", "for": "Für", "for_low": "für", "from": "Von", "merry": "Frohe Weihnachten!", "again": "Nochmal? Tippen!"}
-    DIM en = {"tap": "Tap!", "tap_low": "tap!", "for": "For", "for_low": "for", "from": "From", "merry": "Merry Christmas!", "again": "Again? Tap!"}
+EXPORT FUNC SAY$(lang$, key$)
+    DIM de = {"tap": "Tippen!", "tap_low": "tippen!", "for": "Für", "for_low": "für", "from": "Von", "merry": "Frohe Weihnachten!", "again": "Nochmal? Tippen!", "again_btn": "Nochmal", "reply": "Antworten", "reply_head": "Du willst antworten? Schick dir diesen Link und öffne ihn an einem Computer: Dort baust du deinen Gruß zurück.", "reply_title": "Antwort auf einen Weihnachtsgruß", "reply_text": "Am Computer öffnen, um zu antworten:", "send": "Link senden", "copy": "Link kopieren", "close": "Schließen", "copied": "Kopiert! Jetzt am Computer öffnen."}
+    DIM en = {"tap": "Tap!", "tap_low": "tap!", "for": "For", "for_low": "for", "from": "From", "merry": "Merry Christmas!", "again": "Again? Tap!", "again_btn": "Again", "reply": "Reply", "reply_head": "Want to reply? Send yourself this link and open it on a computer: that is where you make your greeting back.", "reply_title": "Reply to a Christmas greeting", "reply_text": "Open on a computer to reply:", "send": "Send link", "copy": "Copy link", "close": "Close", "copied": "Copied! Now open it on a computer."}
     IF lang$ = "en" THEN RETURN en{key$}
     RETURN de{key$}
 ENDFUNC

@@ -1,6 +1,6 @@
 ' The player of the Christmas story cards: plays the story of a link full
-' screen, its music starts with the first tap, a tap after the end plays it
-' again. Desktop: run from jdb/xmas, an optional argument is a story code.
+' screen, its music starts with the first tap. At the end one button plays it
+' again, the other offers a link to the editor for a greeting back. Desktop: run from jdb/xmas, an optional argument is a story code.
 ' Browser: the page hands the code over as "s" in /url_params.json; "debug"
 ' shows the frame rate, "mute" keeps it silent.
 OPTION "EXPLICIT"
@@ -45,6 +45,7 @@ SETFONT font$, 30
 DIM t_load = TICK()
 DIM parts = XMASPLAY.PREPARE(XMASPLAY.LOADPARTS(art_dir$), story)
 parts{"lang"} = Lang$()
+parts{"buttons"} = TRUE
 DIM load_ms = TICK() - t_load
 
 DIM started = FALSE
@@ -53,9 +54,55 @@ DIM running = TRUE
 DIM t_start = TICK()
 DIM t_run = 0
 
+' The two buttons of the end card, [x, y, w, h].
+DIM AGAIN_BUTTON = [70, 1120, 270, 96]
+DIM REPLY_BUTTON = [380, 1120, 270, 96]
+DIM site$ = "https://vvss.jdbasic.tech/xmas/"
+DIM sharing = FALSE
+
+FUNC AtEnd()
+    RETURN started ANDALSO (TICK() - t_run) / 1000 > XMASPLAY.LENGTH(story) + 3
+ENDFUNC
+
+FUNC Inside(info, box)
+    DIM ev = info
+    IF ISARR(ev) THEN ev = ev[0]
+    DIM x = ev{"x"} ?? -1
+    DIM y = ev{"y"} ?? -1
+    RETURN x >= box[0] ANDALSO x < box[0] + box[2] ANDALSO y >= box[1] ANDALSO y < box[1] + box[3]
+ENDFUNC
+
+' The link to the editor for a greeting back: on the web in the page's share
+' sheet, on the desktop on the clipboard.
+SUB OfferReply()
+    DIM l$ = Lang$()
+    DIM link$ = XMASPLAY.REPLYLINK$(site$, story{"f"}, l$)
+    IF NOT on_web THEN
+        CLIPBOARD.SET link$
+        PRINT link$
+        RETURN
+    ENDIF
+    DIM req = {"head": XMASPLAY.SAY$(l$, "reply_head"), "title": XMASPLAY.SAY$(l$, "reply_title"), "text": XMASPLAY.SAY$(l$, "reply_text"), "url": link$, "send": XMASPLAY.SAY$(l$, "send"), "copy": XMASPLAY.SAY$(l$, "copy"), "close": XMASPLAY.SAY$(l$, "close"), "copied": XMASPLAY.SAY$(l$, "copied")}
+    IF FILE.EXISTS("/share_reply.json") THEN KILL "/share_reply.json"
+    TXTWRITER "/share_request.json", JSON.STRINGIFY$(req)
+    sharing = TRUE
+ENDSUB
+
+SUB DrawButton(box, label$, r, g, b)
+    ROUNDED_RECT box[0], box[1] + 6, box[2], box[3], 30, TRUE, 60, 20, 30
+    ROUNDED_RECT box[0], box[1], box[2], box[3], 30, TRUE, r, g, b
+    DIM w = GFX.TEXTSIZE(label$)[0]
+    TEXT box[0] + (box[2] - w) / 2, box[1] + 30, label$, 255, 255, 255
+ENDSUB
+
 SUB OnTap(info)
-    IF started ANDALSO (TICK() - t_run) / 1000 > XMASPLAY.LENGTH(story) + 3 THEN
-        t_run = TICK()
+    IF sharing THEN RETURN
+    IF AtEnd() THEN
+        IF Inside(info, REPLY_BUTTON) THEN
+            OfferReply()
+        ELSE
+            t_run = TICK()
+        ENDIF
         RETURN
     ENDIF
     IF started THEN RETURN
@@ -104,6 +151,14 @@ DO WHILE running
         story = fallback
         parts = XMASPLAY.PREPARE(parts, story)
     ENDTRY
+    IF AtEnd() THEN
+        DrawButton(AGAIN_BUTTON, XMASPLAY.SAY$(Lang$(), "again_btn"), 47, 107, 69)
+        DrawButton(REPLY_BUTTON, XMASPLAY.SAY$(Lang$(), "reply"), 216, 34, 52)
+    ENDIF
+    IF sharing ANDALSO FILE.EXISTS("/share_reply.json") THEN
+        KILL "/share_reply.json"
+        sharing = FALSE
+    ENDIF
     frames = frames + 1
     IF ms_now - fps_mark >= 1000 THEN
         fps = frames

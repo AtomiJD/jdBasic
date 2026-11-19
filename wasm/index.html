@@ -83,6 +83,16 @@
   #askbox .count{flex:1;color:#9ab;font-size:13px;}
   #askbox button{font-size:16px;padding:8px 18px;border-radius:8px;border:0;background:#c8202c;color:#fff;}
   #askbox button.cancel{background:#445;}
+  /* A share sheet for programs that ask through /share_request.json: the
+     system share dialog only opens from a real tap on a page button. */
+  #sharebox{position:fixed;left:0;right:0;bottom:0;z-index:50;display:none;flex-direction:column;gap:12px;
+          padding:18px 16px 24px;background:rgba(10,14,24,.95);color:#eef;font:17px system-ui,sans-serif;text-align:center;}
+  #sharebox.open{display:flex;}
+  #sharebox > *{width:100%;max-width:520px;margin:0 auto;}
+  #sharebox button{font-size:18px;padding:12px 18px;border-radius:10px;border:0;background:#c8202c;color:#fff;}
+  #sharebox button.second{background:#2f6b45;}
+  #sharebox button.cancel{background:#445;}
+  #sharebox .note{color:#9cd;font-size:14px;min-height:1em;}
 </style>
 </head>
 <body>
@@ -124,6 +134,13 @@
       <button type="button" class="cancel" id="askcancel">&#10005;</button>
       <button type="submit">OK</button></div>
   </form>
+  <div id="sharebox">
+    <div id="sharehead"></div>
+    <button type="button" id="sharesend"></button>
+    <button type="button" class="second" id="sharecopy"></button>
+    <button type="button" class="cancel" id="shareclose"></button>
+    <div class="note" id="sharenote"></div>
+  </div>
   <input type="file" id="fileopen" accept=".jdb,.bas,.txt" hidden>
 
   <script src="vendor/xterm/xterm.js"></script>
@@ -738,6 +755,54 @@
         showCount();
         box.classList.add('open');
         field.focus();
+      }, 150);
+    }
+
+    // ---- share sheet for graphics programs ----
+    // A program writes /share_request.json ({"head","title","text","url",
+    // "send","copy","close","copied"}); the page shows a sheet whose send
+    // button opens the system share dialog (hidden where there is none) and
+    // whose copy button copies the url. Closing it answers in
+    // /share_reply.json with {"how":"share"|"copy"|"close"} and removes the
+    // request.
+    {
+      const box = document.getElementById('sharebox');
+      const send = document.getElementById('sharesend');
+      const copy = document.getElementById('sharecopy');
+      const note = document.getElementById('sharenote');
+      let req = null, how = 'close';
+      function done(){
+        try { Mod.FS.writeFile('/share_reply.json', JSON.stringify({how})); } catch(e){}
+        try { Mod.FS.unlink('/share_request.json'); } catch(e){}
+        box.classList.remove('open'); req = null;
+        document.getElementById('canvas').focus();
+      }
+      send.addEventListener('click', ()=>{
+        if (!req || !navigator.share) return;
+        navigator.share({title: req.title || '', text: req.text || '', url: req.url || ''})
+          .then(()=>{ how = 'share'; done(); })
+          .catch(()=>{});
+      });
+      copy.addEventListener('click', ()=>{
+        if (!req) return;
+        copyText(req.url || '');
+        how = 'copy';
+        note.textContent = req.copied || '';
+      });
+      document.getElementById('shareclose').addEventListener('click', done);
+      setInterval(()=>{
+        if (!Mod || req) return;
+        const raw = readMaybe('/share_request.json');
+        if (raw === null) return;
+        try { req = JSON.parse(raw); } catch(e){ req = {}; }
+        how = 'close';
+        document.getElementById('sharehead').textContent = req.head || '';
+        send.textContent = req.send || 'Share';
+        send.style.display = navigator.share ? '' : 'none';
+        copy.textContent = req.copy || 'Copy link';
+        document.getElementById('shareclose').textContent = req.close || 'Close';
+        note.textContent = '';
+        box.classList.add('open');
       }, 150);
     }
 

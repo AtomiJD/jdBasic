@@ -100,6 +100,16 @@ DIM music_on = FALSE
 DIM running = TRUE
 DIM template_i = 0
 
+' A link from the player's Reply button names the one to answer as "to":
+' the greeting then starts from the first template, addressed to them.
+DIM reply_to$ = XMASPLAY.CLEANTEXT$("" + (url_params{"to"} ?? GETENV$("XMAS_TO")), XMASPLAY.MAX_NAME)
+IF reply_to$ <> "" THEN
+    template_i = 1
+    doc = XMASPLAY.TEMPLATES(lang$)[1][1]
+    doc{"f"} = ""
+    doc{"t"} = reply_to$
+ENDIF
+
 DIM bg_ids = SELECT(LAMBDA r -> r[0], XMASPLAY.BACKGROUNDS())
 DIM bg_names = Column(XMASPLAY.BACKGROUNDS(), name_col)
 DIM act_ids = SELECT(LAMBDA r -> r[0], XMASPLAY.ACTIONS())
