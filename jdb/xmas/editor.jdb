@@ -25,8 +25,8 @@ DIM name_col = IIF(lang$ = "de", 1, 2)
 
 ' The editor's own words in German or English.
 FUNC T$(key$)
-    DIM de = {"title": "Weihnachtsgruß", "template": "Vorlage", "from": "Von", "to": "Für", "scene": "Szene", "place": "Ort", "action": "Aktion", "figure": "Figur", "add_fig": "+ Figur", "del_fig": "- Figur", "steps": "Ablauf", "add_line": "+ Sprechblase", "add_act": "+ Aktion", "add_scene": "+ Szene", "del_scene": "- letzte Szene", "music": "Musik", "song": "Lied", "style": "Stil", "play": "Musik an", "preview": "Vorschau", "restart": "Von vorn", "share": "Teilen", "copy": "Link kopieren", "copied": "kopiert", "chars": "Zeichen"}
-    DIM en = {"title": "Christmas greeting", "template": "Template", "from": "From", "to": "For", "scene": "Scene", "place": "Place", "action": "Action", "figure": "Figure", "add_fig": "+ Figure", "del_fig": "- Figure", "steps": "Sequence", "add_line": "+ Bubble", "add_act": "+ Action", "add_scene": "+ Scene", "del_scene": "- Last scene", "music": "Music", "song": "Song", "style": "Style", "play": "Music on", "preview": "Preview", "restart": "Restart", "share": "Share", "copy": "Copy link", "copied": "copied", "chars": "characters"}
+    DIM de = {"title": "Weihnachtsgruß", "template": "Vorlage", "from": "Von", "to": "Für", "scene": "Szene", "place": "Ort", "action": "Aktion", "figure": "Figur", "add_fig": "+ Figur", "del_fig": "- Figur", "steps": "Ablauf", "add_line": "+ Sprechblase", "add_act": "+ Aktion", "add_scene": "+ Szene", "del_scene": "- letzte Szene", "music": "Musik", "song": "Lied", "style": "Stil", "play": "Musik an", "preview": "Vorschau", "restart": "Von vorn", "share": "Teilen", "copy": "Link kopieren", "copied": "kopiert", "chars": "Zeichen", "bubble_tip": "(In Klammern) wird ein Gedanke, ein Ruf endet mit !!"}
+    DIM en = {"title": "Christmas greeting", "template": "Template", "from": "From", "to": "For", "scene": "Scene", "place": "Place", "action": "Action", "figure": "Figure", "add_fig": "+ Figure", "del_fig": "- Figure", "steps": "Sequence", "add_line": "+ Bubble", "add_act": "+ Action", "add_scene": "+ Scene", "del_scene": "- Last scene", "music": "Music", "song": "Song", "style": "Style", "play": "Music on", "preview": "Preview", "restart": "Restart", "share": "Share", "copy": "Copy link", "copied": "copied", "chars": "characters", "bubble_tip": "(In parentheses) makes a thought, a shout ends in !!"}
     IF lang$ = "en" THEN RETURN en{key$}
     RETURN de{key$}
 ENDFUNC
@@ -301,6 +301,7 @@ DO WHILE running
                     sc{"c"} = cast
                     DIM who_names = SELECT(LAMBDA c -> cast_names[FIND_IN_ARRAY(cast_ids, c)], cast)
                     GUI.SEPARATOR_TEXT(T$("steps"))
+                    GUI.TEXT_WRAPPED(T$("bubble_tip"))
                     DIM lines = sc{"l"}
                     DIM n_said = 0
                     DIM n_done = 0

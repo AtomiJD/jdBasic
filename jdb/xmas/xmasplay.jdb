@@ -246,20 +246,20 @@ ENDFUNC
 ' The demo story in the viewer's language.
 EXPORT FUNC DEMOFOR(lang$)
     IF lang$ <> "en" THEN RETURN DEMO()
-    RETURN {"f": "Santa and Lina", "t": "you", "m": 1, "g": 0, "s": [{"b": "room", "c": ["santa", "lina"], "l": [[0, "Ho ho ho! Merry Christmas, so glad you are here!"], [1, "Oh, Santa! Did you bring cookies?"], [0, "Even better: a present, just for you!"], ["gift", 0, 1], [1, "Hihi, thank you! It is beautiful!"], ["hug", 1, 0]]}, {"b": "forest", "c": ["rudi", "pino"], "l": [[0, "Snow! Finally snow!"], ["snowball", 1, 0], [0, "Hey! Just you wait..."], ["kiss", 1, 0], [1, "Hehe, Merry Christmas, Rudi!"]]}]}
+    RETURN {"f": "Santa and Lina", "t": "you", "m": 1, "g": 0, "s": [{"b": "room", "c": ["santa", "lina"], "l": [[0, "Ho ho ho! Merry Christmas, so glad you are here!"], [1, "Oh, Santa! Did you bring cookies?"], [0, "Even better: a present, just for you!"], ["gift", 0, 1], [1, "Hihi, thank you! It is beautiful!"], ["hug", 1, 0]]}, {"b": "forest", "c": ["rudi", "pino"], "l": [[0, "Snow! Finally snow!!"], ["snowball", 1, 0], [0, "Hey! Just you wait..."], ["kiss", 1, 0], [1, "Hehe, Merry Christmas, Rudi!"]]}]}
 ENDFUNC
 
 EXPORT FUNC DEMO()
-    RETURN {"f": "Santa und Lina", "t": "dich", "m": 0, "g": 0, "s": [{"b": "room", "c": ["santa", "lina"], "l": [[0, "Ho ho ho! Frohe Weihnachten, schön, dass du da bist!"], [1, "Oh, der Weihnachtsmann! Hast du Kekse mitgebracht?"], [0, "Viel besser: ein Geschenk, nur für dich!"], ["gift", 0, 1], [1, "Hihi, danke! Das ist ja wunderschön!"], ["hug", 1, 0]]}, {"b": "forest", "c": ["rudi", "pino"], "l": [[0, "Schnee! Endlich Schnee!"], ["snowball", 1, 0], [0, "Hey! Na warte..."], ["kiss", 1, 0], [1, "Hehe, frohe Weihnachten, Rudi!"]]}]}
+    RETURN {"f": "Santa und Lina", "t": "dich", "m": 0, "g": 0, "s": [{"b": "room", "c": ["santa", "lina"], "l": [[0, "Ho ho ho! Frohe Weihnachten, schön, dass du da bist!"], [1, "Oh, der Weihnachtsmann! Hast du Kekse mitgebracht?"], [0, "Viel besser: ein Geschenk, nur für dich!"], ["gift", 0, 1], [1, "Hihi, danke! Das ist ja wunderschön!"], ["hug", 1, 0]]}, {"b": "forest", "c": ["rudi", "pino"], "l": [[0, "Schnee! Endlich Schnee!!"], ["snowball", 1, 0], [0, "Hey! Na warte..."], ["kiss", 1, 0], [1, "Hehe, frohe Weihnachten, Rudi!"]]}]}
 ENDFUNC
 
 ' Ready stories to start from, [name, story], in German or English; {name}
 ' becomes the recipient when the story plays.
 EXPORT FUNC TEMPLATES(l$)
     IF l$ = "en" THEN
-        RETURN [["-", NONE], ["Classic", {"m": 0, "g": 0, "s": [{"b": "room", "c": ["santa", "lina"], "l": [[0, "Ho ho ho! Merry Christmas, {name}!"], ["wave", 0, 1], [1, "Santa! Is that a present for {name}?"], [0, "Of course! Wrapped with lots of love."], ["gift", 0, 1], [1, "Hihi, how lovely!"], ["hug", 1, 0]]}, {"b": "snow", "c": ["santa", "lina"], "l": [[0, "And now: out into the snow!"], ["dance", 0, 1], [1, "Merry Christmas and a happy new year!"]]}]}], ["Funny", {"m": 1, "g": 2, "s": [{"b": "workshop", "c": ["pip", "santa"], "l": [[1, "Pip, are all the presents ready?"], [0, "Er... almost. I will magic up the rest!"], ["magic", 0, 0], [1, "Hohoho, that does not count!"], ["laugh", 0, 1]]}, {"b": "forest", "c": ["rudi", "pino"], "l": [[1, "Rudi, bet I am faster?"], ["slide", 1, 1], [0, "Hey! Just you wait..."], ["snowball", 0, 1], [1, "Haha! Merry Christmas, {name}!"]]}]}], ["Short and sweet", {"m": 2, "g": 0, "s": [{"b": "room", "c": ["lina", "pino"], "l": [[0, "Hello {name}! I am thinking of you."], ["wave", 0, 1], [1, "Me too!"], ["hug", 0, 1], [0, "Merry Christmas!"]]}]}], ["For kids", {"m": 1, "g": 4, "s": [{"b": "snow", "c": ["rudi", "pip", "pino"], "l": [[0, "Hello {name}! I am Rudi."], ["glow", 0, 0], [1, "And I am Pip, the elf!"], ["magic", 1, 1], [2, "And I am Pino! Look at this!"], ["slide", 2, 2], [0, "Merry Christmas, {name}!"], ["dance", 0, 1]]}]}]]
+        RETURN [["-", NONE], ["Classic", {"m": 0, "g": 0, "s": [{"b": "room", "c": ["santa", "lina"], "l": [[0, "Ho ho ho! Merry Christmas, {name}!"], ["wave", 0, 1], [1, "Santa! Is that a present for {name}?"], [0, "Of course! Wrapped with lots of love."], ["gift", 0, 1], [1, "Hihi, how lovely!"], ["hug", 1, 0]]}, {"b": "snow", "c": ["santa", "lina"], "l": [[0, "And now: out into the snow!"], ["dance", 0, 1], [1, "Merry Christmas and a happy new year!"]]}]}], ["Funny", {"m": 1, "g": 2, "s": [{"b": "workshop", "c": ["pip", "santa"], "l": [[1, "Pip, are all the presents ready?"], [0, "(Uh oh... some are still missing!)"], [0, "Er... almost. I will magic up the rest!"], ["magic", 0, 0], [1, "Hohoho, that does not count!"], ["laugh", 0, 1]]}, {"b": "forest", "c": ["rudi", "pino"], "l": [[1, "Rudi, bet I am faster?"], ["slide", 1, 1], [0, "Hey! Just you wait..."], ["snowball", 0, 1], [1, "Haha! Merry Christmas, {name}!"]]}]}], ["Short and sweet", {"m": 2, "g": 0, "s": [{"b": "room", "c": ["lina", "pino"], "l": [[0, "Hello {name}! I am thinking of you."], ["wave", 0, 1], [1, "Me too!"], ["hug", 0, 1], [0, "Merry Christmas!"]]}]}], ["For kids", {"m": 1, "g": 4, "s": [{"b": "snow", "c": ["rudi", "pip", "pino"], "l": [[0, "Hello {name}! I am Rudi."], ["glow", 0, 0], [1, "And I am Pip, the elf!"], ["magic", 1, 1], [2, "And I am Pino! Look at this!"], ["slide", 2, 2], [0, "Merry Christmas, {name}!"], ["dance", 0, 1]]}]}]]
     ENDIF
-    RETURN [["-", NONE], ["Klassisch", {"m": 0, "g": 0, "s": [{"b": "room", "c": ["santa", "lina"], "l": [[0, "Ho ho ho! Frohe Weihnachten, {name}!"], ["wave", 0, 1], [1, "Der Weihnachtsmann! Ist das ein Geschenk für {name}?"], [0, "Natürlich! Mit ganz viel Liebe eingepackt."], ["gift", 0, 1], [1, "Hihi, wie schön!"], ["hug", 1, 0]]}, {"b": "snow", "c": ["santa", "lina"], "l": [[0, "Und jetzt: ab in den Schnee!"], ["dance", 0, 1], [1, "Frohes Fest und ein gutes neues Jahr!"]]}]}], ["Lustig", {"m": 1, "g": 2, "s": [{"b": "workshop", "c": ["pip", "santa"], "l": [[1, "Pip, sind alle Geschenke fertig?"], [0, "Äh... fast. Ich zaubere schnell den Rest!"], ["magic", 0, 0], [1, "Hohoho, das zählt aber nicht!"], ["laugh", 0, 1]]}, {"b": "forest", "c": ["rudi", "pino"], "l": [[1, "Rudi, wetten, ich bin schneller?"], ["slide", 1, 1], [0, "Hey! Na warte..."], ["snowball", 0, 1], [1, "Haha! Frohe Weihnachten, {name}!"]]}]}], ["Kurz & lieb", {"m": 2, "g": 0, "s": [{"b": "room", "c": ["lina", "pino"], "l": [[0, "Hallo {name}! Ich denk ganz fest an dich."], ["wave", 0, 1], [1, "Ich auch!"], ["hug", 0, 1], [0, "Frohe Weihnachten!"]]}]}], ["Für Kinder", {"m": 1, "g": 4, "s": [{"b": "snow", "c": ["rudi", "pip", "pino"], "l": [[0, "Hallo {name}! Ich bin Rudi."], ["glow", 0, 0], [1, "Und ich bin Pip, der Wichtel!"], ["magic", 1, 1], [2, "Und ich bin Pino! Guckt mal!"], ["slide", 2, 2], [0, "Frohe Weihnachten, {name}!"], ["dance", 0, 1]]}]}]]
+    RETURN [["-", NONE], ["Klassisch", {"m": 0, "g": 0, "s": [{"b": "room", "c": ["santa", "lina"], "l": [[0, "Ho ho ho! Frohe Weihnachten, {name}!"], ["wave", 0, 1], [1, "Der Weihnachtsmann! Ist das ein Geschenk für {name}?"], [0, "Natürlich! Mit ganz viel Liebe eingepackt."], ["gift", 0, 1], [1, "Hihi, wie schön!"], ["hug", 1, 0]]}, {"b": "snow", "c": ["santa", "lina"], "l": [[0, "Und jetzt: ab in den Schnee!"], ["dance", 0, 1], [1, "Frohes Fest und ein gutes neues Jahr!"]]}]}], ["Lustig", {"m": 1, "g": 2, "s": [{"b": "workshop", "c": ["pip", "santa"], "l": [[1, "Pip, sind alle Geschenke fertig?"], [0, "(Oh oh... da fehlen noch welche!)"], [0, "Äh... fast. Ich zaubere schnell den Rest!"], ["magic", 0, 0], [1, "Hohoho, das zählt aber nicht!"], ["laugh", 0, 1]]}, {"b": "forest", "c": ["rudi", "pino"], "l": [[1, "Rudi, wetten, ich bin schneller?"], ["slide", 1, 1], [0, "Hey! Na warte..."], ["snowball", 0, 1], [1, "Haha! Frohe Weihnachten, {name}!"]]}]}], ["Kurz & lieb", {"m": 2, "g": 0, "s": [{"b": "room", "c": ["lina", "pino"], "l": [[0, "Hallo {name}! Ich denk ganz fest an dich."], ["wave", 0, 1], [1, "Ich auch!"], ["hug", 0, 1], [0, "Frohe Weihnachten!"]]}]}], ["Für Kinder", {"m": 1, "g": 4, "s": [{"b": "snow", "c": ["rudi", "pip", "pino"], "l": [[0, "Hallo {name}! Ich bin Rudi."], ["glow", 0, 0], [1, "Und ich bin Pip, der Wichtel!"], ["magic", 1, 1], [2, "Und ich bin Pino! Guckt mal!"], ["slide", 2, 2], [0, "Frohe Weihnachten, {name}!"], ["dance", 0, 1]]}]}]]
 ENDFUNC
 
 ' Seconds a scene lasts: its bubbles, then its action.
@@ -803,29 +803,138 @@ FUNC Wrap(text$, max_w)
     RETURN rows
 ENDFUNC
 
-' A bubble whose text has typed n_chars characters, its tail towards (tx, ty).
-SUB DrawBubble(text$, n_chars, tx, ty)
-    DIM bw = 560
-    DIM rows = Wrap(text$, bw - 60)
-    DIM bh = 40 + LEN(rows) * 44
-    DIM bx = CLAMP(tx - bw / 2, 16, FW - bw - 16)
-    DIM by = MAX([40, ty - 110 - bh])
-    DIM root_x = CLAMP(tx + IIF(tx < FW / 2, 40, -40), bx + 60, bx + bw - 60)
-    DIM root_y = by + bh - 12
-    DIM seg = 0
-    FOR seg = 0 TO 9
-        DIM f0 = seg / 10
-        DIM f1 = (seg + 1) / 10
-        GFX.STROKE LERP(root_x, tx, f0), LERP(root_y, ty, f0), LERP(root_x, tx, f1), LERP(root_y, ty, f1), 34 - seg * 3, 255, 255, 255
-    NEXT seg
-    ROUNDED_RECT bx, by + 6, bw, bh, 28, TRUE, 60, 30, 40
-    ROUNDED_RECT bx, by, bw, bh, 28, TRUE, 255, 255, 255
-    DIM remaining = n_chars
+' The kind of bubble a line is drawn in: "think" for a line in parentheses,
+' "shout" for one ending in !!, else "say".
+FUNC BubbleKind$(text$)
+    DIM s$ = TRIM$(text$)
+    IF LENW(s$) >= 3 ANDALSO LEFT$(s$, 1) = "(" ANDALSO RIGHT$(s$, 1) = ")" THEN
+        IF TRIM$(MIDW$(s$, 1, LENW(s$) - 2)) <> "" THEN RETURN "think"
+    ENDIF
+    IF RIGHT$(s$, 2) = "!!" THEN RETURN "shout"
+    RETURN "say"
+ENDFUNC
+
+' The words a bubble shows: a thought without its parentheses.
+FUNC BubbleText$(text$)
+    DIM s$ = TRIM$(text$)
+    IF BubbleKind$(s$) = "think" THEN RETURN TRIM$(MIDW$(s$, 1, LENW(s$) - 2))
+    RETURN text$
+ENDFUNC
+
+' A cloud of puffs around the box (bx, by, bw, bh), shifted down by dy, the
+' puffs big and small by turns.
+SUB CloudPuffs(bx, by, bw, bh, dy, r, g, b)
+    DIM nx = MAX([2, INT(bw / 46)])
+    DIM ny = MAX([1, INT(bh / 46)])
     DIM i = 0
+    FOR i = 0 TO nx
+        DIM px = bx + i * bw / nx
+        CIRCLE px, by + dy + 4, 24 + (i MOD 2) * 10, TRUE, r, g, b
+        CIRCLE px, by + bh + dy - 4, 24 + ((i + 1) MOD 2) * 10, TRUE, r, g, b
+    NEXT i
+    FOR i = 0 TO ny
+        DIM py = by + i * bh / ny + dy
+        CIRCLE bx - 6, py, 28, TRUE, r, g, b
+        CIRCLE bx + bw + 6, py, 28, TRUE, r, g, b
+    NEXT i
+    ROUNDED_RECT bx - 8, by + dy, bw + 16, bh, 24, TRUE, r, g, b
+ENDSUB
+
+' One spike from (x0, y0) out to (x1, y1), thinning towards its tip.
+SUB Spike(x0, y0, x1, y1, r, g, b)
+    DIM seg = 0
+    FOR seg = 0 TO 5
+        GFX.STROKE LERP(x0, x1, seg / 6), LERP(y0, y1, seg / 6), LERP(x0, x1, (seg + 1) / 6), LERP(y0, y1, (seg + 1) / 6), 38 - seg * 6, r, g, b
+    NEXT seg
+ENDSUB
+
+' Spikes along the edges of the box (bx, by, bw, bh), shifted down by dy,
+' leaning away from its middle; their length wobbles with wob.
+SUB BurstSpikes(bx, by, bw, bh, dy, wob, r, g, b)
+    DIM cx = bx + bw / 2
+    DIM nx = MAX([2, INT(bw / 56)])
+    DIM i = 0
+    FOR i = 0 TO nx
+        DIM px = bx + i * bw / nx
+        DIM lean = (px - cx) / bw * 50
+        DIM up = 26 + (i MOD 2) * 14 + SIN(wob + i) * 4
+        DIM down = 26 + ((i + 1) MOD 2) * 14 + SIN(wob + i * 2) * 4
+        Spike(px, by + dy + 14, px + lean, by + dy - up, r, g, b)
+        Spike(px, by + bh + dy - 14, px + lean, by + bh + dy + down, r, g, b)
+    NEXT i
+    DIM side = 26 + SIN(wob) * 4
+    Spike(bx + 14, by + bh / 2 + dy, bx - side, by + bh / 2 + dy - 10, r, g, b)
+    Spike(bx + bw - 14, by + bh / 2 + dy, bx + bw + side, by + bh / 2 + dy - 10, r, g, b)
+    ROUNDED_RECT bx - 4, by + dy, bw + 8, bh, 12, TRUE, r, g, b
+ENDSUB
+
+' A bubble whose text has typed n_chars characters, its tail towards (tx, ty):
+' a speech bubble, a thought cloud with little puffs for a tail, or a spiky
+' shout that shakes while it is typed. lt is the time of the line.
+SUB DrawBubble(text$, n_chars, tx, ty, lt)
+    DIM kind$ = BubbleKind$(text$)
+    DIM words$ = BubbleText$(text$)
+    DIM bw = IIF(kind$ = "say", 560, 480)
+    DIM rows = Wrap(words$, bw - 60)
+    IF kind$ <> "say" THEN bw = CLAMP(MAX(SELECT(LAMBDA w -> GFX.TEXTSIZE(w)[0], rows)) + 60, 240, bw)
+    DIM bh = 40 + LEN(rows) * 44
+    DIM bx = CLAMP(tx - bw / 2, IIF(kind$ = "say", 16, 60), FW - bw - IIF(kind$ = "say", 16, 60))
+    DIM by = MAX([IIF(kind$ = "say", 40, 80), ty - IIF(kind$ = "say", 110, 140) - bh])
+    DIM ink = [50, 30, 40]
+    DIM i = 0
+    DIM seg = 0
+    DIM f0 = 0
+    DIM f1 = 0
+    DIM root_x = 0
+    DIM root_y = 0
+    IF kind$ = "think" THEN
+        root_x = CLAMP(tx + IIF(tx < FW / 2, 30, -30), bx + 60, bx + bw - 60)
+        root_y = by + bh + 34
+        FOR i = 0 TO 2
+            DIM pf = (i + 1) / 4
+            DIM pr = 16 - i * 4
+            DIM bob = SIN(lt * 3 + i) * 3
+            CIRCLE LERP(root_x, tx, pf), LERP(root_y, ty, pf) + 5 + bob, pr, TRUE, 60, 30, 40
+            CIRCLE LERP(root_x, tx, pf), LERP(root_y, ty, pf) + bob, pr, TRUE, 255, 255, 255
+        NEXT i
+        CloudPuffs(bx, by, bw, bh, 6, 60, 30, 40)
+        CloudPuffs(bx, by, bw, bh, 0, 255, 255, 255)
+        ink = [90, 80, 120]
+    ELSEIF kind$ = "shout" THEN
+        IF n_chars < LENW(words$) THEN
+            bx = bx + SIN(lt * 40) * 4
+            by = by + COS(lt * 33) * 3
+        ENDIF
+        root_x = CLAMP(tx, bx + 60, bx + bw - 60)
+        root_y = by + bh
+        DIM zx = [root_x, LERP(root_x, tx, 0.33) + 22, LERP(root_x, tx, 0.66) - 22, tx]
+        DIM zy = [root_y, LERP(root_y, ty, 0.33), LERP(root_y, ty, 0.66), ty - 10]
+        FOR seg = 0 TO 2
+            GFX.STROKE zx[seg], zy[seg] + 5, zx[seg + 1], zy[seg + 1] + 5, 22 - seg * 6, 200, 40, 50
+        NEXT seg
+        FOR seg = 0 TO 2
+            GFX.STROKE zx[seg], zy[seg], zx[seg + 1], zy[seg + 1], 14 - seg * 4, 255, 228, 90
+        NEXT seg
+        BurstSpikes(bx, by, bw, bh, 6, lt * 6, 200, 40, 50)
+        BurstSpikes(bx, by, bw, bh, 0, lt * 6, 255, 228, 90)
+        ink = [150, 20, 40]
+    ELSE
+        root_x = CLAMP(tx + IIF(tx < FW / 2, 40, -40), bx + 60, bx + bw - 60)
+        root_y = by + bh - 12
+        FOR seg = 0 TO 9
+            f0 = seg / 10
+            f1 = (seg + 1) / 10
+            GFX.STROKE LERP(root_x, tx, f0), LERP(root_y, ty, f0), LERP(root_x, tx, f1), LERP(root_y, ty, f1), 34 - seg * 3, 255, 255, 255
+        NEXT seg
+        ROUNDED_RECT bx, by + 6, bw, bh, 28, TRUE, 60, 30, 40
+        ROUNDED_RECT bx, by, bw, bh, 28, TRUE, 255, 255, 255
+    ENDIF
+    DIM remaining = n_chars
     FOR i = 0 TO LEN(rows) - 1
         IF remaining <= 0 THEN EXITFOR
         DIM shown$ = LEFTW$(rows[i], remaining)
-        TEXT bx + 30, by + 22 + i * 44, shown$, 50, 30, 40
+        DIM row_x = IIF(kind$ = "say", bx + 30, bx + (bw - GFX.TEXTSIZE(rows[i])[0]) / 2)
+        TEXT row_x, by + 22 + i * 44, shown$, ink[0], ink[1], ink[2]
         remaining = remaining - LENW(rows[i]) - 1
     NEXT i
 ENDSUB
@@ -1288,9 +1397,10 @@ SUB DrawCast(parts, sc, poses)
 ENDSUB
 
 ' The mood of a line from how it is written: "laugh" for haha, hihi, hehe or
-' hoho, "ask" for a question, "think" for an ellipsis, "shout" for an
+' hoho, "ask" for a question, "think" for an ellipsis or a thought, "shout" for an
 ' exclamation, else "say".
 FUNC Mood$(text$)
+    IF BubbleKind$(text$) = "think" THEN RETURN "think"
     DIM low$ = LCASE$(text$)
     IF INSTR(low$, "haha") >= 0 ORELSE INSTR(low$, "hihi") >= 0 ORELSE INSTR(low$, "hehe") >= 0 ORELSE INSTR(low$, "hoho") >= 0 THEN RETURN "laugh"
     DIM tail$ = RIGHT$(RTRIM$(text$), 3)
@@ -1352,8 +1462,8 @@ EXPORT SUB FRAME(parts, story, t, st)
         DIM mood$ = Mood$(text$)
         DIM n_chars = INT(lt * 22)
         DIM k = 0
-        IF n_chars < LENW(text$) THEN
-            poses[who]{"mouth"} = ABS(SIN(lt * IIF(mood$ = "think", 8, 14)))
+        IF n_chars < LENW(BubbleText$(text$)) THEN
+            poses[who]{"mouth"} = IIF(BubbleKind$(text$) = "think", 0, ABS(SIN(lt * IIF(mood$ = "think", 8, 14))))
             IF poses[who]{"x"} <= FW / 2 THEN
                 poses[who]{"arm_r"} = -40 + SIN(lt * 5) * 25
             ELSE
@@ -1383,7 +1493,7 @@ EXPORT SUB FRAME(parts, story, t, st)
         ENDIF
         DrawCast(parts, sc, poses)
         DIM top = HeadTop(parts{"cast"}{sc{"c"}[who]}, poses[who])
-        DrawBubble(text$, n_chars, top[0], top[1])
+        DrawBubble(text$, n_chars, top[0], top[1], lt)
         RETURN
     ENDIF
     ' the happy end
