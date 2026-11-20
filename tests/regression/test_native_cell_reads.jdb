@@ -173,6 +173,14 @@ DIM light AS Crossing
 light.Waiting = TRUE
 Check("a FUNC answering a truth value", STR$(HasPort({"port": 8080})), STR$(TRUE))
 Check("a field declared AS BOOLEAN", STR$(light.Waiting), STR$(TRUE))
+DIM idle AS Crossing
+Check("a BOOLEAN field never set", STR$(idle.Waiting), STR$(FALSE))
+
+' A destructure whose source is one of its own targets reads the source first.
+DIM pair = [[1, 2], 9]
+DIM tail_n = 0
+[pair, tail_n] = pair
+Check("a destructure into its own source", FORMAT$("{} {}", LEN(pair), tail_n), "2 9")
 
 PRINT pass; " passed, "; fail; " failed"
 IF fail > 0 THEN END 1

@@ -6169,10 +6169,23 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
             if (!stmt.expr) break;
             // [a$, n] = row with row a variable: each target is `a$ = row[0]`,
             // so a cell is read with its own kind whatever row turns out to be.
+            bool source_is_target = false;
+            if (stmt.expr->kind == ExprKind::VARIABLE)
+                for (auto& dv : stmt.destruct_vars())
+                    if (dv == stmt.expr->str_val) source_is_target = true;
             if (stmt.expr->kind == ExprKind::VARIABLE) {
+                // A source that is also a target is held in a name of its
+                // own first, so the first target written does not replace it.
+                std::string src = stmt.expr->str_val;
+                if (source_is_target) {
+                    src = "__DESTRUCT_SRC_" + std::to_string(stmt.line);
+                    synth_stmts.push_back(make_let(src, VarType::NONE,
+                        make_var(stmt.expr->str_val, stmt.line), stmt.line));
+                    codegen_stmt(*synth_stmts.back());
+                }
                 for (size_t i = 0; i < stmt.destruct_vars().size(); i++) {
                     synth_stmts.push_back(make_let(stmt.destruct_vars()[i], VarType::NONE,
-                        make_index(make_var(stmt.expr->str_val, stmt.line),
+                        make_index(make_var(src, stmt.line),
                                    make_int_lit((int64_t)i, stmt.line), stmt.line),
                         stmt.line));
                     codegen_stmt(*synth_stmts.back());
@@ -12061,7 +12074,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                             LLVMValueRef result = LLVMBuildCall2(builder, get_fn.fn_type,
                                                     get_fn.fn, args, 2, "fget");
                             if (leaf_fld && leaf_fld->is_bool)
-                                return { LLVMBuildFPToSI(builder, result, i64_type, "fbool"), JD_TAG_BOOL };
+                                return { LLVMBuildZExt(builder, LLVMBuildFCmp(builder, LLVMRealONE, result, LLVMConstReal(f64_type, 0.0), "fbool_nz"), i64_type, "fbool"), JD_TAG_BOOL };
                             return { result, JD_TAG_F64 };
                         }
                     }
@@ -12265,7 +12278,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     return { LLVMBuildIntToPtr(builder, pun_f64_to_i64(result), i8_ptr_type, "fmap"),
                              JD_TAG_NATIVE_MAP };
                 if (is_bool_field)
-                    return { LLVMBuildFPToSI(builder, result, i64_type, "fbool"), JD_TAG_BOOL };
+                    return { LLVMBuildZExt(builder, LLVMBuildFCmp(builder, LLVMRealONE, result, LLVMConstReal(f64_type, 0.0), "fbool_nz"), i64_type, "fbool"), JD_TAG_BOOL };
                 return { result, JD_TAG_F64 };
             }
         }
@@ -13136,7 +13149,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 LLVMValueRef args[] = { obj_ptr, idx_tv.val };
                 LLVMValueRef fv = LLVMBuildCall2(builder, gf.fn_type, gf.fn, args, 2, "ugetf");
                 if (is_bool_field)
-                    return { LLVMBuildFPToSI(builder, fv, i64_type, "ugetb"), JD_TAG_BOOL };
+                    return { LLVMBuildZExt(builder, LLVMBuildFCmp(builder, LLVMRealONE, fv, LLVMConstReal(f64_type, 0.0), "ugetb_nz"), i64_type, "ugetb"), JD_TAG_BOOL };
                 return { fv, JD_TAG_F64 };
             }
 
