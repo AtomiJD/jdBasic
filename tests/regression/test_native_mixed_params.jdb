@@ -1,0 +1,98 @@
+' An untyped parameter holds every kind its call sites hand it: a builtin's
+' number or truth value at one site and a text at another, a FUNC parameter
+' handed on to a TYPE method, a JSON cell or its fallback. A FUNC reads a
+' global declared AS DATE as the date the main program stored, and a global
+' DIMmed as a number keeps every kind a loop adds to it.
+'
+'   jdbasic tests/regression/test_native_mixed_params.jdb
+'   jdbasic -c tests/regression/test_native_mixed_params.jdb
+
+OPTION "EXPLICIT"
+
+DIM pass AS INTEGER = 0
+DIM fail AS INTEGER = 0
+
+SUB Check(what$, got, want)
+    IF got = want THEN
+        pass = pass + 1
+    ELSE
+        fail = fail + 1
+        PRINT "FAIL "; what$; ": got "; got; ", want "; want
+    ENDIF
+ENDSUB
+
+FUNC Describe(v)
+    IF ISSTR(v) THEN RETURN "text:" + v
+    IF ISBOOL(v) THEN RETURN "truth:" + STR$(v)
+    RETURN "number:" + STR$(v)
+ENDFUNC
+
+DIM doc = JSON.PARSE("{""paid"": true, ""name"": ""x""}")
+
+Check("a truth value from ISNUM", ISNUM(1), TRUE)
+Check("a text after it", "BOOLEAN", "BOOLEAN")
+Check("the kind of a JSON truth value", TYPEOF(doc{"paid"}), "BOOLEAN")
+Check("a number from LEN", LEN("abc"), 3)
+Check("a text read from a map", doc{"name"}, "x")
+Check("a truth value from ISSTR", ISSTR("a"), TRUE)
+
+FUNC Same(a, b)
+    RETURN a = b
+ENDFUNC
+DIM same$ = STR$(Same(ISBOOL(TRUE), TRUE)) + " " + STR$(Same(STR$(5), "5")) + " " + STR$(Same(TYPEOF(1 = 1), "BOOLEAN"))
+Check("a FUNC compared a truth value, then texts from builtins", same$, STR$(TRUE) + " " + STR$(TRUE) + " " + STR$(TRUE))
+
+DIM shown$ = Describe("t") + " " + Describe(ABS(-2)) + " " + Describe(ISNUM("a"))
+Check("a FUNC handed a text, a number and a truth value", shown$, "text:t number:2 truth:" + STR$(FALSE))
+
+' A FUNC handing its parameter on to a TYPE method: the method's parameter
+' takes the kind the FUNC's does.
+TYPE Rule
+    Field AS STRING
+    SUB INIT(f$ AS STRING)
+        THIS.Field = f$
+    ENDSUB
+    FUNC KindIn(rec) AS STRING
+        RETURN TYPEOF(rec{THIS.Field})
+    ENDFUNC
+ENDTYPE
+DIM rules[2] AS Rule(["id", "name"])
+FUNC Kinds$(rec)
+    IF NOT ISMAP(rec) THEN RETURN "not an object"
+    RETURN rules[0].KindIn(rec) + " " + rules[1].KindIn(rec)
+ENDFUNC
+DIM records = JSON.PARSE("[{""id"": 1, ""name"": ""Ada""}, 42]")
+Check("a method handed a FUNC's parameter", Kinds$(records[0]) + "|" + Kinds$(records[1]), "INT64 STRING|not an object")
+
+' A field of a JSON record handed on with a fallback.
+FUNC PickFrom(entry, fallback) AS INTEGER
+    DIM seq = entry{"rolls"} ?? fallback
+    RETURN LEN(seq)
+ENDFUNC
+DIM cfg = JSON.PARSE("{""p"": [{""name"": ""Bo""}, {""rolls"": [3, 6]}], ""dice"": [4, 2, 6]}")
+DIM dice = cfg{"dice"} ?? [1, 2]
+Check("a fallback read from a JSON record", STR$(PickFrom(cfg{"p"}[1], dice)) + " " + STR$(PickFrom(cfg{"p"}[0], dice)), "2 3")
+
+' A global declared AS DATE read by a FUNC.
+CONST START_ON$ = "2026-01-05"
+DIM startDate AS DATE = CVDATE(START_ON$)
+FUNC WeekOf$(w)
+    RETURN FORMAT_DATE$(DATEADD("D", 7 * w, startDate), "%Y-%m-%d")
+ENDFUNC
+Check("a FUNC reading a global AS DATE", WeekOf$(0) + " " + WeekOf$(7), "2026-01-05 2026-02-23")
+
+' A global DIMmed as a number that a loop adds map cells to.
+DIM played AS MAP
+DIM scoredBy AS MAP
+played{"a"} = 2
+played{"b"} = 3
+scoredBy{"a"} = 5
+scoredBy{"b"} = 7
+DIM totalScored = 0
+FOR EACH club$, games IN played
+    totalScored = totalScored + scoredBy{club$}
+NEXT
+Check("a global number summing map cells in a loop", STR$(totalScored), "12")
+
+PRINT pass; " passed, "; fail; " failed"
+IF fail > 0 THEN END 1

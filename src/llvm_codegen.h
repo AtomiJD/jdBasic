@@ -666,6 +666,10 @@ private:
     // Top-level names DIMmed AS a number, known before any FUNC or SUB that
     // writes them is compiled.
     std::unordered_set<std::string> declared_number_globals;
+    // Number globals an assignment adds tagged cells to (`t = t + m{k}`):
+    // their DIM keeps them runtime-typed instead of narrowing to the
+    // initializer's kind.
+    std::unordered_set<std::string> arith_runtime_globals;
     // Top-level names DIMmed to a table (rows), marked before the FUNCs and
     // SUBs that read them are compiled.
     std::unordered_set<std::string> table_globals;

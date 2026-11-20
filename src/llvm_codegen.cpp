@@ -1379,6 +1379,10 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         if (e.kind == ExprKind::ARRAY_LITERAL) return JD_TAG_ARR;
         if (e.kind == ExprKind::MAP_LITERAL)   return JD_TAG_NATIVE_MAP;
         if (e.kind == ExprKind::LITERAL_STRING) return JD_TAG_STR;
+        // `x{k} ?? fallback` answers the cell or the fallback, either kind.
+        if (e.kind == ExprKind::BINARY && e.op == TokenType::COALESCE && e.left &&
+            e.left->kind == ExprKind::INDEX)
+            return JD_TAG_RUNTIME;
         // A member of a variable that holds an object is known only at run time.
         auto on_object = [&](const std::string& dotted) {
             size_t dp = dotted.find('.');
@@ -1652,6 +1656,31 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             method_stmts[mn] = m.get();
         }
     }
+    // obj.Method(args): the method is TYPE.METHOD with THIS as its first
+    // parameter. The one type declaring a method of that name and arity is
+    // the one called; none or several give nullptr.
+    auto called_method_of = [&](const Expr& e) -> const Stmt* {
+        std::string called;
+        if (e.func_name == "__METHOD__" && e.left &&
+            e.left->kind == ExprKind::MEMBER_ACCESS)
+            called = e.left->str_val;
+        else if (e.func_name.find('.') != std::string::npos && !decls.count(e.func_name))
+            called = e.func_name.substr(e.func_name.rfind('.') + 1);
+        if (called.empty()) return nullptr;
+        std::string suffix = "." + called;
+        for (auto& c : suffix) c = (char)toupper((unsigned char)c);
+        const Stmt* method = nullptr;
+        int found = 0;
+        for (auto& [mn, ms] : method_stmts) {
+            if (mn.size() <= suffix.size() ||
+                mn.compare(mn.size() - suffix.size(), suffix.size(), suffix) != 0)
+                continue;
+            if (ms->params().size() != e.args.size() + 1) continue;
+            method = ms;
+            found++;
+        }
+        return found == 1 ? method : nullptr;
+    };
     // The kind a call-site argument certainly has, or 0 when only the
     // running program knows it.
     auto arg_seen_kind = [&](const Expr& a) -> int {
@@ -1685,6 +1714,22 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 if (t == JD_TAG_I64 || jd_is_f64_tag(t)) return JD_TAG_F64;
                 return 0;
             }
+            case ExprKind::CALL: {
+                // a builtin whose answer kind is listed; a FUNC's answer
+                // kind is not settled yet
+                if (a.func_name.empty() || decls.count(a.func_name) ||
+                    funcref_alias.count(a.func_name) || cur_local_kinds.count(a.func_name))
+                    return 0;
+                std::string up = a.func_name;
+                for (auto& c : up) c = (char)toupper((unsigned char)c);
+                if (!builtin_sig(up)) return 0;
+                if (up.back() == '$') return JD_TAG_STR;
+                if (builtin_is(up, BuiltinRet::F64) || builtin_is(up, BuiltinRet::I64) ||
+                    builtin_is(up, BuiltinRet::Bool))
+                    return JD_TAG_F64;
+                if (builtin_is(up, BuiltinRet::Str)) return JD_TAG_STR;
+                return 0;
+            }
             default: return 0;
         }
     };
@@ -1710,30 +1755,11 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                         tgt->second.tags[0] = JD_TAG_STR;
                 }
             }
-            // obj.Method(args): the method is TYPE.METHOD with THIS as its
-            // first parameter. One type declaring a method of that name and
-            // arity is the one called; an untyped parameter that a site hands
-            // a string, an array or a map becomes runtime-typed.
-            std::string called_method;
-            if (e.func_name == "__METHOD__" && e.left &&
-                e.left->kind == ExprKind::MEMBER_ACCESS)
-                called_method = e.left->str_val;
-            else if (e.func_name.find('.') != std::string::npos && !decls.count(e.func_name))
-                called_method = e.func_name.substr(e.func_name.rfind('.') + 1);
-            if (!called_method.empty()) {
-                std::string suffix = "." + called_method;
-                for (auto& c : suffix) c = (char)toupper((unsigned char)c);
-                const Stmt* method = nullptr;
-                int found = 0;
-                for (auto& [mn, ms] : method_stmts) {
-                    if (mn.size() <= suffix.size() ||
-                        mn.compare(mn.size() - suffix.size(), suffix.size(), suffix) != 0)
-                        continue;
-                    if (ms->params().size() != e.args.size() + 1) continue;
-                    method = ms;
-                    found++;
-                }
-                if (found == 1) {
+            // An untyped method parameter that a site hands a string, an array
+            // or a map becomes runtime-typed.
+            {
+                const Stmt* method = called_method_of(e);
+                if (method) {
                     for (size_t i = 0; i < e.args.size(); i++) {
                         int seen = e.args[i] ? arg_seen_kind(*e.args[i]) : 0;
                         bool ptr = seen == JD_TAG_STR || seen == JD_TAG_ARR ||
@@ -3451,8 +3477,30 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                             }
                         };
                         auto cit = decls.find(e.func_name);
+                        const Stmt* method = cit == decls.end() ? called_method_of(e) : nullptr;
                         if (cit != decls.end()) {
                             promote(cit->second, e.func_name);
+                        } else if (method) {
+                            // A method parameter handed a runtime-typed or
+                            // pointer-kind parameter takes either kind.
+                            for (size_t ai = 0; ai < e.args.size(); ai++) {
+                                const Expr* a = e.args[ai].get();
+                                if (!a || a->kind != ExprKind::VARIABLE) continue;
+                                auto pit = pidx.find(a->str_val);
+                                if (pit == pidx.end() || pit->second >= fdecl.tags.size()) continue;
+                                int src = fdecl.tags[pit->second];
+                                if (src != JD_TAG_RUNTIME && src != JD_TAG_STR && src != JD_TAG_ARR &&
+                                    src != JD_TAG_NATIVE_MAP && src != JD_TAG_VM_HANDLE)
+                                    continue;
+                                const Param& p = method->params()[ai + 1];
+                                if (p.type != VarType::NONE ||
+                                    (!p.name.empty() && p.name.back() == '$'))
+                                    continue;
+                                auto& flags = method_runtime_params[method->func_name];
+                                if (flags.size() < method->params().size())
+                                    flags.resize(method->params().size(), false);
+                                if (!flags[ai + 1]) { flags[ai + 1] = true; rt_spread = true; }
+                            }
                         } else {
                             // A call through a funcref parameter reaches
                             // every function handed to that parameter.
@@ -5294,6 +5342,12 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                     tag = JD_TAG_ARR;   // UDT object (ptr)
                 else if (stmt->kind == StmtKind::DIM && stmt->var_type == VarType::OBJECT)
                     tag = JD_TAG_NATIVE_MAP;
+                else if (stmt->kind == StmtKind::DIM && stmt->label.size() == 4 &&
+                         toupper((unsigned char)stmt->label[0]) == 'D' &&
+                         toupper((unsigned char)stmt->label[1]) == 'A' &&
+                         toupper((unsigned char)stmt->label[2]) == 'T' &&
+                         toupper((unsigned char)stmt->label[3]) == 'E')
+                    tag = JD_TAG_DATE;   // epoch seconds, as codegen_dim stores it
                 else if (stmt->kind == StmtKind::DIM &&
                          (stmt->var_type == VarType::FLOAT64 ||
                           stmt->var_type == VarType::FLOAT32 ||
@@ -5477,8 +5531,25 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                 // assignment path reads the number out of the cell instead.
                 bool declared_number = declared_number_globals.count(s->var_name) != 0;
 
+                // `total = total + m{k}` over a number global: arithmetic over
+                // a tagged operand answers a tagged value too.
+                std::function<bool(const Expr*)> arith_rtag = [&](const Expr* e) -> bool {
+                    if (!e) return false;
+                    if (e->kind == ExprKind::BINARY &&
+                        (e->op == TokenType::PLUS || e->op == TokenType::MINUS ||
+                         e->op == TokenType::STAR || e->op == TokenType::SLASH))
+                        return arith_rtag(e->left.get()) || arith_rtag(e->right.get());
+                    return may_be_rtag(e);
+                };
+                bool numeric_global = g && (g->tag == JD_TAG_I64 || g->tag == JD_TAG_F64);
+                bool by_arith = false;
                 if (g && !declared_string && !declared_number && g->tag != JD_TAG_RUNTIME &&
-                    may_be_rtag(s->expr.get())) {
+                    !may_be_rtag(s->expr.get()) && numeric_global && arith_rtag(s->expr.get())) {
+                    by_arith = true;
+                    arith_runtime_globals.insert(s->var_name);
+                }
+                if (g && !declared_string && !declared_number && g->tag != JD_TAG_RUNTIME &&
+                    (by_arith || may_be_rtag(s->expr.get()))) {
                     g->tag = JD_TAG_RUNTIME;
                     if (!g->runtime_tag_alloca) {
                         std::string rtag_name = s->var_name + ".rtag";
@@ -8412,7 +8483,14 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
                     init = coerce_to(rhs, f64_type);
                 }
             }
-            VarInfo& nv = create_var(stmt.var_name, JD_TAG_DATE);
+            // The global pass made the slot every FUNC body reads already.
+            VarInfo* pre = nullptr;
+            if (scopes.size() <= 1) {
+                auto git = scopes.back().vars.find(stmt.var_name);
+                if (git != scopes.back().vars.end() && git->second.tag == JD_TAG_DATE)
+                    pre = &git->second;
+            }
+            VarInfo& nv = pre ? *pre : create_var(stmt.var_name, JD_TAG_DATE);
             LLVMBuildStore(builder, init, nv.alloca_val);
             std::string up = stmt.var_name;
             std::transform(up.begin(), up.end(), up.begin(), ::toupper);
@@ -9227,7 +9305,11 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             LLVMBuildStore(builder, LLVMConstInt(i32_type, rhs.tag, 0),
                            vi->runtime_tag_alloca);
         }
-        vi->tag = rhs.tag;
+        // A number global a later assignment adds tagged cells to stays
+        // runtime-typed: that assignment, in a loop below, stores either kind.
+        bool keep_rt = scopes.size() <= 1 && arith_runtime_globals.count(stmt.var_name) &&
+                       &scopes[0].vars[stmt.var_name] == vi;
+        if (!keep_rt) vi->tag = rhs.tag;
         return;
     }
     // VM_HANDLE → STR slot: materialise via __jdrt_val_to_str instead of
