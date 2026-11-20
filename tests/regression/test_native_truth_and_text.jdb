@@ -1,0 +1,104 @@
+' What a compiled program prints for truth values, whole numbers and text:
+' a parameter handed only truth values, a FUNC name used as text, a method
+' with a text local that answers a number, FORMAT$ of a whole number past
+' 2^53, a PRINT whose call raised, and a running maximum of ABS over cells.
+
+DIM pass = 0
+DIM fail = 0
+
+SUB Check(what$, got$, want$)
+    IF got$ = want$ THEN
+        pass = pass + 1
+    ELSE
+        fail = fail + 1
+        PRINT "FAIL "; what$; ": got '"; got$; "', want '"; want$; "'"
+    ENDIF
+ENDSUB
+
+' --- parameters handed only truth values ---
+FUNC InRange(n)
+    RETURN n >= 0 ANDALSO n <= 9
+ENDFUNC
+FUNC Shown$(label$, got, want)
+    IF got = want THEN RETURN label$ + " ok " + STR$(got)
+    RETURN label$ + " off " + STR$(got)
+ENDFUNC
+DIM agree = TRUE
+agree = agree AND InRange(4)
+Check("a truth answer handed to an untyped parameter", Shown$("a", InRange(3), TRUE), "a ok " + STR$(TRUE))
+Check("a false truth answer", Shown$("b", InRange(12), FALSE), "b ok " + STR$(FALSE))
+Check("a variable that only ever holds truth values", Shown$("c", agree, TRUE), "c ok " + STR$(TRUE))
+SUB Flagged(flag AS BOOLEAN)
+    Check("a parameter declared AS BOOLEAN", STR$(flag) + " " + STR$(NOT flag), STR$(TRUE) + " " + STR$(FALSE))
+ENDSUB
+Flagged(2 > 1)
+FUNC Picked(mask, at)
+    RETURN mask[at]
+ENDFUNC
+Check("a comparison of arrays handed to a parameter that indexes it", STR$(Picked([1, 5, 9] > 4, 1) = TRUE), STR$(TRUE))
+FUNC IsOdd(n)
+    RETURN n MOD 2 = 1
+ENDFUNC
+DIM odd = IsOdd@
+Check("a truth-valued FUNC through a variable", STR$(odd(3)) + " " + STR$(odd(4)), STR$(TRUE) + " " + STR$(FALSE))
+
+' --- a FUNC name used as text ---
+FUNC Solved()
+    RETURN 1
+ENDFUNC
+DIM state$ = "PLAYING"
+IF Solved() = 1 THEN state$ = "SOLVED"
+Check("a text variable given the name of a FUNC", state$, "SOLVED")
+DIM mode AS STRING = "Solved"
+Check("a STRING variable given the name of a FUNC", mode, "Solved")
+
+' --- a method with a text local answers a number ---
+TYPE Note
+    Body AS STRING
+    FUNC Marks(extra)
+        DIM lowered$ = LCASE$(THIS.Body)
+        DIM bangs = LEN(lowered$) - LEN(REPLACE$(lowered$, "!", ""))
+        RETURN bangs + extra
+    ENDFUNC
+    FUNC Title(extra)
+        DIM sep$ = ": "
+        RETURN THIS.Body
+    ENDFUNC
+ENDTYPE
+DIM memo AS Note
+memo.Body = "Hi! Now!"
+Check("a method with a text local answering a number", STR$(memo.Marks(1) * 100), "300")
+Check("a method answering a text field", memo.Title(0), "Hi! Now!")
+
+' --- FORMAT$ of a whole number past 2^53 ---
+DIM big AS INTEGER = 999999999999999999
+Check("FORMAT$ of a large whole number", FORMAT$("{}", big), "999999999999999999")
+Check("FORMAT$ of a large whole number in a field", FORMAT$("{:>20}", big), "  999999999999999999")
+Check("FORMAT$ of a whole number as hex", FORMAT$("{:X}", big), "DE0B6B3A763FFFF")
+
+' --- a PRINT whose call raised prints nothing ---
+OUTPUT.CAPTURE_BEGIN
+TRY
+    PRINT LEN(CODEC.INFLATE$("not deflate data"))
+CATCH
+    PRINT "rejected"
+ENDTRY
+DIM printed$ = OUTPUT.CAPTURE_END$()
+Check("a PRINT whose call raised", TRIM$(printed$), "rejected")
+
+' --- a running maximum of ABS over cells ---
+DIM wanted = {}
+wanted{"sky"} = [135, 206, 235]
+DIM got_back = [132, 207, 239]
+DIM orig = []
+DIM worst = 0
+DIM delta = 0
+orig = wanted{"sky"}
+FOR k = 0 TO 2
+    delta = ABS(orig[k] - got_back[k])
+    IF delta > worst THEN worst = delta
+NEXT
+Check("a running maximum of ABS over cells", STR$(worst), "4")
+
+PRINT pass; " passed, "; fail; " failed"
+IF fail > 0 THEN END 1

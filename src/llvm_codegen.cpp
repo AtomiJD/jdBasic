@@ -1275,6 +1275,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 case VarType::BYTE:  case VarType::CHAR:
                 case VarType::INT16: case VarType::INT32:
                 case VarType::INT64:                             t = JD_TAG_I64; break;
+                case VarType::BOOLEAN:                           t = JD_TAG_BOOL; break;
                 default: break;
             }
             if (is_event_handler && pi == 0) t = 3;  // event data: JdbArray*
@@ -4199,6 +4200,171 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         }
     }
 
+    // An untyped parameter that every call site hands a truth value is a
+    // BOOLEAN, so it prints TRUE / FALSE as the interpreter does.
+    {
+        // Names whose every assignment anywhere is a truth value. A name
+        // that is also a parameter, a loop variable or written by position
+        // is not one.
+        std::unordered_map<std::string, bool> truth_names;
+        std::function<bool(const Expr&)> is_truth;
+        is_truth = [&](const Expr& e) -> bool {
+            if (e.kind == ExprKind::LITERAL_BOOL) return true;
+            if (e.kind == ExprKind::VARIABLE) {
+                auto tn = truth_names.find(e.str_val);
+                return tn != truth_names.end() && tn->second;
+            }
+            if (e.kind == ExprKind::UNARY)
+                return e.op == TokenType::NOT && e.right && is_truth(*e.right);
+            if (e.kind == ExprKind::CALL) {
+                auto cit = decls.find(e.func_name);
+                if (cit != decls.end()) return cit->second.return_tag == JD_TAG_BOOL;
+                std::string up = e.func_name;
+                for (auto& c : up) c = (char)toupper((unsigned char)c);
+                return builtin_is(up, BuiltinRet::Bool);
+            }
+            if (e.kind != ExprKind::BINARY) return false;
+            switch (e.op) {
+                case TokenType::EQ: case TokenType::ASSIGN: case TokenType::NE:
+                case TokenType::LT: case TokenType::LE:
+                case TokenType::GT: case TokenType::GE:
+                case TokenType::ANDALSO: case TokenType::ORELSE:
+                case TokenType::IN:
+                    return true;
+                case TokenType::AND: case TokenType::OR: case TokenType::XOR:
+                    return e.left && e.right && is_truth(*e.left) && is_truth(*e.right);
+                default: return false;
+            }
+        };
+        // Per FUNC and parameter: sites seen, sites that handed a truth value.
+        std::map<std::pair<std::string, size_t>, std::pair<int, int>> seen;
+        std::function<void(const Expr&)> scan_calls = [&](const Expr& e) {
+            if (e.kind == ExprKind::CALL && decls.count(e.func_name)) {
+                for (size_t i = 0; i < e.args.size(); i++) {
+                    auto& cnt = seen[{ e.func_name, i }];
+                    cnt.first++;
+                    if (e.args[i] && is_truth(*e.args[i])) cnt.second++;
+                }
+            }
+            if (e.left) scan_calls(*e.left);
+            if (e.right) scan_calls(*e.right);
+            for (auto& a : e.args) if (a) scan_calls(*a);
+        };
+        std::function<void(const Stmt&)> scan_stmt = [&](const Stmt& s) {
+            if (s.expr) scan_calls(*s.expr);
+            if (s.loop_cond) scan_calls(*s.loop_cond);
+            if (s.end_expr) scan_calls(*s.end_expr);
+            if (s.step_expr) scan_calls(*s.step_expr);
+            for (auto& pe : s.print_exprs) if (pe) scan_calls(*pe);
+            for (auto& ic : s.index_chain) if (ic) scan_calls(*ic);
+            for (auto& b : s.body) if (b) scan_stmt(*b);
+            for (auto& br : s.branches) {
+                if (br.condition) scan_calls(*br.condition);
+                for (auto& b : br.body) if (b) scan_stmt(*b);
+            }
+            for (auto& c : s.catch_body()) if (c) scan_stmt(*c);
+            for (auto& f : s.finally_body()) if (f) scan_stmt(*f);
+        };
+        std::function<void(const Stmt&)> find_truth_names = [&](const Stmt& s) {
+            if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB)
+                for (auto& p : s.params()) truth_names[p.name] = false;
+            if (!s.var_name.empty()) {
+                bool truth = false;
+                if ((s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN ||
+                     s.kind == StmtKind::DIM) && s.index_chain.empty())
+                    truth = s.expr ? is_truth(*s.expr)
+                                   : (s.kind == StmtKind::DIM && s.var_type == VarType::BOOLEAN);
+                auto tn = truth_names.find(s.var_name);
+                truth_names[s.var_name] = truth && (tn == truth_names.end() || tn->second);
+            }
+            for (auto& b : s.body) if (b) find_truth_names(*b);
+            for (auto& br : s.branches) for (auto& b : br.body) if (b) find_truth_names(*b);
+            for (auto& c : s.catch_body()) if (c) find_truth_names(*c);
+            for (auto& f : s.finally_body()) if (f) find_truth_names(*f);
+        };
+        for (auto& st : program) if (st) find_truth_names(*st);
+        for (auto& st : program) if (st) scan_stmt(*st);
+        // The parameter is read only the way a truth value is: as a
+        // condition, in a comparison or logic, printed, made text, answered,
+        // or handed on to a FUNC. Anything else (an index, arithmetic, a
+        // builtin) may want the array a comparison of arrays answers.
+        std::function<bool(const Expr&, const std::string&, bool)> expr_ok =
+            [&](const Expr& e, const std::string& pname, bool here_ok) -> bool {
+            if (e.kind == ExprKind::VARIABLE) return e.str_val != pname || here_ok;
+            bool kids_ok = false;
+            if (e.kind == ExprKind::BINARY) {
+                switch (e.op) {
+                    case TokenType::EQ: case TokenType::ASSIGN: case TokenType::NE:
+                    case TokenType::LT: case TokenType::LE:
+                    case TokenType::GT: case TokenType::GE:
+                    case TokenType::AND: case TokenType::OR: case TokenType::XOR:
+                    case TokenType::ANDALSO: case TokenType::ORELSE:
+                        kids_ok = true; break;
+                    default: break;
+                }
+            } else if (e.kind == ExprKind::UNARY) {
+                kids_ok = e.op == TokenType::NOT;
+            } else if (e.kind == ExprKind::CALL) {
+                std::string up = e.func_name;
+                for (auto& c : up) c = (char)toupper((unsigned char)c);
+                kids_ok = decls.count(e.func_name) || up == "STR$";
+            }
+            if (e.left && !expr_ok(*e.left, pname, kids_ok)) return false;
+            if (e.right && !expr_ok(*e.right, pname, kids_ok)) return false;
+            for (auto& a : e.args) if (a && !expr_ok(*a, pname, kids_ok)) return false;
+            return true;
+        };
+        std::function<bool(const Stmt&, const std::string&)> truth_uses_only =
+            [&](const Stmt& s, const std::string& pname) -> bool {
+            bool direct = s.kind == StmtKind::RETURN || s.kind == StmtKind::IF ||
+                          s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN ||
+                          s.kind == StmtKind::DIM;
+            if (s.kind == StmtKind::FOR_EACH && s.expr && !expr_ok(*s.expr, pname, false)) return false;
+            if (s.kind != StmtKind::FOR_EACH && s.expr && !expr_ok(*s.expr, pname, direct)) return false;
+            if (s.loop_cond && !expr_ok(*s.loop_cond, pname, true)) return false;
+            if (s.end_expr && !expr_ok(*s.end_expr, pname, false)) return false;
+            if (s.step_expr && !expr_ok(*s.step_expr, pname, false)) return false;
+            for (auto& pe : s.print_exprs) if (pe && !expr_ok(*pe, pname, true)) return false;
+            for (auto& ic : s.index_chain) if (ic && !expr_ok(*ic, pname, false)) return false;
+            for (auto& b : s.body) if (b && !truth_uses_only(*b, pname)) return false;
+            for (auto& br : s.branches) {
+                if (br.condition && !expr_ok(*br.condition, pname, true)) return false;
+                for (auto& b : br.body) if (b && !truth_uses_only(*b, pname)) return false;
+            }
+            for (auto& c : s.catch_body()) if (c && !truth_uses_only(*c, pname)) return false;
+            for (auto& f : s.finally_body()) if (f && !truth_uses_only(*f, pname)) return false;
+            return true;
+        };
+        std::function<bool(const Stmt&, const std::string&)> writes =
+            [&](const Stmt& s, const std::string& pname) -> bool {
+            if ((s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN ||
+                 s.kind == StmtKind::DIM) && s.var_name == pname)
+                return true;
+            for (auto& b : s.body) if (b && writes(*b, pname)) return true;
+            for (auto& br : s.branches) for (auto& b : br.body) if (b && writes(*b, pname)) return true;
+            for (auto& c : s.catch_body()) if (c && writes(*c, pname)) return true;
+            for (auto& f : s.finally_body()) if (f && writes(*f, pname)) return true;
+            return false;
+        };
+        for (auto& [name, decl] : decls) {
+            if (!decl.stmt || funcref_named.count(name)) continue;
+            for (size_t pi = 0; pi < decl.stmt->params().size() && pi < decl.tags.size(); pi++) {
+                const Param& p = decl.stmt->params()[pi];
+                if (p.type != VarType::NONE || decl.tags[pi] != JD_TAG_F64 ||
+                    (!p.name.empty() && p.name.back() == '$'))
+                    continue;
+                bool reassigned = false;
+                for (auto& b : decl.stmt->body) if (b && writes(*b, p.name)) reassigned = true;
+                if (reassigned) continue;
+                if (!truth_uses_only(*decl.stmt, p.name)) continue;
+                auto it = seen.find({ name, pi });
+                if (it != seen.end() && it->second.first > 0 &&
+                    it->second.first == it->second.second)
+                    decl.tags[pi] = JD_TAG_BOOL;
+            }
+        }
+    }
+
     // A handler a builtin calls by name answers through the tagged wrapper,
     // so its result is runtime-typed whatever the body returns.
     for (auto& [fname, fdecl] : decls)
@@ -4219,7 +4385,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 param_types.push_back(i32_type);
             } else {
                 param_types.push_back((t == 2 || t == 3 || t == 4 || t == 5) ? i8_ptr_type :
-                                      (t == JD_TAG_I64 || t == 6) ? i64_type : f64_type);
+                                      (t == JD_TAG_I64 || t == 6 || t == JD_TAG_BOOL) ? i64_type : f64_type);
             }
         }
 
@@ -5613,6 +5779,24 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                 auto uit = user_functions.find(e->func_name);
                 if (uit != user_functions.end() &&
                     uit->second.return_tag == JD_TAG_RUNTIME) return true;
+                // A numeric builtin over a runtime-typed value answers one:
+                // ABS(row[k] - other[k]).
+                if (uit == user_functions.end() && !e->args.empty() && e->args[0]) {
+                    std::string up = e->func_name;
+                    for (auto& c : up) c = (char)toupper((unsigned char)c);
+                    if (builtin_sig(up) && !builtin_has(up, BF_NO_VEC) &&
+                        (builtin_is(up, BuiltinRet::F64) || builtin_is(up, BuiltinRet::I64))) {
+                        std::function<bool(const Expr*)> operand_rtag = [&](const Expr* x) -> bool {
+                            if (!x) return false;
+                            if (x->kind == ExprKind::BINARY &&
+                                (x->op == TokenType::PLUS || x->op == TokenType::MINUS ||
+                                 x->op == TokenType::STAR || x->op == TokenType::SLASH))
+                                return operand_rtag(x->left.get()) || operand_rtag(x->right.get());
+                            return may_be_rtag(x);
+                        };
+                        if (operand_rtag(e->args[0].get())) return true;
+                    }
+                }
                 return false;
             }
             return false;
@@ -7964,7 +8148,12 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         // an outer frame's pending hint.
         ScopedLeafTag _lt(this, rhs_leaf_hint);
         if (stmt.expr->kind == ExprKind::LITERAL_STRING) {
-            auto fit = user_functions.find(stmt.expr->str_val);
+            // A text variable holds the text even when it names a FUNC.
+            bool text_target = !stmt.expr->is_funcref_lit && (
+                               (!stmt.var_name.empty() && stmt.var_name.back() == '$') ||
+                               stmt.var_type == VarType::STRING);
+            auto fit = text_target ? user_functions.end()
+                                   : user_functions.find(stmt.expr->str_val);
             if (fit != user_functions.end()) {
                 // Store the uniform double(double...) wrapper rather than the
                 // raw function: an indirect call through the variable builds
@@ -9271,7 +9460,12 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         // builtin, so a call through the variable has a function to reach.
         bool bound = false;
         if (stmt.expr->kind == ExprKind::LITERAL_STRING) {
-            auto fit = user_functions.find(stmt.expr->str_val);
+            // A text variable holds the text even when it names a FUNC.
+            bool text_target = !stmt.expr->is_funcref_lit && (
+                               (!stmt.var_name.empty() && stmt.var_name.back() == '$') ||
+                               stmt.var_type == VarType::STRING);
+            auto fit = text_target ? user_functions.end()
+                                   : user_functions.find(stmt.expr->str_val);
             if (fit != user_functions.end()) {
                 LLVMValueRef w = build_funcref_wrapper(stmt.expr->str_val,
                                                        (int)fit->second.param_tags.size());
@@ -10416,6 +10610,17 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
             }
         }
         TypedValue tv = codegen_expr(*stmt.print_exprs[i]);
+        // A call that raised prints nothing: the VM throws before PRINT runs.
+        {
+            std::function<bool(const Expr&)> has_call = [&](const Expr& e) -> bool {
+                if (e.kind == ExprKind::CALL) return true;
+                if (e.left && has_call(*e.left)) return true;
+                if (e.right && has_call(*e.right)) return true;
+                for (auto& a : e.args) if (a && has_call(*a)) return true;
+                return false;
+            };
+            if (has_call(*stmt.print_exprs[i])) emit_err_check();
+        }
         if (tv.tag == JD_TAG_BOOL) {
             auto& pr_bool = runtime_funcs["__print_bool"];
             LLVMValueRef args[] = { tv.val };
@@ -11657,14 +11862,45 @@ void LLVMCodegen::codegen_type_decl(const Stmt& stmt) {
         if (method && (method->kind == StmtKind::FUNCTION || method->kind == StmtKind::SUB)) {
             bool is_sub = (method->kind == StmtKind::SUB);
             bool returns_str = (!is_sub && !method->func_name.empty() && method->func_name.back() == '$');
-            // Infer string return from body if name convention doesn't indicate it
+            // Without the $ name, the method answers text when a RETURN hands
+            // back text or a local that was given text.
             if (!returns_str && !is_sub) {
-                for (auto& s : method->body) {
-                    if (s && s->expr && expr_involves_strings(*s->expr)) {
-                        returns_str = true;
-                        break;
-                    }
-                }
+                std::unordered_set<std::string> text_locals;
+                std::function<void(const Stmt&)> find_text_locals = [&](const Stmt& s) {
+                    if ((s.kind == StmtKind::DIM || s.kind == StmtKind::LET ||
+                         s.kind == StmtKind::ASSIGN) && !s.var_name.empty() &&
+                        s.index_chain.empty() &&
+                        (s.var_type == VarType::STRING || (s.expr && expr_involves_strings(*s.expr))))
+                        text_locals.insert(s.var_name);
+                    for (auto& b : s.body) if (b) find_text_locals(*b);
+                    for (auto& br : s.branches) for (auto& b : br.body) if (b) find_text_locals(*b);
+                    for (auto& c : s.catch_body()) if (c) find_text_locals(*c);
+                    for (auto& f : s.finally_body()) if (f) find_text_locals(*f);
+                };
+                auto text_field = [&](const Expr& e) {
+                    std::string fname;
+                    if (e.kind == ExprKind::VARIABLE && e.str_val.rfind("THIS.", 0) == 0)
+                        fname = e.str_val.substr(5);
+                    else if (e.kind == ExprKind::MEMBER_ACCESS && e.left &&
+                             e.left->kind == ExprKind::VARIABLE && e.left->str_val == "THIS")
+                        fname = e.str_val;
+                    if (fname.empty()) return false;
+                    const UDTField* f = udt_field(stmt.func_name, fname);
+                    return f && f->is_string;
+                };
+                std::function<bool(const Stmt&)> answers_text = [&](const Stmt& s) -> bool {
+                    if (s.kind == StmtKind::RETURN && s.expr &&
+                        (expr_involves_strings(*s.expr) || text_field(*s.expr) ||
+                         (s.expr->kind == ExprKind::VARIABLE && text_locals.count(s.expr->str_val))))
+                        return true;
+                    for (auto& b : s.body) if (b && answers_text(*b)) return true;
+                    for (auto& br : s.branches) for (auto& b : br.body) if (b && answers_text(*b)) return true;
+                    for (auto& c : s.catch_body()) if (c && answers_text(*c)) return true;
+                    for (auto& f : s.finally_body()) if (f && answers_text(*f)) return true;
+                    return false;
+                };
+                for (auto& s : method->body) if (s) find_text_locals(*s);
+                for (auto& s : method->body) if (s && answers_text(*s)) { returns_str = true; break; }
             }
             int ret_tag = is_sub ? -1 : (returns_str ? 2 : 1);
 
@@ -16514,7 +16750,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             }
             LLVMTypeRef pt = (expected_tag == JD_TAG_STR || expected_tag == JD_TAG_ARR ||
                               expected_tag == JD_TAG_NATIVE_MAP || expected_tag == JD_TAG_FUNCREF) ? i8_ptr_type :
-                             (expected_tag == JD_TAG_I64 || expected_tag == JD_TAG_VM_HANDLE) ? i64_type : f64_type;
+                             (expected_tag == JD_TAG_I64 || expected_tag == JD_TAG_VM_HANDLE ||
+                              expected_tag == JD_TAG_BOOL) ? i64_type : f64_type;
             // An untyped (f64) param is a slot that may carry a punned
             // pointer, the way a pointer-typed local is passed into it.
             // A runtime-tagged value keeps that shape instead of the
@@ -16771,7 +17008,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 ScopedLeafTag _lt(this, -1);
                 av = codegen_expr(*expr.args[i + 1]);
             }
-            if (av.tag == JD_TAG_STR ||
+            if (av.tag == JD_TAG_STR || av.tag == JD_TAG_I64 ||
                 av.tag == JD_TAG_VM_HANDLE ||
                 av.tag == JD_TAG_RUNTIME ||
                 av.tag == JD_TAG_BOOL ||
@@ -16901,9 +17138,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                         made.push_back({ s, nullptr });
                         arg_raws[i] = LLVMBuildPtrToInt(builder, s, i64_type, "ptoi");
                     } else if (av.tag == JD_TAG_I64) {
-                        store_tag(i, 'd');
-                        LLVMValueRef as_d = LLVMBuildSIToFP(builder, av.val, f64_type, "itof");
-                        arg_raws[i] = pun_f64_to_i64(as_d);
+                        store_tag(i, 'i');
+                        arg_raws[i] = av.val;
                     } else if (jd_is_f64_tag(av.tag)) {
                         store_tag(i, 'd');
                         arg_raws[i] = pun_f64_to_i64(av.val);

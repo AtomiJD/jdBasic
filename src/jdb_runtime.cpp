@@ -5232,6 +5232,17 @@ static void jdb_format_one_arg(std::string& out, const char* spec, double val,
     out += jdb_fmt::lay_out(s, text, !is_str);
 }
 
+// One placeholder of FORMAT$ rendered from a whole number, every digit kept.
+static void jdb_format_int_arg(std::string& out, const char* spec, int64_t ival) {
+    jdb_fmt::Spec s;
+    if (!jdb_fmt::parse_spec(spec, s)) {
+        const char* shown = spec ? (spec[0] == ':' ? spec + 1 : spec) : "";
+        jdb_err_set(jdb_fmt::spec_error(shown).c_str(), 1);
+        return;
+    }
+    out += jdb_fmt::lay_out(s, jdb_fmt::number_text(s, (double)ival, ival, std::to_string(ival)), true);
+}
+
 // FORMAT$ over an array of numbers.
 char* jdb_format(const char* fmt, JdbArray* args) {
     std::string result;
@@ -5284,8 +5295,9 @@ extern "C" {
 static void bridge_text_free(const char* s) { if (s) jdrt_str_free((char*)s); }
 extern "C" void jdb_runtime_set_handle(void* h) { g_jdrt_handle = h; }
 
-// types[i] is 'd' for an f64 bit pun, 's' for a const char*, or 'h' for a
-// VM handle (an i64 key into the VM's value store). A handle is read as a
+// types[i] is 'd' for an f64 bit pun, 'i' for a whole number, 's' for a
+// const char*, or 'h' for a VM handle (an i64 key into the VM's value
+// store). A handle is read as a
 // number when the spec asks for one and as text otherwise, which is the
 // only stage that knows both the spec and the value's type: p{"name"} may
 // be a string and p{"price"} a number in the same FORMAT$ call.
@@ -5314,6 +5326,8 @@ static char* jdb_format_tagged_impl(const char* fmt, const char* types,
                     } else {
                         out += "<no-runtime>";
                     }
+                } else if (tag == 'i') {
+                    jdb_format_int_arg(out, spec.c_str(), r64);
                 } else {
                     union { double d; int64_t i; } u; u.i = r64;
                     jdb_format_one_arg(out, spec.c_str(), u.d, nullptr, false);
