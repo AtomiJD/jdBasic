@@ -1471,16 +1471,12 @@ void Compiler::compile_destructure(const Stmt& stmt) {
     // Evaluate RHS (should produce an array)
     compile_expr(*stmt.expr);
 
-    bool is_global = (scopes.size() <= 1);
-
     // For each target variable: DUP array, push index, INDEX_GET, STORE
     for (size_t i = 0; i < stmt.destruct_vars().size(); i++) {
         current_chunk().emit(OpCode::DUP, stmt.line);
         emit_constant(Value::make_i64(static_cast<int64_t>(i)), stmt.line);
         current_chunk().emit(OpCode::INDEX_GET, stmt.line);
-        uint16_t slot = resolve_var(stmt.destruct_vars()[i]);
-        current_chunk().emit(is_global ? OpCode::STORE_GLOBAL : OpCode::STORE_VAR, stmt.line);
-        current_chunk().emit_u16(slot, stmt.line);
+        emit_var_store(stmt.destruct_vars()[i], stmt.line, /*prefer_local=*/false);
     }
 
     // Pop the original array

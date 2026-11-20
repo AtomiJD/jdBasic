@@ -100,5 +100,75 @@ FOR k = 0 TO 2
 NEXT
 Check("a running maximum of ABS over cells", STR$(worst), "4")
 
+' --- text fields of a local instance kept after the SUB ends ---
+TYPE LogRow
+    Origin AS STRING
+    Body AS STRING
+    SUB INIT(raw AS STRING)
+        THIS.Origin = TRIM$(LEFT$(raw, 4))
+        THIS.Body = MID$(raw, 4)
+    ENDSUB
+ENDTYPE
+DIM origins = []
+DIM widest$ = ""
+SUB Absorb(raw$)
+    DIM ln AS LogRow(raw$)
+    origins = APPEND(origins, ln.Origin)
+    IF LEN(ln.Body) > LEN(widest$) THEN widest$ = ln.Body
+ENDSUB
+Absorb("api the first line")
+Absorb("db  second")
+Absorb("aux a much longer third line here")
+DIM churn = []
+FOR q = 1 TO 200
+    churn = APPEND(churn, REPEAT$("x", q MOD 40) + STR$(q))
+NEXT
+Check("text fields appended after the instance is gone", JOIN(origins, ","), "api,db,aux")
+Check("a text field kept in a global after the instance is gone", widest$, "a much longer third line here")
+
+' --- a destructure inside a SUB writes the globals it names ---
+DIM spotRow = 2
+DIM spotCol = 2
+SUB MoveSpot(toRow, toCol)
+    [spotRow, spotCol] = [toRow, toCol]
+ENDSUB
+MoveSpot(1, 0)
+Check("a destructure into globals inside a SUB", STR$(spotRow) + "," + STR$(spotCol), "1,0")
+
+' --- IN over a parameter handed a cell of a table ---
+DIM LIMIT AS INTEGER = 6
+FUNC Usable$(skipped)
+    DIM s$ = ""
+    FOR spot = 0 TO LIMIT - 1
+        IF NOT (spot IN skipped) THEN s$ = s$ + STR$(spot)
+    NEXT
+    RETURN s$
+ENDFUNC
+DIM skipSets = [[], [1, 3, 4]]
+DIM which = 1
+Check("IN over a parameter handed a cell of a table", Usable$(skipSets[which]), "025")
+
+' --- a text field copied out, then written again; a BOOLEAN method ---
+TYPE Grid
+    Cells AS STRING
+    FUNC IsLit(at AS INTEGER) AS BOOLEAN
+        RETURN MID$(THIS.Cells, at, 1) = "#"
+    ENDFUNC
+    SUB Toggle(at AS INTEGER)
+        DIM mark$ = "#"
+        IF THIS.IsLit(at) THEN mark$ = "."
+        THIS.Cells = LEFT$(THIS.Cells, at) + mark$ + MID$(THIS.Cells, at + 1)
+    ENDSUB
+ENDTYPE
+DIM panel AS Grid
+panel.Cells = "#..#."
+DIM saved$ = panel.Cells
+panel.Toggle(1)
+panel.Toggle(3)
+panel.Cells = saved$
+panel.Toggle(4)
+Check("a text field copied out survives the field being written", saved$, "#..#.")
+Check("a method declared AS BOOLEAN", STR$(panel.IsLit(0)) + " " + STR$(panel.IsLit(1)), STR$(TRUE) + " " + STR$(FALSE))
+
 PRINT pass; " passed, "; fail; " failed"
 IF fail > 0 THEN END 1

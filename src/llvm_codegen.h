@@ -462,6 +462,10 @@ private:
     std::vector<TypedValue> pipe_values;
     // adopt_vm_handle for a value that may be a VM handle only at run time.
     void adopt_if_vm_handle(const std::string& name, TypedValue& rhs, bool local_only);
+    // A text read out of an instance field is copied before a variable keeps
+    // it: the field lets go of that text when it is written again or the
+    // instance goes.
+    void copy_field_text(const Expr& e, TypedValue& rhs);
 
     // Runtime string functions whose result is NOT a fresh allocation, so it
     // must never be dropped or taken over by a slot.

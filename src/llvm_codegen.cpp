@@ -283,6 +283,21 @@ LLVMValueRef LLVMCodegen::adopt_vm_handle(const std::string& name, LLVMValueRef 
     return call;
 }
 
+void LLVMCodegen::copy_field_text(const Expr& e, TypedValue& rhs) {
+    if (rhs.tag != JD_TAG_STR || rhs.owned || !rhs.val) return;
+    bool field = e.kind == ExprKind::MEMBER_ACCESS;
+    if (e.kind == ExprKind::VARIABLE) {
+        size_t dp = e.str_val.find('.');
+        if (dp != std::string::npos && dp > 0) {
+            std::string head = e.str_val.substr(0, dp);
+            field = head == "THIS" || var_udt_type.count(head) > 0;
+        }
+    }
+    if (!field) return;
+    auto& own = runtime_funcs["__str_own"];
+    rhs.val = LLVMBuildCall2(builder, own.fn_type, own.fn, &rhs.val, 1, "field_copy");
+}
+
 // A runtime-tagged value is a VM handle only when its tag says so at run
 // time, and only then may it reach jdrt_adopt_handle: the bits of any other
 // kind could name an unrelated key.
@@ -2055,6 +2070,10 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                             // handed the parameter: the cell may be an array.
                             std::function<bool(const Expr&)> reads_as_array =
                                 [&](const Expr& x) -> bool {
+                                // `v IN param` searches the parameter's cells.
+                                if (x.kind == ExprKind::BINARY && x.op == TokenType::IN &&
+                                    x.right && x.right->kind == ExprKind::VARIABLE &&
+                                    x.right->str_val == pname) return true;
                                 if (x.kind == ExprKind::CALL && !decls.count(x.func_name)) {
                                     std::string u = x.func_name;
                                     for (auto& c : u) c = (char)toupper((unsigned char)c);
@@ -6819,24 +6838,56 @@ void LLVMCodegen::emit_dispose_cleanup() {
     }
 }
 
+// A read of one of n's text fields, where the text is not copied out.
+static bool udt_text_field_read(const Expr& e, const std::string& n,
+                                const std::unordered_set<std::string>* text_fields) {
+    if (!text_fields) return false;
+    if (e.kind == ExprKind::MEMBER_ACCESS && e.left &&
+        e.left->kind == ExprKind::VARIABLE && e.left->str_val == n)
+        return text_fields->count(e.str_val) > 0;
+    if (e.kind == ExprKind::VARIABLE && e.str_val.size() > n.size() + 1 &&
+        e.str_val.compare(0, n.size(), n) == 0 && e.str_val[n.size()] == '.')
+        return text_fields->count(e.str_val.substr(n.size() + 1)) > 0;
+    return false;
+}
+
 // Does n stand anywhere as a value of its own: returned, passed, stored,
 // assigned or captured? A field read (n.f), a field write (n.f = v) and a
 // method call (n.m(...)) only reach into it.
-static bool udt_bare_in_expr(const Expr& e, const std::string& n) {
+static bool udt_bare_in_expr(const Expr& e, const std::string& n,
+                             const std::unordered_set<std::string>* text_fields = nullptr) {
+    // A text field handed to APPEND, PUSH or a FUNC may be kept there
+    // after the instance and its texts are gone.
+    if (e.kind == ExprKind::CALL && text_fields) {
+        std::string up = e.func_name;
+        for (auto& c : up) c = (char)toupper((unsigned char)c);
+        if (up == "APPEND" || up == "PUSH" || !builtin_sig(up))
+            for (auto& a : e.args) if (a && udt_text_field_read(*a, n, text_fields)) return true;
+    }
     if (e.kind == ExprKind::MEMBER_ACCESS && e.left &&
         e.left->kind == ExprKind::VARIABLE && e.left->str_val == n)
         return false;
     if (e.kind == ExprKind::VARIABLE && e.str_val == n) return true;
     if (e.func_name == n) return true;
     for (auto& c : e.lambda_captures) if (c == n) return true;
-    if (e.left && udt_bare_in_expr(*e.left, n)) return true;
-    if (e.right && udt_bare_in_expr(*e.right, n)) return true;
-    for (auto& a : e.args) if (a && udt_bare_in_expr(*a, n)) return true;
+    if (e.left && udt_bare_in_expr(*e.left, n, text_fields)) return true;
+    if (e.right && udt_bare_in_expr(*e.right, n, text_fields)) return true;
+    for (auto& a : e.args) if (a && udt_bare_in_expr(*a, n, text_fields)) return true;
     return false;
 }
 
-static bool udt_bare_in_stmt(const Stmt& s, const std::string& n, bool skip_dims) {
-    auto ex = [&](const ExprPtr& e) { return e && udt_bare_in_expr(*e, n); };
+static bool udt_bare_in_stmt(const Stmt& s, const std::string& n, bool skip_dims,
+                             const std::unordered_set<std::string>* text_fields = nullptr) {
+    auto ex = [&](const ExprPtr& e) { return e && udt_bare_in_expr(*e, n, text_fields); };
+    // A text field answered or stored into a cell or a field as it is
+    // outlives the instance; a variable takes a copy of it.
+    bool plain_target = (s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN ||
+                         s.kind == StmtKind::DIM) &&
+                        s.var_name.find('.') == std::string::npos && s.index_chain.empty();
+    if (s.expr && udt_text_field_read(*s.expr, n, text_fields) && !plain_target &&
+        (s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN || s.kind == StmtKind::DIM ||
+         s.kind == StmtKind::RETURN || s.kind == StmtKind::INDEX_ASSIGN))
+        return true;
     if (s.var_name == n) {
         bool its_dim = s.kind == StmtKind::DIM && skip_dims;
         bool field_write = s.kind == StmtKind::INDEX_ASSIGN;
@@ -6856,11 +6907,11 @@ static bool udt_bare_in_stmt(const Stmt& s, const std::string& n, bool skip_dims
     for (auto& br : s.branches) {
         if (ex(br.condition)) return true;
         for (auto& lab : br.case_labels) if (ex(lab.first) || ex(lab.second)) return true;
-        for (auto& b : br.body) if (b && udt_bare_in_stmt(*b, n, skip_dims)) return true;
+        for (auto& b : br.body) if (b && udt_bare_in_stmt(*b, n, skip_dims, text_fields)) return true;
     }
-    for (auto& b : s.body)           if (b && udt_bare_in_stmt(*b, n, skip_dims)) return true;
-    for (auto& c : s.catch_body())   if (c && udt_bare_in_stmt(*c, n, skip_dims)) return true;
-    for (auto& f : s.finally_body()) if (f && udt_bare_in_stmt(*f, n, skip_dims)) return true;
+    for (auto& b : s.body)           if (b && udt_bare_in_stmt(*b, n, skip_dims, text_fields)) return true;
+    for (auto& c : s.catch_body())   if (c && udt_bare_in_stmt(*c, n, skip_dims, text_fields)) return true;
+    for (auto& f : s.finally_body()) if (f && udt_bare_in_stmt(*f, n, skip_dims, text_fields)) return true;
     return false;
 }
 
@@ -6902,10 +6953,14 @@ std::unordered_set<std::string> LLVMCodegen::udt_free_candidates(
     std::unordered_set<std::string> out;
     for (auto& [name, type] : found) {
         if (mixed.count(name) || udt_types_leaking_this.count(type)) continue;
+        std::unordered_set<std::string> text_fields;
+        auto uit = udt_types.find(type);
+        if (uit != udt_types.end())
+            for (auto& f : uit->second) if (f.is_string) text_fields.insert(f.name);
         bool bare = false;
         for (size_t b = 0; b < bodies.size() && !bare; b++)
             for (auto& s : *bodies[b])
-                if (s && udt_bare_in_stmt(*s, name, b == 0)) { bare = true; break; }
+                if (s && udt_bare_in_stmt(*s, name, b == 0, &text_fields)) { bare = true; break; }
         if (!bare) out.insert(name);
     }
     return out;
@@ -8180,6 +8235,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             rhs = codegen_expr(*stmt.expr);
         }
     }
+    if (stmt.expr && stmt.var_name.find('.') == std::string::npos) copy_field_text(*stmt.expr, rhs);
     if (stmt.var_name.find('.') == std::string::npos)
         adopt_if_vm_handle(stmt.var_name, rhs,
                            stmt.kind == StmtKind::DIM && scopes.size() > 1);
@@ -9479,6 +9535,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         }
         if (!bound) rhs = codegen_expr(*stmt.expr);
     }
+    if (stmt.expr) copy_field_text(*stmt.expr, rhs);
     adopt_if_vm_handle(stmt.var_name, rhs, scopes.size() > 1);
     // A local that a later assignment feeds from an index read holds its
     // value with a tag from the start, so a read placed before that
@@ -11903,6 +11960,7 @@ void LLVMCodegen::codegen_type_decl(const Stmt& stmt) {
                 for (auto& s : method->body) if (s && answers_text(*s)) { returns_str = true; break; }
             }
             int ret_tag = is_sub ? -1 : (returns_str ? 2 : 1);
+            if (!is_sub && !returns_str && method->return_type == VarType::BOOLEAN) ret_tag = JD_TAG_BOOL;
 
             // Build parameter types from declared params. The parser already
             // added THIS as the first param with type OBJECT. Other params
@@ -11935,7 +11993,7 @@ void LLVMCodegen::codegen_type_decl(const Stmt& stmt) {
                 }
             }
             LLVMTypeRef mft = LLVMFunctionType(
-                is_sub ? void_type : (returns_str ? i8_ptr_type : f64_type),
+                is_sub ? void_type : (returns_str ? i8_ptr_type : ret_tag == JD_TAG_BOOL ? i64_type : f64_type),
                 ptypes.data(), (unsigned)ptypes.size(), 0);
             LLVMValueRef mfn = LLVMAddFunction(module, method->func_name.c_str(), mft);
             user_functions[method->func_name] = { mfn, ret_tag, ptags };
