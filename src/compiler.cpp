@@ -1674,12 +1674,10 @@ void Compiler::compile_expr(const Expr& expr) {
             } else {
                 // Lambda with captures: [name, capture1, capture2, ...]
                 emit_constant(Value::make_string(lambda_name), expr.line);
-                for (auto& cap : expr.lambda_captures) {
-                    uint16_t cap_slot = resolve_var(cap);
-                    bool is_global = (scopes.size() <= 1);
-                    current_chunk().emit(is_global ? OpCode::LOAD_GLOBAL : OpCode::LOAD_VAR, expr.line);
-                    current_chunk().emit_u16(cap_slot, expr.line);
-                }
+                // A capture is read the way the name reads where the LAMBDA
+                // stands: a local or parameter there, else the global.
+                for (auto& cap : expr.lambda_captures)
+                    emit_var_load(cap, expr.line);
                 current_chunk().emit(OpCode::MAKE_ARRAY, expr.line);
                 current_chunk().emit_u16(static_cast<uint16_t>(1 + expr.lambda_captures.size()), expr.line);
             }

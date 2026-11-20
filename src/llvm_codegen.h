@@ -670,6 +670,9 @@ private:
     // their DIM keeps them runtime-typed instead of narrowing to the
     // initializer's kind.
     std::unordered_set<std::string> arith_runtime_globals;
+    // Statements the compiler writes itself (a destructuring split into one
+    // LET per target); kept for the life of the module.
+    std::vector<StmtPtr> synth_stmts;
     // Top-level names DIMmed to a table (rows), marked before the FUNCs and
     // SUBs that read them are compiled.
     std::unordered_set<std::string> table_globals;
@@ -690,7 +693,7 @@ private:
     // UDT type registry: type_name → list of {field_name, is_string, udt_type}
     // udt_type names the user type of a member declared AS <user type>,
     // empty for every other member.
-    struct UDTField { std::string name; bool is_string; std::string udt_type; bool is_map = false; };
+    struct UDTField { std::string name; bool is_string; std::string udt_type; bool is_map = false; bool is_bool = false; };
     std::unordered_map<std::string, std::vector<UDTField>> udt_types;
     void register_udt_fields(const Stmt& type_decl);
     const UDTField* udt_field(const std::string& type_name, const std::string& field_name);

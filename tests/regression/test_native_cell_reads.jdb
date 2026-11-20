@@ -1,0 +1,178 @@
+' Cells keep their kind on the way through builtins, FUNC parameters and
+' answers, channels, maps and destructuring: a text read out of SLICE, FILTER
+' or APPEND stays a text, an AWAIT result or a channel text sorts and groups
+' by what it holds, a numeric builtin over an array answers an array, and a
+' truth value answered by a FUNC or held in a field prints as one.
+'
+'   jdbasic tests/regression/test_native_cell_reads.jdb
+'   jdbasic -c tests/regression/test_native_cell_reads.jdb
+
+OPTION "EXPLICIT"
+
+DIM pass AS INTEGER = 0
+DIM fail AS INTEGER = 0
+
+SUB Check(what$, got$, want$)
+    IF got$ = want$ THEN
+        pass = pass + 1
+    ELSE
+        fail = fail + 1
+        PRINT "FAIL "; what$; ": got "; got$; ", want "; want$
+    ENDIF
+ENDSUB
+
+' Texts read out of SLICE and FILTER results.
+DIM levelCounts = TALLY(["INFO", "WARN", "INFO"])
+DIM levelNames = SLICE(levelCounts, 1, 0)
+Check("a text cell of SLICE in FORMAT$", FORMAT$("{}|{}", levelNames[0], levelNames[1]), "INFO|WARN")
+DIM longWords = FILTER(LAMBDA wd -> LEN(wd) > 3, ["lens", "ok", "beam"])
+Check("a text cell of FILTER in FORMAT$", FORMAT$("{} {}", longWords[0], longWords[1]), "lens beam")
+
+' A global filled by APPEND, read in a FUNC.
+DIM skus = []
+FOR EACH part$ IN SPLIT("BR-204|GS-110", "|")
+    skus = APPEND(skus, part$)
+NEXT
+FUNC SkuLine$(r)
+    RETURN FORMAT$("{:<8}|", skus[r])
+ENDFUNC
+Check("a global APPENDed with texts, read in a FUNC", SkuLine$(0) + SkuLine$(1), "BR-204  |GS-110  |")
+
+' Destructuring a row of TALLY.
+DIM who$ = ""
+DIM hits = 0
+DIM shown$ = ""
+FOR EACH pair IN TALLY(["db", "disk", "db"])
+    [who$, hits] = pair
+    shown$ = shown$ + who$ + "=" + STR$(hits) + " "
+NEXT
+Check("a TALLY row destructured", shown$, "db=2 disk=1 ")
+
+' A numeric builtin or arithmetic over an array answers an array.
+FUNC CashLeft(qty, px, startCash AS DOUBLE) AS DOUBLE
+    RETURN startCash - SUM(qty * px)
+ENDFUNC
+DIM rawTrades = [1.5, 2.5]
+DIM byFloor = FLOOR(rawTrades)
+Check("FLOOR of an array handed to a FUNC", STR$(CashLeft(byFloor, [2.0, 3.0], 10.0)), "2")
+FUNC WholePart(x)
+    RETURN TRUNC(x)
+ENDFUNC
+DIM whole = WholePart([-3.75, 2.25])
+Check("a FUNC answering TRUNC of its array parameter", FORMAT$("{} {} {}", LEN(whole), whole[0], whole[1]), "2 -3 2")
+
+' AWAIT results in an array literal.
+ASYNC FUNC CountJobs(jobs)
+    DIM handled = 0
+    DO
+        DIM job = CHAN.RECV(jobs)
+        IF CHAN.IS_EOF(job) THEN EXITDO
+        handled = handled + 1
+    LOOP
+    RETURN handled
+ENDFUNC
+DIM queueA = CHAN.OPEN(4)
+DIM queueB = CHAN.OPEN(4)
+DIM taskA = CountJobs(queueA)
+DIM taskB = CountJobs(queueB)
+CHAN.SEND queueA, 1
+CHAN.SEND queueA, 2
+CHAN.SEND queueB, 3
+CHAN.CLOSE queueA
+CHAN.CLOSE queueB
+DIM doneA = AWAIT taskA
+DIM doneB = AWAIT taskB
+DIM handledCounts = [doneA, doneB]
+Check("AWAIT results in an array literal", FORMAT$("{} {}", handledCounts[0], handledCounts[1]), "2 1")
+
+' Texts a channel hands over sort by their content.
+DIM results = CHAN.OPEN(8)
+CHAN.SEND results, "b x"
+CHAN.SEND results, "a y"
+CHAN.SEND results, "c z"
+CHAN.CLOSE results
+DIM received = []
+DO
+    DIM item = CHAN.RECV(results)
+    IF CHAN.IS_EOF(item) THEN EXITDO
+    received = APPEND(received, item)
+LOOP
+Check("SORT of texts from a channel", JOIN(SORT(received), ","), "a y,b x,c z")
+
+' AGG groups by the texts a JSON document holds.
+DIM cfg = JSON.PARSE("{""names"": [""fast"", ""slow""]}")
+DIM labels = []
+FOR EACH bucket IN [0, 1, 0, 1]
+    labels = APPEND(labels, cfg{"names"}[bucket])
+NEXT
+DIM means = AGG(labels, [10, 60, 20, 80], LAMBDA g -> MEAN(g))
+Check("AGG keyed by JSON texts", STR$(LEN(means)) + " " + STR$(means[0][1]) + " " + STR$(means[1][1]), "2 15 70")
+
+' A number global that takes a FOR EACH cell.
+DIM best = 0
+DIM bestAt = 0
+FOR EACH at, reading IN [3, 9, 4]
+    IF reading > best THEN
+        best = reading
+        bestAt = at
+    ENDIF
+NEXT
+Check("the largest cell found in a FOR EACH", STR$(bestAt) + " " + STR$(best), "1 9")
+
+' ISNONE on a map read by a key a FUNC answers, and on a nested map.
+DIM board = {}
+FUNC CellKey$(r, c)
+    RETURN STR$(r) + "," + STR$(c)
+ENDFUNC
+board{CellKey$(0, 1)} = "*"
+Check("ISNONE of a map miss by a FUNC key", STR$(ISNONE(board{CellKey$(2, 2)})) + " " + STR$(ISNONE(board{CellKey$(0, 1)})), STR$(TRUE) + " " + STR$(FALSE))
+DIM transitions = {"IDLE": {"press": "WAIT"}}
+DIM events = ["close", "press"]
+DIM allowed$ = ""
+FOR i = 0 TO 1
+    IF ISNONE(transitions{"IDLE"}{events[i]}) THEN allowed$ = allowed$ + "-" ELSE allowed$ = allowed$ + "+"
+NEXT
+Check("ISNONE of a nested map by a cell key", allowed$, "-+")
+
+' A text array against a text.
+DIM marks$ = "a*b*c**"
+Check("characters equal to a text", STR$(SUM((-marks$) = "*")), "4")
+
+' The characters of a text, written by a SUB.
+DIM sand$ = "o..."
+DIM cells = -sand$
+SUB DropGrain()
+    IF cells[0] = "o" THEN
+        cells[2] = "o"
+        cells[0] = "."
+    ENDIF
+ENDSUB
+DropGrain()
+Check("a SUB writing the characters of a text", JOIN(cells, ""), "..o.")
+
+' A LAMBDA in a SUB capturing a global.
+DIM car = 0
+DIM pending = [5, 2, 7]
+SUB Arrive()
+    pending = FILTER(LAMBDA USE(car) f -> f <> car, pending)
+ENDSUB
+car = 2
+Arrive()
+car = 5
+Arrive()
+Check("a LAMBDA in a SUB capturing a global", FORMAT$("{} {}", LEN(pending), pending[0]), "1 7")
+
+' A truth value answered by a FUNC and held in a field.
+FUNC HasPort(conf)
+    RETURN ("port" IN conf) ANDALSO conf{"port"} >= 1
+ENDFUNC
+TYPE Crossing
+    Waiting AS BOOLEAN
+ENDTYPE
+DIM light AS Crossing
+light.Waiting = TRUE
+Check("a FUNC answering a truth value", STR$(HasPort({"port": 8080})), STR$(TRUE))
+Check("a field declared AS BOOLEAN", STR$(light.Waiting), STR$(TRUE))
+
+PRINT pass; " passed, "; fail; " failed"
+IF fail > 0 THEN END 1

@@ -68,6 +68,8 @@ extern "C" int64_t jdrt_promote_handle(void* rt, int64_t h);
 extern "C" int32_t jdrt_val_kind(void* rt, int64_t h);
 extern "C" double jdrt_val_to_f64(void* rt, int64_t handle);
 extern "C" int64_t jdrt_val_truth(void* rt, int64_t handle);
+extern "C" const char* jdrt_val_to_str(void* rt, int64_t handle);
+extern "C" void jdrt_str_free(char* s);
 static inline double keep_vm_handle(double val, int32_t tag) {
     if (tag != JD_TAG_VM_HANDLE || !g_jdrt_handle) return val;
     union { double d; int64_t i; } u; u.d = val;
@@ -1070,7 +1072,10 @@ void jdb_array_set(JdbArray* arr, int64_t idx, double val) {
         rc_drop_cell_text(arr, idx);
         if (rc_holds_rows(arr)) rc_implicit_overwrite(arr, idx);
         if (arr->flags & JDB_ARR_OWNS_CHILDREN) rc_disown_cell(arr, arr->data[idx]);
-        arr->data[idx] = val;
+        // A number in a cell of a text array: the cell says so, or a reader
+        // that goes by the array's text bit takes it for a pointer.
+        if (arr_tagged(arr) || (arr->flags & 2)) put_kind(arr, idx, val, JD_TAG_F64);
+        else arr->data[idx] = val;
         return;
     }
     // As in the interpreter, a write outside the array is an error.
@@ -1445,6 +1450,42 @@ static const char* rt_cell_str(JdbArray* arr, int64_t i) {
 // Orders indices by the cells they name: strings by content, numbers by
 // value, a string after every number. Used by SORT and GRADE.
 static void jdb_order_indices(JdbArray* arr, std::vector<int64_t>& idx) {
+    // A VM value (a text a channel handed over) is read once, as the text or
+    // number it holds, and ordered as one.
+    bool has_vm = false;
+    if ((arr->flags & 8) && arr->elem_tags && g_jdrt_handle)
+        for (int64_t i = 0; i < arr->length && !has_vm; i++)
+            has_vm = arr->elem_tags[i] == JD_TAG_VM_HANDLE;
+    if (has_vm) {
+        std::vector<int8_t> is_str((size_t)arr->length, 0);
+        std::vector<std::string> text((size_t)arr->length);
+        std::vector<double> num((size_t)arr->length, 0.0);
+        for (int64_t i = 0; i < arr->length; i++) {
+            if (arr->elem_tags[i] == JD_TAG_VM_HANDLE) {
+                union { double d; int64_t b; } u; u.d = arr->data[i];
+                if (jdrt_val_kind(g_jdrt_handle, u.b) == 3) {
+                    const char* s = jdrt_val_to_str(g_jdrt_handle, u.b);
+                    text[(size_t)i] = s ? s : "";
+                    if (s) jdrt_str_free((char*)s);
+                    is_str[(size_t)i] = 1;
+                } else {
+                    num[(size_t)i] = jdrt_val_to_f64(g_jdrt_handle, u.b);
+                }
+            } else if (rt_cell_is_str(arr, i)) {
+                text[(size_t)i] = rt_cell_str(arr, i);
+                is_str[(size_t)i] = 1;
+            } else {
+                num[(size_t)i] = arr->data[i];
+            }
+        }
+        idx = jdb_shape::order(arr->length, [&](int64_t a, int64_t b) {
+            bool sa = is_str[(size_t)a] != 0, sb = is_str[(size_t)b] != 0;
+            if (sa && sb) return text[(size_t)a] < text[(size_t)b];
+            if (sa != sb) return !sa;
+            return num[(size_t)a] < num[(size_t)b];
+        });
+        return;
+    }
     idx = jdb_shape::order(arr->length, [&](int64_t a, int64_t b) {
         bool sa = rt_cell_is_str(arr, a), sb = rt_cell_is_str(arr, b);
         if (sa && sb) return strcmp(rt_cell_str(arr, a), rt_cell_str(arr, b)) < 0;
@@ -1631,8 +1672,6 @@ void jdb_tagged_arr_set(int64_t base, int32_t base_tag, int64_t idx, int64_t bit
     jdb_err_set("Cannot index-assign into this type", 11);
 }
 
-extern "C" const char* jdrt_val_to_str(void* rt, int64_t handle);
-extern "C" void jdrt_str_free(char* s);
 extern "C" void jdrt_obj_set_tagged(void* rt, int64_t h, const char* key, int64_t bits, int32_t tag);
 extern "C" void jdb_rc_adopt_cell(int64_t parent_bits, int64_t idx, int64_t child_bits);
 extern "C" void jdb_rc_adopt(int64_t parent_bits, int64_t child_bits);
@@ -3014,11 +3053,21 @@ JdbArray* jdb_array_cmp_scalar_str(JdbArray* a, const char* s, int32_t op) {
         auto* r = jdb_array_new(a->length);
         jdb_array_set_bool_elems(r);
         const char* sval = s ? s : "";
+        bool all_text = (op & 256) != 0;
+        op &= 255;
         for (int64_t i = 0; i < a->length; i++) {
-            union { double d; intptr_t p; } u; u.d = a->data[i];
-            const char* cell = (const char*)u.p;
-            if (!cell) cell = "";
-            int64_t c = jdb_str_cmp(cell, sval);
+            union { double d; intptr_t p; int64_t b; } u; u.d = a->data[i];
+            // A cell that holds no text equals no text and orders before it.
+            int64_t c = -1;
+            if (all_text || rt_cell_is_str(a, i)) {
+                const char* cell = (const char*)u.p;
+                c = jdb_str_cmp(cell ? cell : "", sval);
+            } else if ((a->flags & 8) && a->elem_tags && a->elem_tags[i] == JD_TAG_VM_HANDLE &&
+                       g_jdrt_handle && jdrt_val_kind(g_jdrt_handle, u.b) == 3) {
+                const char* vt = jdrt_val_to_str(g_jdrt_handle, u.b);
+                c = jdb_str_cmp(vt ? vt : "", sval);
+                if (vt) jdrt_str_free((char*)vt);
+            }
             bool result;
             switch (op) {
                 case 0:  result = (c == 0); break;
@@ -7186,8 +7235,27 @@ JdbArray* jdb_agg_fn(JdbMapFn reducer, JdbArray* keys, JdbArray* vals, int32_t r
             for (int64_t i = 0; i < n; i++) {
                 double kc = keys->data[i];
                 int kk = cell_kind(keys, i);
+                std::string vm_text;
+                bool vm_is_text = false;
+                if (kk == JD_TAG_VM_HANDLE && g_jdrt_handle) {
+                    // A VM value groups by the text or number it holds.
+                    union { double d; int64_t b; } u; u.d = kc;
+                    if (jdrt_val_kind(g_jdrt_handle, u.b) == 3) {
+                        const char* s = jdrt_val_to_str(g_jdrt_handle, u.b);
+                        vm_text = s ? s : "";
+                        if (s) jdrt_str_free((char*)s);
+                        vm_is_text = true;
+                    } else {
+                        double d = jdrt_val_to_f64(g_jdrt_handle, u.b);
+                        std::string hn(1, (char)JD_TAG_F64);
+                        hn.append((const char*)&d, sizeof d);
+                        vm_text = hn;
+                    }
+                }
                 std::string hk(1, kind_is_num(kk) ? (char)JD_TAG_F64 : (char)kk);
-                if (kk == JD_TAG_STR) {
+                if (kk == JD_TAG_VM_HANDLE && g_jdrt_handle) {
+                    hk = vm_is_text ? std::string(1, (char)JD_TAG_STR) + vm_text : vm_text;
+                } else if (kk == JD_TAG_STR) {
                     jdb_text::View s = text_in(decode_str(kc));
                     hk.append(s.p ? s.p : "", s.n);
                 } else {

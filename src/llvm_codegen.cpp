@@ -1375,6 +1375,13 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         }
         return false;
     };
+    // A variable names a global only where top-level statements are read;
+    // in a body it may be a parameter or local of the same name.
+    bool infer_reads_globals = false;
+    auto arr_operand = [&](const Expr& e, const std::function<int(const Expr&)>& inf) {
+        if (e.kind == ExprKind::VARIABLE && !infer_reads_globals) return false;
+        return inf(e) == JD_TAG_ARR;
+    };
     std::function<int(const Expr&)> infer_expr_tag = [&](const Expr& e) -> int {
         if (e.kind == ExprKind::ARRAY_LITERAL) return JD_TAG_ARR;
         if (e.kind == ExprKind::MAP_LITERAL)   return JD_TAG_NATIVE_MAP;
@@ -1383,6 +1390,15 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         if (e.kind == ExprKind::BINARY && e.op == TokenType::COALESCE && e.left &&
             e.left->kind == ExprKind::INDEX)
             return JD_TAG_RUNTIME;
+        // -text$ answers the text's characters.
+        if (e.kind == ExprKind::UNARY && e.op == TokenType::MINUS && e.right &&
+            infer_expr_tag(*e.right) == JD_TAG_STR)
+            return JD_TAG_ARR;
+        // Arithmetic with an array on either side answers an array.
+        if (e.kind == ExprKind::BINARY && e.op != TokenType::COALESCE &&
+            ((e.left && arr_operand(*e.left, infer_expr_tag)) ||
+             (e.right && arr_operand(*e.right, infer_expr_tag))))
+            return JD_TAG_ARR;
         // A member of a variable that holds an object is known only at run time.
         auto on_object = [&](const std::string& dotted) {
             size_t dp = dotted.find('.');
@@ -1402,6 +1418,15 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         if (e.kind == ExprKind::CALL) {
             if (!e.func_name.empty() && e.func_name.back() == '$') return JD_TAG_STR;
             if (on_object(e.func_name)) return JD_TAG_RUNTIME;
+            // A numeric builtin applied to an array answers one number per cell.
+            {
+                std::string up = e.func_name;
+                for (auto& c : up) c = (char)toupper((unsigned char)c);
+                if (!e.args.empty() && e.args[0] && builtin_sig(up) && !builtin_has(up, BF_NO_VEC) &&
+                    (builtin_is(up, BuiltinRet::F64) || builtin_is(up, BuiltinRet::I64)) &&
+                    arr_operand(*e.args[0], infer_expr_tag))
+                    return JD_TAG_ARR;
+            }
             auto rit = runtime_funcs.find(e.func_name);
             if (rit != runtime_funcs.end()) return rit->second.return_tag;
             auto fit = decls.find(e.func_name);
@@ -1446,7 +1471,11 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             else if (s.var_type == VarType::STRING) t = JD_TAG_STR;
             else if (s.var_type == VarType::OBJECT) t = JD_TAG_NATIVE_MAP;
             else if (dollar_string) t = JD_TAG_STR;
-            else if (s.expr) t = infer_expr_tag(*s.expr);
+            else if (s.expr) {
+                infer_reads_globals = true;
+                t = infer_expr_tag(*s.expr);
+                infer_reads_globals = false;
+            }
             auto it = pre_var_tags.find(s.var_name);
             // Promote only - don't downgrade from ARR to F64 via later
             // scalar reassignment.
@@ -1479,6 +1508,10 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 if (u == "IOTA" || u == "ZEROS" || u == "ONES" || u == "RANGE" || u == "LINSPACE")
                     number_array_vars.insert(s.var_name);
             }
+            if (s.kind == StmtKind::DIM && s.expr && s.expr->kind == ExprKind::UNARY &&
+                s.expr->op == TokenType::MINUS && s.expr->right &&
+                infer_expr_tag(*s.expr->right) == JD_TAG_STR)
+                string_array_vars.insert(s.var_name);
         }
     };
     for (auto& stmt : program) {
@@ -1501,6 +1534,27 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             for (auto& f : s.finally_body()) if (f) find_loop_vars(*f);
         };
         for (auto& stmt : program) if (stmt) find_loop_vars(*stmt);
+    }
+    // A global the main program fills from a builtin whose cells differ in
+    // kind (`skus = APPEND(skus, fields[1])`) reads per cell in every function
+    // body too, which is generated before the main program marks it.
+    {
+        std::function<void(const Stmt&)> find_tagged_fills = [&](const Stmt& s) {
+            if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB) return;
+            if ((s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN) &&
+                !s.var_name.empty() && s.var_name.back() != '$' && s.index_chain.empty() &&
+                s.expr && s.expr->kind == ExprKind::CALL && !s.expr->func_name.empty() &&
+                !decls.count(s.expr->func_name)) {
+                std::string u = s.expr->func_name;
+                for (auto& c : u) c = (char)toupper((unsigned char)c);
+                if (builtin_has(u, BF_TAGGED_CELLS)) mixed_array_vars.insert(s.var_name);
+            }
+            for (auto& b : s.body) if (b) find_tagged_fills(*b);
+            for (auto& br : s.branches) for (auto& b : br.body) if (b) find_tagged_fills(*b);
+            for (auto& c : s.catch_body()) if (c) find_tagged_fills(*c);
+            for (auto& f : s.finally_body()) if (f) find_tagged_fills(*f);
+        };
+        for (auto& stmt : program) if (stmt) find_tagged_fills(*stmt);
     }
     // A top-level $ name that is handed an array (SPLIT and the like), in a
     // loop or a branch too, holds an array whatever its name says; a call
@@ -1712,6 +1766,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 // so a site handing a pointer kind meets it as a conflict
                 int t = infer_expr_tag(a);
                 if (t == JD_TAG_I64 || jd_is_f64_tag(t)) return JD_TAG_F64;
+                if (t == JD_TAG_ARR) return JD_TAG_ARR;
                 return 0;
             }
             case ExprKind::CALL: {
@@ -1724,6 +1779,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 for (auto& c : up) c = (char)toupper((unsigned char)c);
                 if (!builtin_sig(up)) return 0;
                 if (up.back() == '$') return JD_TAG_STR;
+                if (infer_expr_tag(a) == JD_TAG_ARR) return JD_TAG_ARR;
                 if (builtin_is(up, BuiltinRet::F64) || builtin_is(up, BuiltinRet::I64) ||
                     builtin_is(up, BuiltinRet::Bool))
                     return JD_TAG_F64;
@@ -3943,10 +3999,11 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         for (auto& b : decl.stmt->body) if (b) walk(*b);
         bool named = decl.return_tag == JD_TAG_ARR || decl.return_tag == JD_TAG_NATIVE_MAP ||
                      decl.return_tag == JD_TAG_STR || decl.return_tag == JD_TAG_VM_HANDLE;
-        if (dynamic || kinds.size() > 1 || (index_dynamic && !named))
-            decl.return_tag = JD_TAG_RUNTIME;
-        else if (any_answer && all_truth && decl.return_tag == JD_TAG_F64)
+        // A comparison or logic answers a truth value whatever it reads.
+        if (any_answer && all_truth && decl.return_tag == JD_TAG_F64)
             decl.return_tag = JD_TAG_BOOL;
+        else if (dynamic || kinds.size() > 1 || (index_dynamic && !named))
+            decl.return_tag = JD_TAG_RUNTIME;
         // Every answer a string, one read from a local declared AS STRING
         // among them: the FUNC answers a string.
         else if (any_answer && !unknown_answer && kinds.size() == 1 &&
@@ -4052,6 +4109,39 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 for (auto& b : br.body)      if (b && hands_back(*b, pname)) return true;
             return false;
         };
+        // Arithmetic and numeric builtins over an array parameter answer
+        // one number per cell: `RETURN x - TRUNC(x)`.
+        std::function<bool(const Expr&, const std::string&)> per_cell_of =
+            [&](const Expr& e, const std::string& pname) -> bool {
+            if (e.kind == ExprKind::VARIABLE) return e.str_val == pname;
+            if (e.kind == ExprKind::UNARY && e.op == TokenType::MINUS)
+                return e.right ? per_cell_of(*e.right, pname) : (e.left && per_cell_of(*e.left, pname));
+            if (e.kind == ExprKind::BINARY &&
+                (e.op == TokenType::PLUS || e.op == TokenType::MINUS ||
+                 e.op == TokenType::STAR || e.op == TokenType::SLASH))
+                return (e.left && per_cell_of(*e.left, pname)) ||
+                       (e.right && per_cell_of(*e.right, pname));
+            if (e.kind == ExprKind::CALL && !e.args.empty() && e.args[0] && !decls.count(e.func_name)) {
+                std::string up = e.func_name;
+                for (auto& c : up) c = (char)toupper((unsigned char)c);
+                return builtin_sig(up) && !builtin_has(up, BF_NO_VEC) &&
+                       (builtin_is(up, BuiltinRet::F64) || builtin_is(up, BuiltinRet::I64)) &&
+                       per_cell_of(*e.args[0], pname);
+            }
+            return false;
+        };
+        std::function<bool(const Stmt&, const std::string&)> answers_per_cell =
+            [&](const Stmt& s2, const std::string& pname) -> bool {
+            if (s2.kind == StmtKind::RETURN && s2.expr && s2.expr->kind != ExprKind::VARIABLE &&
+                per_cell_of(*s2.expr, pname))
+                return true;
+            for (auto& b : s2.body)          if (b && answers_per_cell(*b, pname)) return true;
+            for (auto& c : s2.catch_body())  if (c && answers_per_cell(*c, pname)) return true;
+            for (auto& f : s2.finally_body())if (f && answers_per_cell(*f, pname)) return true;
+            for (auto& br : s2.branches)
+                for (auto& b : br.body)      if (b && answers_per_cell(*b, pname)) return true;
+            return false;
+        };
         for (auto& [name, decl] : decls) {
             if (decl.return_tag != JD_TAG_F64 || !decl.stmt) continue;
             for (size_t pi = 0; pi < decl.stmt->params().size() && pi < decl.tags.size(); pi++) {
@@ -4059,6 +4149,11 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 if ((pt == JD_TAG_STR || pt == JD_TAG_ARR || pt == JD_TAG_NATIVE_MAP) &&
                     hands_back(*decl.stmt, decl.stmt->params()[pi].name)) {
                     decl.return_tag = pt;
+                    break;
+                }
+                if (pt == JD_TAG_ARR && decl.stmt->return_type == VarType::NONE &&
+                    answers_per_cell(*decl.stmt, decl.stmt->params()[pi].name)) {
+                    decl.return_tag = JD_TAG_ARR;
                     break;
                 }
             }
@@ -5261,7 +5356,12 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                         if (lt == JD_TAG_F64 || rt == JD_TAG_F64) return JD_TAG_F64;
                         return JD_TAG_I64;
                     }
-                    if (e->kind == ExprKind::UNARY) return infer_tag(e->right.get());
+                    if (e->kind == ExprKind::UNARY) {
+                        int inner = infer_tag(e->right.get());
+                        // -text$ answers the text's characters.
+                        if (e->op == TokenType::MINUS && inner == JD_TAG_STR) return JD_TAG_ARR;
+                        return inner;
+                    }
                     if (e->kind == ExprKind::PIPE_EXPR) {
                         if (!e->right) return -1;
                         // LAMBDA right: scalar pipe returns f64, array pipe stays array.
@@ -5483,6 +5583,18 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
     // garbage at runtime. Pre-upgrade such globals now so every consumer
     // agrees on the tagged read path.
     {
+        // FOR EACH variables of the main program that carry each element's
+        // own tag; their slots are made later, when the loop is compiled.
+        std::unordered_set<std::string> tagged_loop_vars;
+        std::function<void(const Stmt*)> find_loops = [&](const Stmt* s) {
+            if (!s || s->kind == StmtKind::FUNCTION || s->kind == StmtKind::SUB) return;
+            if (foreach_var_is_tagged(*s)) tagged_loop_vars.insert(s->var_name);
+            for (auto& b : s->body) find_loops(b.get());
+            for (auto& br : s->branches) for (auto& b : br.body) find_loops(b.get());
+            for (auto& c : s->catch_body()) find_loops(c.get());
+            for (auto& f : s->finally_body()) find_loops(f.get());
+        };
+        for (auto& st : program) find_loops(st.get());
         std::function<bool(const Expr*)> may_be_rtag = [&](const Expr* e) -> bool {
             if (!e) return false;
             // INDEX on anything: string-keyed map access and runtime-tagged
@@ -5491,6 +5603,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
             if (e->kind == ExprKind::VARIABLE) {
                 VarInfo* v = lookup_var(e->str_val);
                 if (v && v->tag == JD_TAG_RUNTIME) return true;
+                if (!v && tagged_loop_vars.count(e->str_val)) return true;
                 return false;
             }
             if (e->kind == ExprKind::CALL) {
@@ -5543,8 +5656,13 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                 };
                 bool numeric_global = g && (g->tag == JD_TAG_I64 || g->tag == JD_TAG_F64);
                 bool by_arith = false;
+                // `best = w` with w a runtime-typed variable hands its tag on
+                // the same way.
+                bool copies_rt_var = s->kind != StmtKind::DIM &&
+                                     s->expr->kind == ExprKind::VARIABLE && may_be_rtag(s->expr.get());
                 if (g && !declared_string && !declared_number && g->tag != JD_TAG_RUNTIME &&
-                    !may_be_rtag(s->expr.get()) && numeric_global && arith_rtag(s->expr.get())) {
+                    (copies_rt_var || !may_be_rtag(s->expr.get())) && numeric_global &&
+                    arith_rtag(s->expr.get())) {
                     by_arith = true;
                     arith_runtime_globals.insert(s->var_name);
                 }
@@ -6049,6 +6167,18 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
             }
             // [a, b, c] = expr - evaluate expr, then assign each element.
             if (!stmt.expr) break;
+            // [a$, n] = row with row a variable: each target is `a$ = row[0]`,
+            // so a cell is read with its own kind whatever row turns out to be.
+            if (stmt.expr->kind == ExprKind::VARIABLE) {
+                for (size_t i = 0; i < stmt.destruct_vars().size(); i++) {
+                    synth_stmts.push_back(make_let(stmt.destruct_vars()[i], VarType::NONE,
+                        make_index(make_var(stmt.expr->str_val, stmt.line),
+                                   make_int_lit((int64_t)i, stmt.line), stmt.line),
+                        stmt.line));
+                    codegen_stmt(*synth_stmts.back());
+                }
+                break;
+            }
             TypedValue arr = codegen_expr(*stmt.expr);
             if (arr.tag != JD_TAG_ARR) break;  // not an array, can't destructure
             auto& get_fn = runtime_funcs["__array_get"];
@@ -8804,7 +8934,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         // function answers its result beside the buffers.
         if (u == "REGEX.FINDALL" || u == "REGEX.MATCH" || u == "REGEX_FINDALL" ||
             u == "REGEX_MATCH" || u == "MAP.VALUES" || u == "MAP.ITEMS" ||
-            u == "UNPACK" || ffi_array_returners.count(u))
+            u == "UNPACK" || ffi_array_returners.count(u) || builtin_has(u, BF_TAGGED_CELLS))
             mixed_array_vars.insert(stmt.var_name);
         // Builtins that answer a table: rows taken out of the result read
         // their cells per kind.
@@ -11421,7 +11551,7 @@ void LLVMCodegen::register_udt_fields(const Stmt& stmt) {
         std::string nested = (mem.type == VarType::OBJECT) ? mem.type_name : std::string();
         // AS MAP parses to OBJECT without a type name.
         bool is_map = mem.type == VarType::OBJECT && mem.type_name.empty();
-        fields.push_back({ mem.name, is_str, nested, is_map });
+        fields.push_back({ mem.name, is_str, nested, is_map, mem.type == VarType::BOOLEAN });
     }
     udt_types[stmt.func_name] = fields;
 }
@@ -11669,6 +11799,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     // bit would claim it is an array, and a string cell read
                     // back as one is dereferenced as a pointer to nothing.
                     if (e.tag == JD_TAG_RUNTIME && e.runtime_tag) any_runtime = true;
+                    // A VM value (an AWAIT result, a number the VM answered)
+                    // is kept and read through its cell tag.
+                    if (e.tag == JD_TAG_VM_HANDLE) any_runtime = true;
                     if (e.tag == JD_TAG_ARR || e.tag == JD_TAG_STR ||
                         e.tag == JD_TAG_NATIVE_MAP || e.tag == JD_TAG_VM_HANDLE)
                         saw_ptr_elem = true;
@@ -11927,6 +12060,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                             LLVMValueRef args[] = { obj_ptr, field_str };
                             LLVMValueRef result = LLVMBuildCall2(builder, get_fn.fn_type,
                                                     get_fn.fn, args, 2, "fget");
+                            if (leaf_fld && leaf_fld->is_bool)
+                                return { LLVMBuildFPToSI(builder, result, i64_type, "fbool"), JD_TAG_BOOL };
                             return { result, JD_TAG_F64 };
                         }
                     }
@@ -12084,12 +12219,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             // with a string field of the same name says nothing about it.
             bool owner_known = false;
             bool is_map_field = false;
+            bool is_bool_field = false;
             if (!is_str_field && expr.left) {
                 std::string owner = expr_udt_type(*expr.left);
                 if (const UDTField* f = owner.empty() ? nullptr : udt_field(owner, field_name)) {
                     owner_known = true;
                     is_str_field = f->is_string;
                     is_map_field = f->is_map;
+                    is_bool_field = f->is_bool;
                 }
             }
             if (!is_str_field && !owner_known && expr.left) {
@@ -12127,6 +12264,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 if (is_map_field)
                     return { LLVMBuildIntToPtr(builder, pun_f64_to_i64(result), i8_ptr_type, "fmap"),
                              JD_TAG_NATIVE_MAP };
+                if (is_bool_field)
+                    return { LLVMBuildFPToSI(builder, result, i64_type, "fbool"), JD_TAG_BOOL };
                 return { result, JD_TAG_F64 };
             }
         }
@@ -12957,6 +13096,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
 
                 // UDT field access
                 bool is_str_field = false;
+                bool is_bool_field = false;
                 if (expr.right->kind == ExprKind::LITERAL_STRING) {
                     const std::string& fname = expr.right->str_val;
                     {
@@ -12976,6 +13116,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                         if (const UDTField* f = owner.empty() ? nullptr : udt_field(owner, fname)) {
                             owner_known = true;
                             is_str_field = f->is_string;
+                            is_bool_field = f->is_bool;
                         }
                     }
                     if (!is_str_field && !owner_known) {
@@ -12993,7 +13134,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 }
                 auto& gf = runtime_funcs["__udt_get_f64"];
                 LLVMValueRef args[] = { obj_ptr, idx_tv.val };
-                return { LLVMBuildCall2(builder, gf.fn_type, gf.fn, args, 2, "ugetf"), JD_TAG_F64 };
+                LLVMValueRef fv = LLVMBuildCall2(builder, gf.fn_type, gf.fn, args, 2, "ugetf");
+                if (is_bool_field)
+                    return { LLVMBuildFPToSI(builder, fv, i64_type, "ugetb"), JD_TAG_BOOL };
+                return { fv, JD_TAG_F64 };
             }
 
             // An array of positions gathers, whatever the base's own kind is
@@ -14545,12 +14689,13 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             // path would otherwise compare punned-pointer bits or, for
             // a JD_TAG_STR rhs, hand a ptr to a function expecting f64
             // and produce invalid IR).
-            if (cmp_op >= 0 && rhs.tag == JD_TAG_STR && expr.left &&
-                expr.left->kind == ExprKind::VARIABLE &&
-                string_array_vars.count(expr.left->str_val)) {
+            if (cmp_op >= 0 && rhs.tag == JD_TAG_STR) {
+                // 256: the compiler knows every cell is text.
+                bool all_text = expr.left && expr.left->kind == ExprKind::VARIABLE &&
+                                string_array_vars.count(expr.left->str_val);
                 auto& fn = runtime_funcs["__arr_cmp_scalar_str"];
                 LLVMValueRef args[] = { lhs.val, rhs.val,
-                                        LLVMConstInt(i32_type, cmp_op, 0) };
+                                        LLVMConstInt(i32_type, cmp_op | (all_text ? 256 : 0), 0) };
                 return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "acmps"), JD_TAG_ARR };
             }
             LLVMValueRef scalar = coerce_to(rhs, f64_type);
@@ -14569,12 +14714,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             // scalar OP arr - same dispatch with sides flipped, so an
             // ordering compare is mirrored: s < a is a > s.
             cmp_op = mirror_cmp_op(cmp_op);
-            if (cmp_op >= 0 && lhs.tag == JD_TAG_STR && expr.right &&
-                expr.right->kind == ExprKind::VARIABLE &&
-                string_array_vars.count(expr.right->str_val)) {
+            if (cmp_op >= 0 && lhs.tag == JD_TAG_STR) {
+                bool all_text = expr.right && expr.right->kind == ExprKind::VARIABLE &&
+                                string_array_vars.count(expr.right->str_val);
                 auto& fn = runtime_funcs["__arr_cmp_scalar_str"];
                 LLVMValueRef args[] = { rhs.val, lhs.val,
-                                        LLVMConstInt(i32_type, cmp_op, 0) };
+                                        LLVMConstInt(i32_type, cmp_op | (all_text ? 256 : 0), 0) };
                 return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "acmps"), JD_TAG_ARR };
             }
             LLVMValueRef scalar = coerce_to(lhs, f64_type);
@@ -18062,12 +18207,37 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         // The map value representation is unchanged (a miss still reads as 0 in
         // arithmetic); only ISNONE/ISNULL learn to spot the missing case.
         if (upper == "ISNONE" || upper == "ISNULL") {
+            // A key a call answers as text: CellKey$(r, c), or a FUNC whose
+            // answer is a string.
+            auto text_call = [&](const Expr& k) {
+                if (k.kind != ExprKind::CALL || k.func_name.empty()) return false;
+                if (k.func_name.back() == '$') return true;
+                auto uf = user_functions.find(k.func_name);
+                return uf != user_functions.end() && uf->second.return_tag == JD_TAG_STR;
+            };
             bool str_key = arg.kind == ExprKind::INDEX && arg.left && arg.right &&
-                (arg.right->kind == ExprKind::LITERAL_STRING ||
+                (arg.right->kind == ExprKind::LITERAL_STRING || text_call(*arg.right) ||
                  (arg.right->kind == ExprKind::VARIABLE && !arg.right->str_val.empty() &&
                   (arg.right->str_val.back() == '$' ||
                    [&] { VarInfo* kv = lookup_var(arg.right->str_val);
                          return kv && kv->tag == JD_TAG_STR; }())));
+            // A key read out of a cell (`events[i]`) is a map key when what it
+            // indexes is certainly a map: a map variable, or a field taken by
+            // a text key out of one.
+            if (!str_key && arg.kind == ExprKind::INDEX && arg.left && arg.right &&
+                arg.right->kind == ExprKind::INDEX) {
+                const Expr& b = *arg.left;
+                bool map_base = false;
+                if (b.kind == ExprKind::VARIABLE) {
+                    VarInfo* bv = lookup_var(b.str_val);
+                    map_base = bv && bv->tag == JD_TAG_NATIVE_MAP;
+                } else if (b.kind == ExprKind::INDEX && b.right) {
+                    map_base = b.right->kind == ExprKind::LITERAL_STRING ||
+                               (b.right->kind == ExprKind::VARIABLE && !b.right->str_val.empty() &&
+                                b.right->str_val.back() == '$');
+                }
+                str_key = map_base;
+            }
             if (str_key) {
                 TypedValue base = codegen_expr(*arg.left);
                 TypedValue key  = codegen_expr(*arg.right);
