@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="260" height="270" viewBox="0 0 260 270">
+  <defs>
+    <radialGradient id="skin" cx="0.45" cy="0.4" r="0.65">
+      <stop offset="0" stop-color="#ffeedf"/>
+      <stop offset="1" stop-color="#f5c7a4"/>
+    </radialGradient>
+    <linearGradient id="hair" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2e2f3e"/>
+      <stop offset="1" stop-color="#16161f"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffe680"/>
+      <stop offset="1" stop-color="#f0b429"/>
+    </linearGradient>
+  </defs>
+  <path d="M34 150 Q24 48 130 40 Q236 48 226 150 Q228 212 206 240 L54 240 Q32 212 34 150 Z" fill="url(#hair)"/>
+  <circle cx="130" cy="152" r="84" fill="url(#skin)"/>
+  <ellipse cx="80" cy="186" rx="17" ry="10" fill="#ff8a9a" opacity="0.6"/>
+  <ellipse cx="180" cy="186" rx="17" ry="10" fill="#ff8a9a" opacity="0.6"/>
+  <path d="M48 116 Q34 190 54 238 Q62 184 72 138 Z" fill="url(#hair)"/>
+  <path d="M212 116 Q226 190 206 238 Q198 184 188 138 Z" fill="url(#hair)"/>
+  <path d="M42 150 Q40 62 130 56 Q220 62 218 150 Q208 116 194 104 L186 122 Q174 104 158 100 L150 120 Q138 102 122 102 L112 122 Q100 104 84 106 L74 126 Q58 118 42 150 Z" fill="url(#hair)"/>
+  <path d="M76 80 Q100 66 124 64" fill="none" stroke="#5a6080" stroke-width="6" stroke-linecap="round" opacity="0.8"/>
+  <path d="M150 66 Q176 70 192 86" fill="none" stroke="#5a6080" stroke-width="5" stroke-linecap="round" opacity="0.6"/>
+  <path d="M88 132 Q101 126 114 131" fill="none" stroke="#1c1c26" stroke-width="5" stroke-linecap="round"/>
+  <path d="M146 131 Q159 126 172 132" fill="none" stroke="#1c1c26" stroke-width="5" stroke-linecap="round"/>
+  <g transform="rotate(-10 130 40)">
+    <path d="M98 50 L92 16 L112 34 L130 8 L148 34 L168 16 L162 50 Z" fill="url(#gold)" stroke="#d49a1c" stroke-width="3" stroke-linejoin="round"/>
+    <rect x="96" y="44" width="68" height="11" rx="4" fill="url(#gold)" stroke="#d49a1c" stroke-width="3"/>
+    <circle cx="92" cy="15" r="5" fill="#ffffff"/>
+    <circle cx="130" cy="7" r="6" fill="#ffffff"/>
+    <circle cx="168" cy="15" r="5" fill="#ffffff"/>
+    <circle cx="130" cy="36" r="7" fill="#e8344a"/>
+    <circle cx="112" cy="40" r="4.5" fill="#3aa0e8"/>
+    <circle cx="148" cy="40" r="4.5" fill="#3aa0e8"/>
+    <circle cx="128" cy="33" r="2.5" fill="#ffffff" opacity="0.8"/>
+  </g>
+</svg>

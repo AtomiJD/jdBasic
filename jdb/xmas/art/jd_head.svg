@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="260" height="270" viewBox="0 0 260 270">
+  <defs>
+    <radialGradient id="skin" cx="0.42" cy="0.32" r="0.7">
+      <stop offset="0" stop-color="#ffeadc"/>
+      <stop offset="1" stop-color="#f3b896"/>
+    </radialGradient>
+    <linearGradient id="hair" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#c79a6e"/>
+      <stop offset="1" stop-color="#a87a52"/>
+    </linearGradient>
+  </defs>
+  <ellipse cx="44" cy="160" rx="17" ry="23" fill="#f3b896"/>
+  <ellipse cx="216" cy="160" rx="17" ry="23" fill="#f3b896"/>
+  <ellipse cx="46" cy="160" rx="8" ry="13" fill="#e89c7c"/>
+  <ellipse cx="214" cy="160" rx="8" ry="13" fill="#e89c7c"/>
+  <circle cx="130" cy="148" r="90" fill="url(#skin)"/>
+  <path d="M44 150 Q40 116 54 98 Q60 120 64 146 Z" fill="url(#hair)"/>
+  <path d="M216 150 Q220 116 206 98 Q200 120 196 146 Z" fill="url(#hair)"/>
+  <ellipse cx="102" cy="88" rx="34" ry="18" fill="#ffffff" opacity="0.45" transform="rotate(-18 102 88)"/>
+  <ellipse cx="86" cy="80" rx="10" ry="5" fill="#ffffff" opacity="0.6" transform="rotate(-18 86 80)"/>
+  <ellipse cx="78" cy="186" rx="18" ry="10" fill="#ff8a8a" opacity="0.6"/>
+  <ellipse cx="182" cy="186" rx="18" ry="10" fill="#ff8a8a" opacity="0.6"/>
+  <path d="M86 130 Q100 123 114 129" fill="none" stroke="#b08458" stroke-width="5" stroke-linecap="round"/>
+  <path d="M146 129 Q160 123 174 130" fill="none" stroke="#b08458" stroke-width="5" stroke-linecap="round"/>
+</svg>

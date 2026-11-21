@@ -39,6 +39,14 @@ art/vally_head.rgbz
 art/vally_leg.rgbz
 art/vally_tail.rgbz
 art/vally_torso.rgbz
+art/loni_arm.rgbz
+art/loni_head.rgbz
+art/loni_leg.rgbz
+art/loni_torso.rgbz
+art/jd_arm.rgbz
+art/jd_head.rgbz
+art/jd_leg.rgbz
+art/jd_torso.rgbz
 art/bg_room.jpg 540x960
 art/bg_snow.jpg 540x960
 art/bg_workshop.jpg 540x960

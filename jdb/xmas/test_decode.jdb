@@ -153,6 +153,8 @@ DIM tr = XMASPLAY.DECODE(XMASPLAY.ENCODE$(trio))
 Check(NOT ISNONE(tr) ANDALSO JSON.STRINGIFY$(tr{"s"}[0]{"c"}) = JSON.STRINGIFY$(["pip", "rudi", "pino"]), "every known figure keeps its place in the cast")
 DIM bunnies = XMASPLAY.CLEAN({"f": "a", "t": "b", "s": [{"b": "snow", "c": ["hasi", "vally", "moehrchen"], "l": [[1, "hallo"]]}]})
 Check(NOT ISNONE(bunnies) ANDALSO JSON.STRINGIFY$(bunnies{"s"}[0]{"c"}) = JSON.STRINGIFY$(["hasi", "vally", "moehrchen"]), "the three bunnies keep their places in the cast")
+DIM couple = XMASPLAY.CLEAN({"f": "a", "t": "b", "s": [{"b": "room", "c": ["loni", "jd"], "l": [[1, "hallo"]]}]})
+Check(NOT ISNONE(couple) ANDALSO JSON.STRINGIFY$(couple{"s"}[0]{"c"}) = JSON.STRINGIFY$(["loni", "jd"]), "Loni and JD keep their places in the cast")
 Check(NOT ISNONE(tr) ANDALSO tr{"s"}[0]{"l"}[0][0] = 2, "a bubble keeps its third speaker")
 ' actions between the bubbles keep their order; too many are cut, unknown ones and wrong figures are mended
 DIM mixed = {"f": "a", "t": "b", "s": [{"b": "room", "c": ["santa", "lina"], "l": [[0, "eins"], ["gift", 0, 1], [1, "zwei"], ["hug", 1, 9], ["boom", 0, 1], ["kiss", "x", 0], ["wave", 0], ["dance", 0, 0], ["laugh", 1, 1], [0, "drei"]]}]}
