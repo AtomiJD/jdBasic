@@ -1709,6 +1709,16 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         };
         for (auto& stmt : program) if (stmt) scan_alias(*stmt);
     }
+    // The FUNC a call names, also when the name is a variable holding its
+    // funcref (`f = Show@ : f(s, 7)`).
+    auto find_callee = [&](const std::string& n) {
+        auto it = decls.find(n);
+        if (it == decls.end()) {
+            auto ait = funcref_alias.find(n);
+            if (ait != funcref_alias.end()) it = decls.find(ait->second);
+        }
+        return it;
+    };
 
     // Kinds of the locals declared so far in the function body being
     // scanned, so a local handed to a call types the callee's parameter the
@@ -2697,7 +2707,6 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
     // INT64, as the interpreter does. Whole: an integer literal, an INTEGER
     // parameter, a DIMmed local every write of which is whole, a FUNC that
     // answers INT64, and + - * \ MOD or unary minus over those.
-    {
         std::function<void(const Stmt&, const std::function<void(const Stmt&)>&)> walk_body =
             [&](const Stmt& s, const std::function<void(const Stmt&)>& fn) {
             fn(s);
@@ -2731,6 +2740,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 default: return false;
             }
         };
+        std::function<void()> infer_whole_returns = [&]() {
         bool whole_changed = true;
         int whole_guard = 0;
         while (whole_changed && whole_guard++ < 4) {
@@ -2766,8 +2776,13 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                     for (auto& dv : drop)
                         if (whole.erase(dv)) { candidates.erase(dv); shrunk = true; }
                 }
+                // EXITFUNC and running off the end answer NONE.
                 bool any_return = false, all_whole = true;
+                if (decl.stmt->body.empty() || !decl.stmt->body.back() ||
+                    decl.stmt->body.back()->kind != StmtKind::RETURN)
+                    all_whole = false;
                 for (auto& b : decl.stmt->body) if (b) walk_body(*b, [&](const Stmt& r) {
+                    if (r.kind == StmtKind::EXIT_LOOP && r.is_while) all_whole = false;
                     if (r.kind != StmtKind::RETURN) return;
                     any_return = true;
                     if (!whole_expr(r.expr.get(), whole)) all_whole = false;
@@ -2778,7 +2793,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 }
             }
         }
-    }
+        };
+        infer_whole_returns();
 
     // A local assigned from a call is only known to hold a map or an array
     // once the fixpoint above has run, so a call site that hands such a local
@@ -2807,7 +2823,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             }
             std::function<void(const Expr&)> walk_e = [&](const Expr& e) {
                 if (e.kind == ExprKind::CALL) {
-                    auto cit = decls.find(e.func_name);
+                    auto cit = find_callee(e.func_name);
                     if (cit != decls.end()) {
                         for (size_t i = 0; i < e.args.size() && i < cit->second.tags.size(); i++) {
                             if (!e.args[i]) continue;
@@ -2832,7 +2848,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                             }
                             if (want < 0) continue;
                             if (cit->second.tags[i] != JD_TAG_F64) continue;
-                            auto sit = arg_tag_seen.find(e.func_name);
+                            auto sit = arg_tag_seen.find(cit->first);
                             if (sit != arg_tag_seen.end() && i < sit->second.size() &&
                                 !sit->second[i].empty() &&
                                 !(sit->second[i].size() == 1 &&
@@ -3446,7 +3462,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
 
             std::function<void(const Expr&)> gscan = [&](const Expr& e) {
                 if (e.kind == ExprKind::CALL) {
-                    auto cit = decls.find(e.func_name);
+                    auto cit = find_callee(e.func_name);
                     if (cit != decls.end() && cit->second.stmt) {
                         auto& callee = cit->second;
                         for (size_t ai = 0; ai < e.args.size() &&
@@ -3464,7 +3480,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                             if (want != JD_TAG_RUNTIME) {
                                 if (callee.tags[ai] != JD_TAG_F64 && callee.tags[ai] != want)
                                     want = JD_TAG_RUNTIME;
-                                auto sit = arg_tag_seen.find(e.func_name);
+                                auto sit = arg_tag_seen.find(cit->first);
                                 if (sit != arg_tag_seen.end() && ai < sit->second.size())
                                     for (int t : sit->second[ai])
                                         if (t != g->second) want = JD_TAG_RUNTIME;
@@ -3638,10 +3654,10 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                                 rt_spread = true;
                             }
                         };
-                        auto cit = decls.find(e.func_name);
+                        auto cit = find_callee(e.func_name);
                         const Stmt* method = cit == decls.end() ? called_method_of(e) : nullptr;
                         if (cit != decls.end()) {
-                            promote(cit->second, e.func_name);
+                            promote(cit->second, cit->first);
                         } else if (method) {
                             // A method parameter handed a runtime-typed or
                             // pointer-kind parameter takes either kind.
@@ -4157,7 +4173,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
 
         std::function<void(const Expr&)> scan_dyn = [&](const Expr& e) {
             if (e.kind == ExprKind::CALL) {
-                auto cit = decls.find(e.func_name);
+                auto cit = find_callee(e.func_name);
                 if (cit != decls.end() && cit->second.stmt) {
                     auto& callee = cit->second;
                     for (size_t ai = 0; ai < e.args.size() && ai < callee.tags.size() &&
@@ -4468,6 +4484,122 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                     decl.tags[pi] = JD_TAG_BOOL;
             }
         }
+    }
+
+    // An untyped parameter that every call site hands a whole number, and
+    // that the body never writes, is INTEGER: `FUNC Plus(n)` called as
+    // Plus(7) answers INT64 as in the interpreter. Names are judged program
+    // wide: a name is whole when every write of it anywhere is whole.
+    for (int whole_round = 0; whole_round < 2; whole_round++) {
+        std::unordered_map<std::string, bool> whole_names;
+        std::unordered_set<std::string> whole_set;
+        auto refresh_set = [&]() {
+            whole_set.clear();
+            for (auto& [n, ok] : whole_names) if (ok) whole_set.insert(n);
+        };
+        std::function<void(const Stmt&)> find_whole_names = [&](const Stmt& s) {
+            if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB) {
+                auto dit = decls.find(s.func_name);
+                for (size_t pi = 0; pi < s.params().size(); pi++) {
+                    bool int_param = dit != decls.end() && pi < dit->second.tags.size() &&
+                                     dit->second.tags[pi] == JD_TAG_I64;
+                    auto wn = whole_names.find(s.params()[pi].name);
+                    whole_names[s.params()[pi].name] =
+                        int_param && (wn == whole_names.end() || wn->second);
+                }
+            }
+            for (auto& dv : s.destruct_vars()) whole_names[dv] = false;
+            if (!s.var_name.empty()) {
+                bool whole = false;
+                if ((s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN ||
+                     s.kind == StmtKind::DIM) && s.index_chain.empty() &&
+                    s.var_name.back() != '$' && s.var_name.find('.') == std::string::npos) {
+                    if (s.kind == StmtKind::DIM &&
+                        (s.var_type == VarType::INT64 || s.var_type == VarType::INT32))
+                        whole = true;
+                    else if (s.var_type == VarType::NONE && s.expr)
+                        whole = whole_expr(s.expr.get(), whole_set);
+                }
+                auto wn = whole_names.find(s.var_name);
+                whole_names[s.var_name] = whole && (wn == whole_names.end() || wn->second);
+            }
+            for (auto& b : s.body) if (b) find_whole_names(*b);
+            for (auto& br : s.branches) for (auto& b : br.body) if (b) find_whole_names(*b);
+            for (auto& c : s.catch_body()) if (c) find_whole_names(*c);
+            for (auto& f : s.finally_body()) if (f) find_whole_names(*f);
+        };
+        // Two passes so a name read before the statement that makes it
+        // whole is judged with that statement seen.
+        for (int pass = 0; pass < 2; pass++) {
+            refresh_set();
+            whole_names.clear();
+            for (auto& st : program) if (st) find_whole_names(*st);
+        }
+        refresh_set();
+        // Per FUNC and parameter: sites seen, sites that handed a whole number.
+        std::map<std::pair<std::string, size_t>, std::pair<int, int>> whole_seen;
+        std::function<void(const Expr&)> scan_whole_calls = [&](const Expr& e) {
+            if (e.kind == ExprKind::CALL) {
+                auto cit = find_callee(e.func_name);
+                if (cit != decls.end()) {
+                    for (size_t i = 0; i < e.args.size(); i++) {
+                        auto& cnt = whole_seen[{ cit->first, i }];
+                        cnt.first++;
+                        if (e.args[i] && whole_expr(e.args[i].get(), whole_set)) cnt.second++;
+                    }
+                }
+            }
+            if (e.left) scan_whole_calls(*e.left);
+            if (e.right) scan_whole_calls(*e.right);
+            for (auto& a : e.args) if (a) scan_whole_calls(*a);
+        };
+        std::function<void(const Stmt&)> scan_whole_stmt = [&](const Stmt& s) {
+            if (s.expr) scan_whole_calls(*s.expr);
+            if (s.loop_cond) scan_whole_calls(*s.loop_cond);
+            if (s.end_expr) scan_whole_calls(*s.end_expr);
+            if (s.step_expr) scan_whole_calls(*s.step_expr);
+            for (auto& pe : s.print_exprs) if (pe) scan_whole_calls(*pe);
+            for (auto& ic : s.index_chain) if (ic) scan_whole_calls(*ic);
+            for (auto& b : s.body) if (b) scan_whole_stmt(*b);
+            for (auto& br : s.branches) {
+                if (br.condition) scan_whole_calls(*br.condition);
+                for (auto& b : br.body) if (b) scan_whole_stmt(*b);
+            }
+            for (auto& c : s.catch_body()) if (c) scan_whole_stmt(*c);
+            for (auto& f : s.finally_body()) if (f) scan_whole_stmt(*f);
+        };
+        for (auto& st : program) if (st) scan_whole_stmt(*st);
+        std::function<bool(const Stmt&, const std::string&)> writes_param =
+            [&](const Stmt& s, const std::string& pname) -> bool {
+            if (!s.var_name.empty() && s.var_name == pname) return true;
+            for (auto& dv : s.destruct_vars()) if (dv == pname) return true;
+            for (auto& b : s.body) if (b && writes_param(*b, pname)) return true;
+            for (auto& br : s.branches) for (auto& b : br.body) if (b && writes_param(*b, pname)) return true;
+            for (auto& c : s.catch_body()) if (c && writes_param(*c, pname)) return true;
+            for (auto& f : s.finally_body()) if (f && writes_param(*f, pname)) return true;
+            return false;
+        };
+        bool promoted = false;
+        for (auto& [name, decl] : decls) {
+            if (!decl.stmt || funcref_named.count(name) || decl.is_async) continue;
+            for (size_t pi = 0; pi < decl.stmt->params().size() && pi < decl.tags.size(); pi++) {
+                const Param& p = decl.stmt->params()[pi];
+                if (p.type != VarType::NONE || decl.tags[pi] != JD_TAG_F64 || p.default_value ||
+                    (!p.name.empty() && p.name.back() == '$'))
+                    continue;
+                bool written = false;
+                for (auto& b : decl.stmt->body) if (b && writes_param(*b, p.name)) written = true;
+                if (written) continue;
+                auto it = whole_seen.find({ name, pi });
+                if (it != whole_seen.end() && it->second.first > 0 &&
+                    it->second.first == it->second.second) {
+                    decl.tags[pi] = JD_TAG_I64;
+                    promoted = true;
+                }
+            }
+        }
+        if (!promoted) break;
+        infer_whole_returns();
     }
 
     // A handler a builtin calls by name answers through the tagged wrapper,
@@ -10335,6 +10467,11 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
                     LLVMBuildSIToFP(builder, val_tv.val, f64_type, "b2f"),
                     LLVMConstInt(i32_type, JD_TAG_BOOL, 0) };
                 LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 4, "");
+            } else if (val_tv.tag == JD_TAG_I64) {
+                auto& set_fn = runtime_funcs["__map_set_tagged"];
+                LLVMValueRef args[] = { obj_ptr, field_str, coerce_to(val_tv, f64_type),
+                    LLVMConstInt(i32_type, JD_TAG_I64, 0) };
+                LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 4, "");
             } else {
                 LLVMValueRef fval = coerce_to(val_tv, f64_type);
                 auto& set_fn = runtime_funcs["__map_set_f64"];
@@ -10533,6 +10670,13 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
             LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 4, "");
             if (adopt) rc_adopt(arr_ptr, val_tv);
             drop_read_temp(val_tv, false);
+        } else if (val_tv.tag == JD_TAG_I64) {
+            // A whole number keeps saying so: the cell holds the double, the
+            // tag reads it back as INT64.
+            auto& fn = runtime_funcs["__map_set_tagged"];
+            LLVMValueRef args[] = { arr_ptr, idx_tv.val, coerce_to(val_tv, f64_type),
+                                    LLVMConstInt(i32_type, JD_TAG_I64, 0) };
+            LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 4, "");
         } else {
             auto& fn = runtime_funcs["__map_set_f64"];
             LLVMValueRef args[] = { arr_ptr, idx_tv.val, coerce_to(val_tv, f64_type) };

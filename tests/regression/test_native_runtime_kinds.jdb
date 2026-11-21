@@ -202,5 +202,33 @@ keyed{"a"} = 1
 Check(TYPEOF(keyed.a) = "NONE", "a dot on a map is NONE")
 Check(keyed{"a"} = 1, "a key on a map reads the value")
 
+' A text reaches a FUNC through a variable holding its reference.
+FUNC Joined(a, b)
+    RETURN a + STR$(b)
+ENDFUNC
+DIM joiner = Joined@
+DIM greeting = "hello"
+Check(joiner(greeting, 7) = "hello7", "a text through a funcref variable")
+
+' An untyped parameter every call hands a whole number is an integer.
+FUNC NextUp(n)
+    RETURN n + 1
+ENDFUNC
+Check(TYPEOF(NextUp(7)) = "INT64", "a whole number in, a whole number out")
+FUNC Halfway(n)
+    RETURN n / 2
+ENDFUNC
+Check(TYPEOF(Halfway(7)) = "FLOAT64", "division of a whole parameter is a double")
+FUNC MaybeTwice(x)
+    IF x < 0 THEN EXITFUNC
+    RETURN x * 2
+ENDFUNC
+Check(TYPEOF(MaybeTwice(-1)) = "NONE", "EXITFUNC still answers NONE")
+
+' A whole number written into a map cell reads back as one.
+DIM counts = {}
+counts{"w"} = 10
+Check(TYPEOF(counts{"w"} - 1) = "INT64", "arithmetic on a whole map cell")
+
 IF failed > 0 THEN END 1
 PRINT "OK"
