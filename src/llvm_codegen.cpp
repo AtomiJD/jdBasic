@@ -2693,6 +2693,92 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         }
     }
 
+    // An untyped FUNC whose every RETURN hands back a whole number answers
+    // INT64, as the interpreter does. Whole: an integer literal, an INTEGER
+    // parameter, a DIMmed local every write of which is whole, a FUNC that
+    // answers INT64, and + - * \ MOD or unary minus over those.
+    {
+        std::function<void(const Stmt&, const std::function<void(const Stmt&)>&)> walk_body =
+            [&](const Stmt& s, const std::function<void(const Stmt&)>& fn) {
+            fn(s);
+            if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB) return;
+            for (auto& b : s.body)           if (b) walk_body(*b, fn);
+            for (auto& br : s.branches)
+                for (auto& b : br.body)      if (b) walk_body(*b, fn);
+            for (auto& c : s.catch_body())   if (c) walk_body(*c, fn);
+            for (auto& f : s.finally_body()) if (f) walk_body(*f, fn);
+        };
+        std::function<bool(const Expr*, const std::unordered_set<std::string>&)> whole_expr =
+            [&](const Expr* e, const std::unordered_set<std::string>& whole) -> bool {
+            if (!e) return false;
+            switch (e->kind) {
+                case ExprKind::LITERAL_INT: return true;
+                case ExprKind::VARIABLE:    return whole.count(e->str_val) > 0;
+                case ExprKind::UNARY:
+                    return e->op == TokenType::MINUS && whole_expr(e->right.get(), whole);
+                case ExprKind::BINARY:
+                    switch (e->op) {
+                        case TokenType::PLUS: case TokenType::MINUS: case TokenType::STAR:
+                        case TokenType::BACKSLASH: case TokenType::MOD:
+                            return whole_expr(e->left.get(), whole) &&
+                                   whole_expr(e->right.get(), whole);
+                        default: return false;
+                    }
+                case ExprKind::CALL: {
+                    auto cit = decls.find(e->func_name);
+                    return cit != decls.end() && cit->second.return_tag == JD_TAG_I64;
+                }
+                default: return false;
+            }
+        };
+        bool whole_changed = true;
+        int whole_guard = 0;
+        while (whole_changed && whole_guard++ < 4) {
+            whole_changed = false;
+            for (auto& [name, decl] : decls) {
+                if (decl.return_tag != JD_TAG_F64 || !decl.stmt || decl.is_async) continue;
+                if (decl.stmt->kind != StmtKind::FUNCTION ||
+                    decl.stmt->return_type != VarType::NONE) continue;
+                std::unordered_set<std::string> whole;
+                for (size_t pi = 0; pi < decl.stmt->params().size() && pi < decl.tags.size(); pi++)
+                    if (decl.tags[pi] == JD_TAG_I64) whole.insert(decl.stmt->params()[pi].name);
+                std::unordered_set<std::string> candidates;
+                for (auto& b : decl.stmt->body) if (b) walk_body(*b, [&](const Stmt& d) {
+                    if (d.kind == StmtKind::DIM && !d.var_name.empty() &&
+                        d.var_name.back() != '$' && d.expr &&
+                        (d.var_type == VarType::NONE || d.var_type == VarType::INT64 ||
+                         d.var_type == VarType::INT32))
+                        candidates.insert(d.var_name);
+                });
+                for (auto& c : candidates) whole.insert(c);
+                bool shrunk = true;
+                while (shrunk) {
+                    shrunk = false;
+                    std::unordered_set<std::string> drop;
+                    for (auto& b : decl.stmt->body) if (b) walk_body(*b, [&](const Stmt& d) {
+                        for (auto& dv : d.destruct_vars()) if (candidates.count(dv)) drop.insert(dv);
+                        if (d.var_name.empty() || !candidates.count(d.var_name)) return;
+                        bool writes_whole =
+                            (d.kind == StmtKind::DIM || d.kind == StmtKind::LET ||
+                             d.kind == StmtKind::ASSIGN) && whole_expr(d.expr.get(), whole);
+                        if (!writes_whole) drop.insert(d.var_name);
+                    });
+                    for (auto& dv : drop)
+                        if (whole.erase(dv)) { candidates.erase(dv); shrunk = true; }
+                }
+                bool any_return = false, all_whole = true;
+                for (auto& b : decl.stmt->body) if (b) walk_body(*b, [&](const Stmt& r) {
+                    if (r.kind != StmtKind::RETURN) return;
+                    any_return = true;
+                    if (!whole_expr(r.expr.get(), whole)) all_whole = false;
+                });
+                if (any_return && all_whole) {
+                    decl.return_tag = JD_TAG_I64;
+                    whole_changed = true;
+                }
+            }
+        }
+    }
 
     // A local assigned from a call is only known to hold a map or an array
     // once the fixpoint above has run, so a call site that hands such a local
@@ -10972,6 +11058,14 @@ void LLVMCodegen::codegen_for(const Stmt& stmt) {
     // a double slot makes every read of the variable a denormal near zero, and
     // truncating a fractional STEP to an integer gives a step of 0.
     VarInfo* vi = lookup_var(stmt.var_name);
+    // Inside a FUNC or SUB the control variable is local even when a global
+    // has its name, as in the interpreter.
+    if (vi && scopes.size() > 1) {
+        bool local = false;
+        for (size_t si = 1; si < scopes.size() && !local; si++)
+            local = scopes[si].vars.count(stmt.var_name) > 0;
+        if (!local) vi = nullptr;
+    }
     LLVMValueRef var_alloca;
     bool use_f64 = false;
     if (vi) {

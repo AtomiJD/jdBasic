@@ -170,5 +170,25 @@ panel.Toggle(4)
 Check("a text field copied out survives the field being written", saved$, "#..#.")
 Check("a method declared AS BOOLEAN", STR$(panel.IsLit(0)) + " " + STR$(panel.IsLit(1)), STR$(TRUE) + " " + STR$(FALSE))
 
+' --- an untyped FUNC answering a whole number answers INT64 ---
+FUNC Halved(n AS INTEGER)
+    DIM lo = 0
+    lo = n \ 2
+    RETURN lo
+ENDFUNC
+DIM huge AS INTEGER = 999999999999999998
+DIM half = Halved(huge)
+Check("an untyped FUNC answering a whole local", TYPEOF(half) + " " + STR$(half), "INT64 499999999999999999")
+Check("integer division of its answer past 2^53", STR$(huge \ (half + 1)), "1")
+
+' --- a FOR counter inside a SUB is local ---
+DIM step_no = 0
+SUB CountUp()
+    FOR step_no = 1 TO 3
+    NEXT
+ENDSUB
+CountUp()
+Check("a FOR counter inside a SUB leaves the global of its name", STR$(step_no), "0")
+
 PRINT pass; " passed, "; fail; " failed"
 IF fail > 0 THEN END 1
