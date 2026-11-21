@@ -2387,6 +2387,14 @@ void VM::run() {
         case OpCode::INDEX_GET: {
             Value idx = pop();
             Value container = pop();
+            // A text key names nothing in an array, a text or a tensor: it
+            // reads as absent, as a key missing from a map does.
+            if (idx.type == ValueType::STRING &&
+                (container.type == ValueType::ARRAY || container.type == ValueType::STRING ||
+                 container.type == ValueType::TENSOR)) {
+                push(Value::make_none());
+                break;
+            }
             if (container.type == ValueType::ARRAY) {
                 auto* arr = container.as_array();
                 // Vectorised gather: idx is an array of indices → return gathered

@@ -190,5 +190,18 @@ ENDSUB
 CountUp()
 Check("a FOR counter inside a SUB leaves the global of its name", STR$(step_no), "0")
 
+' --- a text key on something that is not a map reads as absent ---
+DIM parsed = JSON.PARSE("[{""id"": 5}, ""tags"", [1, 2]]")
+FUNC HasEmail(rec)
+    RETURN ISSTR(rec{"email"})
+ENDFUNC
+Check("a text key on a parsed string", TYPEOF(parsed[1]{"email"}), "NONE")
+Check("a text key on a parsed array", TYPEOF(parsed[2]{"email"}), "NONE")
+Check("a text key on a string handed to a FUNC", STR$(HasEmail(parsed[1])), STR$(FALSE))
+DIM word$ = "tags"
+DIM nums = [10, 20]
+Check("a text key on a text variable", TYPEOF(word${"email"}), "NONE")
+Check("a text key on an array variable", TYPEOF(nums{"x"}), "NONE")
+
 PRINT pass; " passed, "; fail; " failed"
 IF fail > 0 THEN END 1

@@ -13319,10 +13319,18 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 // instance (UDTs are also ARR-tagged but map-backed). UDT
                 // variables (var_udt_type) and non-variable bases (e.g. a
                 // UDT-returning call) fall through to the real field getter.
-                if (arr_tv.tag == JD_TAG_ARR && expr.left &&
-                    expr.left->kind == ExprKind::VARIABLE &&
-                    var_udt_type.find(expr.left->str_val) == var_udt_type.end()) {
-                    return { LLVMConstReal(f64_type, 0.0), JD_TAG_F64 };
+                // A text key on a text reads as absent too, as in the
+                // interpreter.
+                if ((arr_tv.tag == JD_TAG_ARR && expr.left &&
+                     expr.left->kind == ExprKind::VARIABLE &&
+                     var_udt_type.find(expr.left->str_val) == var_udt_type.end()) ||
+                    arr_tv.tag == JD_TAG_STR) {
+                    drop_fresh_temp(*expr.left, arr_tv);
+                    TypedValue none;
+                    none.val = LLVMConstInt(i64_type, 0, 0);
+                    none.tag = JD_TAG_RUNTIME;
+                    none.runtime_tag = LLVMConstInt(i32_type, JD_TAG_NONE, 0);
+                    return none;
                 }
                 // Runtime-tagged (tag 7): dispatch via unified C function
                 // that handles both native map and VM handle.

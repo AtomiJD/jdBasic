@@ -372,6 +372,10 @@ Both backends answer the same. A compiled map carries a tag per value
 and one of them means absent, so `TYPEOF` on a missing key is `NONE`
 whether the program was interpreted or compiled.
 
+A text key on an array, a text or a tensor names nothing there and reads
+as `NONE` the same way, so `x{"email"}` on a JSON element that turned
+out to be a string is absent rather than its first character.
+
 
 ## `?.` `?{` `?[`: read into something that may not be there
 
