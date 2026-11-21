@@ -230,5 +230,27 @@ DIM counts = {}
 counts{"w"} = 10
 Check(TYPEOF(counts{"w"} - 1) = "INT64", "arithmetic on a whole map cell")
 
+' An array piped into a lambda goes in value by value, the nesting kept.
+DIM piped = [1, 2, 3] |> (LAMBDA x -> x * 10)
+Check(JOIN(piped, ",") = "10,20,30", "an array piped into a lambda")
+DIM nested = [[1, 2], [3, 4]] |> (LAMBDA x -> x + 1)
+Check(nested[1][0] = 4 ANDALSO LEN(nested) = 2, "a nested array piped into a lambda")
+DIM sizes = ["ab", "c"] |> (LAMBDA s -> LEN(s))
+Check(JOIN(sizes, ",") = "2,1", "texts piped into a lambda")
+FUNC Tenfold(v)
+    RETURN v * 10
+ENDFUNC
+Check(JOIN([1, 2] |> Tenfold, ",") = "10,20", "an array piped into a FUNC name")
+Check(([1, 2, 3] |> SUM(?)) = 6, "a call with ? takes the whole array")
+
+' A reduction over one number answers as the interpreter does.
+DIM lone = 5
+Check(SUM(lone) = 5 ANDALSO MEAN(lone) = 5 ANDALSO STDEV(lone) = 0, "SUM, MEAN, STDEV of a number")
+Check(ANY(lone) ANDALSO ALL(lone), "ANY and ALL of a number")
+DIM cells = {}
+cells{"n"} = 4
+DIM picked = cells{"n"}
+Check(SUM(picked) = 4, "SUM of a number read from a map")
+
 IF failed > 0 THEN END 1
 PRINT "OK"

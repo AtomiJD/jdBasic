@@ -1016,6 +1016,17 @@ PRINT SELECT(lambda i -> i + 1, IOTA(10))
 PRINT SELECT(lambda i -> i + 1, IOTA(10)) |> FILTER(lambda val -> val > 5, ?) |> SELECT(lambda v -> v * 10, ?)
 ```
 
+An array piped into a lambda or a function name (not into a call with `?`)
+goes in value by value: the function runs on every value that is not itself
+an array, and the answer keeps the nesting. To hand the whole array to the
+function, write the call with `?`.
+
+```basic
+PRINT [1, 2, 3] |> (LAMBDA x -> x * 10)         ' [10, 20, 30]
+PRINT [[1, 2], [3, 4]] |> (LAMBDA x -> x + 1)   ' [[2, 3], [4, 5]]
+PRINT [1, 2, 3] |> SUM(?)                       ' 6
+```
+
 **Lambda Function Closures with USE()**
 
 ```basic

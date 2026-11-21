@@ -140,6 +140,9 @@ public:
     // hint into a recursive subexpr is the source of an entire bug class
     // (hint applies to the wrong codegen frame).
     bool m_want_ptr_result = false;
+    // Set while a SELECT stands for `array |> fn`: fn goes to every value
+    // that is not an array, the nesting kept.
+    const Expr* m_pipe_select = nullptr;
 
     // Transient: when set to 0/1/2, an INDEX leaf on a Map (native tag=4 or
     // VM handle tag=6) picks the matching get_* runtime function so the

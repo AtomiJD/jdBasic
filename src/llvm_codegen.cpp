@@ -865,6 +865,7 @@ void LLVMCodegen::declare_runtime_functions() {
     // Higher-order functions (take function pointers)
     // jdb_select_fn(fn_ptr, array) -> array
     reg("jdb_select_fn", "__select_fn", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_pipe_fn", "__pipe_fn", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i32_type}, JD_TAG_ARR);
     // The element a higher-order loop hands to a lambda, and the tag of its answer.
     reg("jdb_hof_elem_tag", "__hof_elem_tag", i32_type, {}, JD_TAG_I64);
     reg("jdb_hof_elem_bits", "__hof_elem_bits", i64_type, {}, JD_TAG_I64);
@@ -12879,6 +12880,48 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             // value |> func  or  value |> expr(?)
             TypedValue left_val = codegen_expr(*expr.left);
 
+            // An array piped into a lambda or a one-parameter FUNC: the
+            // function goes to every value in it, as in the interpreter.
+            bool pipe_fn_name = (expr.right->kind == ExprKind::VARIABLE ||
+                                 expr.right->kind == ExprKind::LITERAL_STRING) &&
+                                user_functions.count(expr.right->str_val) &&
+                                LLVMCountParams(user_functions[expr.right->str_val].fn) == 1;
+            if (left_val.tag == JD_TAG_ARR &&
+                (expr.right->kind == ExprKind::LAMBDA_EXPR || pipe_fn_name)) {
+                static int pipe_lhs_counter = 0;
+                std::string lhs_name = "__pipe_lhs_" + std::to_string(pipe_lhs_counter++);
+                VarInfo& lhs = create_var(lhs_name, JD_TAG_ARR);
+                LLVMBuildStore(builder, left_val.val, lhs.alloca_val);
+                Expr sel;
+                sel.kind = ExprKind::CALL;
+                sel.func_name = "SELECT";
+                sel.line = expr.line;
+                bool borrowed = expr.right->kind == ExprKind::LAMBDA_EXPR;
+                if (borrowed) {
+                    sel.args.emplace_back(const_cast<Expr*>(expr.right.get()));
+                } else {
+                    auto ref = std::make_unique<Expr>();
+                    ref->kind = ExprKind::LITERAL_STRING;
+                    ref->is_funcref_lit = true;
+                    ref->str_val = expr.right->str_val;
+                    ref->line = expr.line;
+                    sel.args.push_back(std::move(ref));
+                }
+                auto lhs_ref = std::make_unique<Expr>();
+                lhs_ref->kind = ExprKind::VARIABLE;
+                lhs_ref->str_val = lhs_name;
+                lhs_ref->line = expr.line;
+                sel.args.push_back(std::move(lhs_ref));
+                struct Unborrow {
+                    Expr& e; bool b;
+                    ~Unborrow() { if (b) e.args[0].release(); }
+                } unborrow{ sel, borrowed };
+                m_pipe_select = &sel;
+                TypedValue mapped = codegen_expr(sel);
+                m_pipe_select = nullptr;
+                return mapped;
+            }
+
             if (expr.right->kind == ExprKind::LAMBDA_EXPR) {
                 // value |> lambda x -> body
                 // Determine lambda signature based on input type
@@ -17746,11 +17789,111 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             return LLVMBuildIntToPtr(builder, v.val, i8_ptr_type, "itoptr");
         return v.val;
     };
+    // A reduction over one number answers as the interpreter does: the
+    // number for SUM, PRODUCT, MEAN, MEDIAN; 0 for VARIANCE and STDEV; its
+    // truth for ANY and ALL. The array reducers read it as a pointer.
+    if ((upper == "SUM" || upper == "PRODUCT" || upper == "MEAN" || upper == "MEDIAN" ||
+         upper == "VARIANCE" || upper == "STDEV" || upper == "ANY" || upper == "ALL") &&
+        expr.args.size() == 1 && expr.args[0]) {
+        const Expr& a = *expr.args[0];
+        bool scalar = a.kind == ExprKind::LITERAL_INT || a.kind == ExprKind::LITERAL_FLOAT;
+        if (a.kind == ExprKind::VARIABLE) {
+            VarInfo* av = lookup_var(a.str_val);
+            scalar = av && (av->tag == JD_TAG_I64 || jd_is_f64_tag(av->tag) || av->tag == JD_TAG_BOOL);
+        }
+        // A runtime-typed variable decides when it runs: a number answers as
+        // above, anything else goes to the array reducer.
+        VarInfo* rv = a.kind == ExprKind::VARIABLE ? lookup_var(a.str_val) : nullptr;
+        auto rit = runtime_funcs.find(upper);
+        if (!scalar && rv && rv->tag == JD_TAG_RUNTIME && rv->runtime_tag_alloca &&
+            rit != runtime_funcs.end() && rit->second.fn) {
+            TypedValue v = codegen_expr(a);
+            if (v.tag == JD_TAG_RUNTIME && v.runtime_tag) {
+                bool truth = upper == "ANY" || upper == "ALL";
+                LLVMTypeRef out_ty = truth ? i64_type : f64_type;
+                auto tag_is = [&](int t) {
+                    return LLVMBuildICmp(builder, LLVMIntEQ, v.runtime_tag,
+                                         LLVMConstInt(i32_type, t, 0), "red_tag");
+                };
+                LLVMValueRef is_num = LLVMBuildOr(builder,
+                    LLVMBuildOr(builder, tag_is(JD_TAG_I64), tag_is(JD_TAG_F64), "red_n1"),
+                    tag_is(JD_TAG_BOOL), "red_num");
+                LLVMBasicBlockRef bb_num = LLVMAppendBasicBlockInContext(ctx, current_fn, "red.num");
+                LLVMBasicBlockRef bb_arr = LLVMAppendBasicBlockInContext(ctx, current_fn, "red.arr");
+                LLVMBasicBlockRef bb_end = LLVMAppendBasicBlockInContext(ctx, current_fn, "red.end");
+                LLVMBuildCondBr(builder, is_num, bb_num, bb_arr);
+
+                LLVMPositionBuilderAtEnd(builder, bb_num);
+                LLVMValueRef d = coerce_to(v, f64_type);
+                LLVMValueRef num_out;
+                if (truth)
+                    num_out = LLVMBuildZExt(builder,
+                        LLVMBuildFCmp(builder, LLVMRealUNE, d, LLVMConstReal(f64_type, 0.0), "truth"),
+                        i64_type, "truth64");
+                else if (upper == "VARIANCE" || upper == "STDEV")
+                    num_out = LLVMConstReal(f64_type, 0.0);
+                else
+                    num_out = d;
+                LLVMBasicBlockRef bb_num_end = LLVMGetInsertBlock(builder);
+                LLVMBuildBr(builder, bb_end);
+
+                LLVMPositionBuilderAtEnd(builder, bb_arr);
+                LLVMValueRef fa = nullptr, fs = nullptr;
+                LLVMValueRef p = runtime_ptr_arg(v, &fa, &fs);
+                LLVMValueRef ca[] = { p };
+                LLVMValueRef arr_out = LLVMBuildCall2(builder, rit->second.fn_type, rit->second.fn, ca, 1, "red");
+                LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+                if (fa && hg) {
+                    auto& afree = runtime_funcs["__jdrt_free_hof_array"];
+                    LLVMValueRef d2[] = { LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt"), fa };
+                    LLVMBuildCall2(builder, afree.fn_type, afree.fn, d2, 2, "");
+                }
+                if (fs) {
+                    auto& sfree = runtime_funcs["__jdrt_str_free"];
+                    LLVMValueRef d3[] = { fs };
+                    LLVMBuildCall2(builder, sfree.fn_type, sfree.fn, d3, 1, "");
+                }
+                LLVMBasicBlockRef bb_arr_end = LLVMGetInsertBlock(builder);
+                LLVMBuildBr(builder, bb_end);
+
+                LLVMPositionBuilderAtEnd(builder, bb_end);
+                LLVMValueRef phi = LLVMBuildPhi(builder, out_ty, "red_v");
+                LLVMValueRef vals[] = { num_out, arr_out };
+                LLVMBasicBlockRef bbs[] = { bb_num_end, bb_arr_end };
+                LLVMAddIncoming(phi, vals, bbs, 2);
+                return { phi, truth ? JD_TAG_BOOL : JD_TAG_F64 };
+            }
+        }
+        if (scalar) {
+            TypedValue v = codegen_expr(a);
+            LLVMValueRef d = promote_to_f64(v).val;
+            if (upper == "VARIANCE" || upper == "STDEV")
+                return { LLVMConstReal(f64_type, 0.0), JD_TAG_F64 };
+            if (upper == "ANY" || upper == "ALL")
+                return { LLVMBuildZExt(builder,
+                    LLVMBuildFCmp(builder, LLVMRealUNE, d, LLVMConstReal(f64_type, 0.0), "truth"),
+                    i64_type, "truth64"), JD_TAG_BOOL };
+            return { d, JD_TAG_F64 };
+        }
+    }
     if ((upper == "SELECT" || upper == "FILTER" ||
          upper == "TAKE_WHILE" || upper == "DROP_WHILE") && expr.args.size() >= 2) {
         int elem = expr.args[1] ? hof_elem_kind(*expr.args[1]) : JD_TAG_RUNTIME;
         TypedValue fn_val = hof_funcref(*expr.args[0], 1, 1, elem, 0);
         TypedValue arr_val = codegen_expr(*expr.args[1]);
+        if (fn_val.tag == JD_TAG_FUNCREF && upper == "SELECT" && m_pipe_select == &expr) {
+            m_pipe_select = nullptr;
+            const Expr* fn_src = hof_lambda_source(*expr.args[0], 1);
+            if (!fn_src) fn_src = expr.args[0].get();
+            auto& fn = runtime_funcs["__pipe_fn"];
+            LLVMValueRef args[] = { closure_enter(fn_val.val), hof_array_ptr(arr_val),
+                LLVMConstInt(i32_type, funcref_returns_str(*fn_src) ? 1 : 0, 0) };
+            LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "pipe");
+            closure_leave(fn_val.val, expr.args[0].get());
+            TypedValue out{ result, JD_TAG_ARR };
+            out.fresh_container = true;
+            return out;
+        }
         if (fn_val.tag == JD_TAG_FUNCREF) {
             LLVMValueRef arr_ptr = hof_array_ptr(arr_val);
             std::string rt_name = (upper == "SELECT")     ? "__select_fn"     :

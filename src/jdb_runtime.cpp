@@ -7228,6 +7228,44 @@ JdbArray* jdb_select_fn(JdbMapFn fn, JdbArray* arr) {
     }, [] { return jdb_array_new(0); });
 }
 
+// `arr |> fn`: fn applied to every value that is not itself an array, the
+// nesting kept. A cell holding an array answers the array of its answers.
+// answers_str says the function hands back text, which it reports no tag for.
+static JdbArray* pipe_cells(JdbMapFn fn, JdbArray* arr, int32_t answers_str) {
+    auto* r = jdb_array_new(arr->length);
+    std::vector<int8_t> tags((size_t)arr->length, (int8_t)JD_TAG_F64);
+    bool tagged = false;
+    for (int64_t i = 0, n = arr->length; i < n && i < arr->length; i++) {
+        if (cell_is_arr(arr, i)) {
+            union { double d; int64_t b; } u; u.d = arr->data[i];
+            JdbArray* inner = (JdbArray*)(intptr_t)u.b;
+            union { int64_t b; double d; } out;
+            out.b = (int64_t)(intptr_t)(inner ? pipe_cells(fn, inner, answers_str) : jdb_array_new(0));
+            r->data[i] = out.d;
+            tags[(size_t)i] = (int8_t)JD_TAG_ARR;
+            tagged = true;
+            continue;
+        }
+        hof_publish(arr, i);
+        r->data[i] = call_compiled(fn, arr->data[i]);
+        int32_t t = answers_str ? JD_TAG_STR : hof_answer_tag();
+        if (t >= 0) {
+            tags[(size_t)i] = (int8_t)t;
+            if (t != JD_TAG_F64) tagged = true;
+        }
+    }
+    if (tagged) hof_tag_cells(r, tags);
+    return r;
+}
+
+JdbArray* jdb_pipe_fn(JdbMapFn fn, JdbArray* arr, int32_t answers_str) {
+    return jdb_guard([&]() -> JdbArray* {
+        if (!arr) return jdb_array_new(0);
+        HofDepth hof_depth_scope;
+        return pipe_cells(fn, arr, answers_str);
+    }, [] { return jdb_array_new(0); });
+}
+
 // AGG(keys, values, reducer) - group `values` by the matching `keys` entry
 // (first-seen order), call reducer(group) per group, return [[key, reduced],
 // ...]. `reducer` is the funcref wrapper (double(double)); it receives the
