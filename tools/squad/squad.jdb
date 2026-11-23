@@ -103,6 +103,10 @@ ENDFUNC
 ' removed again
 FUNC CHECKED(cmd$, secs)
     DIM held = SH("git add -A", 300)
+    IF held{"exit"} <> 0 THEN
+        PRINT "git add -A failed, no check was run: " + TAIL$(held{"output"}, 3)
+        END 2
+    ENDIF
     DIM r = SH("timeout -k 15 " + STR$(secs) + " " + cmd$, secs + 60)
     DIM swept_up = SH("git clean -fdq && git checkout -q -- . && git reset -q", 300)
     RETURN r
