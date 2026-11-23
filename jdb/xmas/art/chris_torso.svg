@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="170" height="182" viewBox="0 0 170 182">
+  <defs>
+    <linearGradient id="shirt" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#d9d6cf"/>
+    </linearGradient>
+  </defs>
+  <path d="M30 100 Q24 130 26 156 Q85 180 144 156 Q146 130 140 100 Z" fill="#4a6fa5"/>
+  <path d="M85 132 L85 166" stroke="#3a5a8a" stroke-width="3"/>
+  <path d="M48 18 Q85 6 122 18 Q146 70 146 124 Q85 144 24 124 Q24 70 48 18 Z" fill="url(#shirt)" stroke="#bdb9b0" stroke-width="2"/>
+  <path d="M56 14 Q85 44 114 14 Q100 6 85 6 Q70 6 56 14 Z" fill="#f4c29e"/>
+  <path d="M52 16 Q85 52 118 16" fill="none" stroke="#c9c5bc" stroke-width="5" stroke-linecap="round"/>
+  <path d="M44 66 Q54 80 48 98" fill="none" stroke="#c9c5bc" stroke-width="3" stroke-linecap="round"/>
+  <path d="M124 72 Q116 88 122 106" fill="none" stroke="#c9c5bc" stroke-width="3" stroke-linecap="round"/>
+  <path d="M110 60 L116 48 L122 60 Z M104 62 L108 52 L114 62 Z M118 62 L124 52 L128 62 Z" fill="#e4e0d8"/>
+  <path d="M26 118 Q85 138 144 118" fill="none" stroke="#c9c5bc" stroke-width="3"/>
+</svg>

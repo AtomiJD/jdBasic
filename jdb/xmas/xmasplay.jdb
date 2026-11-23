@@ -96,7 +96,7 @@ EXPORT FUNC BACKGROUNDS()
 ENDFUNC
 
 EXPORT FUNC CASTS()
-    RETURN [["santa", "Weihnachtsmann", "Santa"], ["lina", "Lina", "Lina"], ["rudi", "Rudi (Rentier)", "Rudi (reindeer)"], ["pip", "Pip (Wichtel)", "Pip (elf)"], ["pino", "Pino (Pinguin)", "Pino (penguin)"], ["vally", "Vally (Häschen)", "Vally (bunny)"], ["moehrchen", "Möhrchen (Häschen)", "Möhrchen (bunny)"], ["hasi", "Hasi (Häschen)", "Hasi (bunny)"], ["loni", "Loni", "Loni"], ["jd", "JD", "JD"]]
+    RETURN [["santa", "Weihnachtsmann", "Santa"], ["lina", "Lina", "Lina"], ["rudi", "Rudi (Rentier)", "Rudi (reindeer)"], ["pip", "Pip (Wichtel)", "Pip (elf)"], ["pino", "Pino (Pinguin)", "Pino (penguin)"], ["vally", "Vally (Häschen)", "Vally (bunny)"], ["moehrchen", "Möhrchen (Häschen)", "Möhrchen (bunny)"], ["hasi", "Hasi (Häschen)", "Hasi (bunny)"], ["loni", "Loni", "Loni"], ["jd", "JD", "JD"], ["chris", "Chris", "Chris"]]
 ENDFUNC
 
 EXPORT FUNC ACTIONS()
@@ -384,6 +384,9 @@ FUNC CastDef(name$)
     ENDIF
     IF name$ = "jd" THEN
         RETURN {"piv": {"torso": [85, 160], "head": [130, 232], "arm": [25, 16], "leg": [28, 6]}, "joint": {"head": [85, 12], "arm_l": [36, 42], "arm_r": [134, 42], "leg_l": [62, 158], "leg_r": [108, 158]}, "eyes": [[100, 158], [160, 158]], "eye": [15, 19], "iris": [80, 112, 140], "mouth": [130, 204], "tails": []}
+    ENDIF
+    IF name$ = "chris" THEN
+        RETURN {"piv": {"torso": [85, 160], "head": [130, 232], "arm": [25, 16], "leg": [28, 6]}, "joint": {"head": [85, 12], "arm_l": [36, 42], "arm_r": [134, 42], "leg_l": [62, 158], "leg_r": [108, 158]}, "eyes": [[100, 160], [160, 160]], "eye": [15, 19], "iris": [100, 118, 132], "mouth": [130, 206], "tails": []}
     ENDIF
     IF name$ = "lina" THEN
         RETURN {"piv": {"torso": [85, 160], "head": [130, 228], "arm": [23, 14], "leg": [26, 6], "tail": [36, 13]}, "joint": {"head": [85, 12], "arm_l": [40, 40], "arm_r": [130, 40], "leg_l": [62, 158], "leg_r": [108, 158]}, "eyes": [[100, 160], [160, 160]], "eye": [17, 23], "iris": [40, 160, 165], "mouth": [130, 207], "tails": [[42, 116], [218, 116]]}

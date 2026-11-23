@@ -47,6 +47,10 @@ art/jd_arm.rgbz
 art/jd_head.rgbz
 art/jd_leg.rgbz
 art/jd_torso.rgbz
+art/chris_arm.rgbz
+art/chris_head.rgbz
+art/chris_leg.rgbz
+art/chris_torso.rgbz
 art/bg_room.jpg 540x960
 art/bg_snow.jpg 540x960
 art/bg_workshop.jpg 540x960
