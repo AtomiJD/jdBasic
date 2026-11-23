@@ -324,6 +324,17 @@ IF LEN(areas) = 0 THEN
     END 2
 ENDIF
 DIM area$ AS STRING = areas[VAL(FORMAT_DATE$(NOW(), "%j")) MOD LEN(areas)]
+' A second run on one day starts without the first one's answers; its
+' findings are kept for the scout under another name
+DIM leftovers = ["theme.md", "repro.jdb", "expected.txt"]
+DIM lo AS INTEGER
+FOR lo = 0 TO LEN(leftovers) - 1
+    IF NOT dry_run ANDALSO FILE.EXISTS(work$ + "/" + leftovers[lo]) THEN KILL work$ + "/" + leftovers[lo]
+NEXT lo
+IF NOT dry_run ANDALSO FILE.EXISTS(work$ + "/findings.json") THEN
+    DIM kept_as$ AS STRING = work$ + "/findings_" + FORMAT_DATE$(NOW(), "%H%M%S") + ".json"
+    DIM was_moved = FILE.MOVE(work$ + "/findings.json", kept_as$, TRUE)
+ENDIF
 DIM scout = AGENT("scout", SCOUT_MODEL$, PROMPT$("scout", {"WORK": work$, "AREA": area$, "GATE": gate_note$}), "Read,Grep,Glob,Bash,Write,Edit", SCOUT_SECS)
 IF dry_run THEN
     DIM t1 = AGENT("tests", TESTS_MODEL$, "", "Read,Grep,Glob,Bash,Write,Edit", TESTS_SECS)

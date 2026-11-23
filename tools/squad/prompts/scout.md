@@ -20,7 +20,8 @@ fixed and reviewed in one night. You write no fix and change no file outside
   NONDET are by design, not defects.
 - `tmp/squad/`: the folders of earlier nights. Read their `theme.md` and
   `report.md` first and do not pick a theme that was parked for a reason
-  that still holds.
+  that still holds. Their `findings*.json` files list what is already filed:
+  do not list a finding again that an earlier night has.
 - If the folder `dataset/synth/divergent` exists: programs that are green in
   the interpreter and differ compiled.
 
