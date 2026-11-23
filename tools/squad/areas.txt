@@ -1,0 +1,23 @@
+# One source area per night, picked by the day of the year.
+llvm_codegen.cpp: expressions, operators and the typing of values
+llvm_codegen.cpp: calls, FUNC and SUB parameters, funcrefs and lambdas
+llvm_codegen.cpp: arrays, maps, UDTs and their element access
+llvm_codegen.cpp: control flow, TRY/CATCH, modules and IMPORT
+jdb_runtime.cpp: strings, text ownership and the refcount registry
+jdb_runtime.cpp: arrays, maps and the higher-order builtins
+jdb_runtime.cpp against vm_builtins_string.cpp and vm_builtins_array.cpp: the same builtin written twice
+jdb_runtime.cpp against vm_builtins_datetime.cpp and vm_builtins_math.cpp: the same builtin written twice
+vm.cpp: the dispatch loop, calls, error unwinding
+vm_bridge.cpp: values crossing between compiled code and the VM
+compiler.cpp and parser.cpp: what parses but is compiled wrongly or silently dropped
+lexer.cpp and parser.cpp: literals, operators, line continuation, error messages
+vm_builtins_file.cpp, file_streams.cpp, jdb_path.h: files and paths
+vm_builtins_data.cpp and vm_builtins_codec.cpp: JSON, CSV, PACK, codecs
+vm_builtins_system.cpp, os_spawn.h: processes and the environment
+vm_builtins_async.cpp, channels.cpp: tasks and channels
+net.cpp, http.cpp: sockets and the HTTP client and server
+node.cpp, mcp_stdio.cpp, dap.cpp: protocols that read data from outside
+numerics.cpp, jdb_number.h, jdb_format.h: number formatting and numerics
+sql.cpp, jdb_regex.h, jdb_calendar.h, jdb_text.h: the small subsystems
+lib/*.jdb: the module library under -c
+doc/languages.md against the behaviour: statements of the reference that no test checks

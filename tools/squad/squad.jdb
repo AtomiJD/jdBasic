@@ -1,0 +1,461 @@
+' squad.jdb - the nightly squad chain: one defect, found, tested, fixed and
+' reviewed by separate agents, committed on the branch "squad".
+'
+'   jdbasic tools/squad/squad.jdb [--scout-only] [--dry-run] [--push]
+'                                 [--no-sync] [--no-parity]
+'
+' Runs from the repo root of a clean checkout of the branch "squad" on
+' Linux. Each stage is its own `claude -p` call with its own model, tools
+' and time limit; a stage hands over through files under tmp/squad/<date>/
+' and never through a shared conversation. After every stage the driver
+' checks what the stage was allowed to do and parks the day when it did
+' more: nothing an agent says about its own work is taken on trust.
+'
+'   0 sync     fetch, merge origin/main, tools/verify.sh as the starting point
+'   1 measure  tests/parity.sh
+'   2 scout    picks the theme: theme.md, repro.jdb, expected.txt, findings.json
+'   3 tests    one regression test from theme.md alone; it must be red
+'   4 coder    codes until gate, test and parity are green
+'   5 review   reads the patch; BLOCK sends it back to the coder
+'   6 close    commit, with --push `git push origin squad`
+'
+' --scout-only ends after stage 2. --dry-run starts no agent and changes
+' nothing in git; it prints what would run. Tickets are filed when
+' JDTRAKR_URL and JDTRAKR_API are set, otherwise the findings stay in the
+' report.
+' Exit 0: committed, or scout-only done. 1: parked. 2: could not start.
+
+OPTION "EXPLICIT"
+
+DIM SCOUT_MODEL$ AS STRING = "claude-fable-5-2"
+DIM TESTS_MODEL$ AS STRING = "claude-opus-5-5"
+DIM CODER_MODEL$ AS STRING = "claude-opus-5-5"
+DIM REVIEW_MODEL$ AS STRING = "claude-fable-5-2"
+DIM SCOUT_SECS AS INTEGER = 3600
+DIM TESTS_SECS AS INTEGER = 1800
+DIM CODER_SECS AS INTEGER = 7200
+DIM REVIEW_SECS AS INTEGER = 1800
+DIM VERIFY_SECS AS INTEGER = 3600
+DIM PARITY_SECS AS INTEGER = 2400
+DIM MAX_PATCH_ROWS AS INTEGER = 600
+DIM MAX_ATTEMPTS AS INTEGER = 3
+DIM BRANCH$ AS STRING = "squad"
+
+' Paths no stage may change: what judges the code
+DIM JUDGES = ["tests/gate/", "tests/parity.sh", "tests/parity_baseline", "tests/memory_check.sh", "tests/sanitize_gate.sh", "tests/leak_check.sh", "tools/gate_run.jdb", "tools/verify.sh", "tools/hooks/", "tools/squad/", ".github/", ".claude/", "CLAUDE.md"]
+
+DIM q$ AS STRING = CHR$(39)
+DIM nl$ AS STRING = CHR$(10)
+DIM home$ AS STRING = GETENV$("HOME")
+DIM claude$ AS STRING = GETENV$("SQUAD_CLAUDE")
+IF claude$ = "" THEN claude$ = home$ + "/squad/claude/bin/claude"
+
+DIM cli = OS.ARGS()
+DIM scout_only AS INTEGER = FALSE
+DIM dry_run AS INTEGER = FALSE
+DIM want_push AS INTEGER = FALSE
+DIM want_sync AS INTEGER = TRUE
+DIM want_parity AS INTEGER = TRUE
+DIM a AS INTEGER
+FOR a = 1 TO LEN(cli) - 1
+    IF cli[a] = "--scout-only" THEN scout_only = TRUE
+    IF cli[a] = "--dry-run" THEN dry_run = TRUE
+    IF cli[a] = "--push" THEN want_push = TRUE
+    IF cli[a] = "--no-sync" THEN want_sync = FALSE
+    IF cli[a] = "--no-parity" THEN want_parity = FALSE
+NEXT a
+
+DIM stamp$ AS STRING = FORMAT_DATE$(NOW(), "%Y-%m-%d")
+DIM work$ AS STRING = "tmp/squad/" + stamp$
+OS.EXEC("mkdir", ["-p", work$])
+DIM out_file$ AS STRING = PATH.ABS$(work$) + "/.run.out"
+DIM report_file$ AS STRING = work$ + "/report.md"
+DIM report$ AS STRING = "# Squad " + stamp$ + nl$
+
+SUB NOTE(text$)
+    PRINT text$
+    report$ = report$ + nl$ + text$
+    TXTWRITER report_file$, report$
+ENDSUB
+
+' A shell line with its output captured; {"exit", "output", "timeout"}
+FUNC SH(cmd$, secs)
+    IF FILE.EXISTS(out_file$) THEN KILL out_file$
+    DIM pid = OS.SPAWN("bash", ["-c", cmd$], {"output": out_file$})
+    DIM rc = OS.WAIT(pid, secs * 1000)
+    DIM timed_out = FALSE
+    IF TYPEOF(rc) = "NONE" THEN
+        DIM killed = OS.KILL(pid)
+        timed_out = TRUE
+        rc = -1
+    ENDIF
+    DIM text$ AS STRING = ""
+    IF FILE.EXISTS(out_file$) THEN text$ = REPLACE$(TXTREADER$(out_file$), CHR$(13), "")
+    RETURN {"exit": rc, "output": text$, "timeout": timed_out}
+ENDFUNC
+
+FUNC GIT$(args$)
+    RETURN TRIM$(SH("git " + args$, 300){"output"})
+ENDFUNC
+
+' The last rows of a text, for a report or a prompt
+FUNC TAIL$(text$, n)
+    DIM rows = SPLIT(TRIM$(text$), nl$)
+    IF LEN(rows) <= n THEN RETURN TRIM$(text$)
+    RETURN JOIN(TAKE(-n, rows), nl$)
+ENDFUNC
+
+FUNC READ$(target$)
+    IF NOT FILE.EXISTS(target$) THEN RETURN ""
+    RETURN REPLACE$(TXTREADER$(target$), CHR$(13), "")
+ENDFUNC
+
+' Changed and untracked paths of the working tree
+FUNC CHANGED()
+    DIM rows = SPLIT(SH("git status --porcelain --untracked-files=all", 300){"output"}, nl$)
+    DIM found = []
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(rows) - 1
+        IF LEN(rows[i]) > 3 THEN found = APPEND(found, TRIM$(MID$(rows[i], 3)))
+    NEXT i
+    RETURN found
+ENDFUNC
+
+' The first changed path a stage had no right to touch, or ""
+FUNC FOREIGN$(paths, allowed)
+    DIM i AS INTEGER
+    DIM k AS INTEGER
+    FOR i = 0 TO LEN(paths) - 1
+        DIM fits AS INTEGER = FALSE
+        FOR k = 0 TO LEN(allowed) - 1
+            IF STARTSWITH(paths[i], allowed[k]) THEN fits = TRUE
+        NEXT k
+        IF NOT fits THEN RETURN paths[i]
+    NEXT i
+    RETURN ""
+ENDFUNC
+
+FUNC JUDGE_TOUCHED$(paths)
+    DIM i AS INTEGER
+    DIM k AS INTEGER
+    FOR i = 0 TO LEN(paths) - 1
+        FOR k = 0 TO LEN(JUDGES) - 1
+            IF STARTSWITH(paths[i], JUDGES[k]) THEN RETURN paths[i]
+        NEXT k
+    NEXT i
+    RETURN ""
+ENDFUNC
+
+' Fills {{NAME}} marks of a prompt file from a map
+FUNC PROMPT$(name$, fields)
+    DIM text$ AS STRING = READ$("tools/squad/prompts/" + name$ + ".md")
+    DIM keys = MAP.KEYS(fields)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(keys) - 1
+        text$ = REPLACE$(text$, "{{" + keys[i] + "}}", fields{keys[i]})
+    NEXT i
+    RETURN text$
+ENDFUNC
+
+' One agent stage; {"ok", "output"}. ok is FALSE on a timeout, a non-zero
+' exit, or when the agent moved HEAD.
+FUNC AGENT(stage$, model$, prompt$, tools$, secs)
+    DIM prompt_file$ AS STRING = work$ + "/" + stage$ + ".prompt.md"
+    DIM answer_file$ AS STRING = work$ + "/" + stage$ + ".out.txt"
+    TXTWRITER prompt_file$, prompt$
+    DIM cmd$ AS STRING = "timeout -k 15 " + STR$(secs) + " " + q$ + claude$ + q$ + " -p --model " + model$
+    cmd$ = cmd$ + " --permission-mode acceptEdits --allowedTools " + q$ + tools$ + q$
+    cmd$ = cmd$ + " --disallowedTools " + q$ + "WebFetch,WebSearch,Bash(git push:*),Bash(git commit:*)" + q$
+    cmd$ = cmd$ + " < " + q$ + prompt_file$ + q$
+    IF dry_run THEN
+        NOTE("- " + stage$ + " (dry run): " + model$ + ", tools " + tools$ + ", " + STR$(secs) + " s")
+        RETURN {"ok": TRUE, "output": ""}
+    ENDIF
+    DIM head_before$ AS STRING = GIT$("rev-parse HEAD")
+    DIM t0 AS DOUBLE = TICK()
+    DIM r = SH(cmd$, secs + 60)
+    TXTWRITER answer_file$, r{"output"}
+    DIM mins AS INTEGER = INT((TICK() - t0) / 60000)
+    DIM ok AS INTEGER = r{"exit"} = 0
+    DIM why$ AS STRING = ""
+    IF r{"exit"} = 124 ORELSE r{"timeout"} THEN why$ = " (time limit)"
+    IF GIT$("rev-parse HEAD") <> head_before$ THEN
+        ok = FALSE
+        why$ = " (the stage moved HEAD)"
+    ENDIF
+    NOTE("- " + stage$ + ": " + IIF(ok, "done", "FAILED" + why$) + ", " + STR$(mins) + " min, " + model$)
+    RETURN {"ok": ok, "output": r{"output"}}
+ENDFUNC
+
+' Runs a jdBasic file in one backend; {"exit", "output"}
+FUNC RUN_JDB(target$, native, secs)
+    IF NOT native THEN RETURN SH("timeout -k 5 " + STR$(secs) + " ./build/jdbasic " + q$ + target$ + q$, secs + 30)
+    DIM prog$ AS STRING = LEFT$(target$, LEN(target$) - 4) + ".exe"
+    IF FILE.EXISTS(prog$) THEN KILL prog$
+    DIM built = SH("./build/jdbasic -c " + q$ + target$ + q$, 600)
+    IF NOT FILE.EXISTS(prog$) THEN RETURN {"exit": 99, "output": "COMPILE: " + TAIL$(built{"output"}, 5)}
+    DIM r = SH("LD_LIBRARY_PATH=build timeout -k 5 " + STR$(secs) + " ./" + q$ + prog$ + q$, secs + 30)
+    KILL prog$
+    RETURN r
+ENDFUNC
+
+FUNC GREEN(r)
+    RETURN r{"exit"} = 0 ANDALSO INSTR(r{"output"}, " 0 failed") >= 0
+ENDFUNC
+
+' Rows of a parity run that say a test got worse
+FUNC PARITY_WORSE(text$)
+    DIM rows = SPLIT(text$, nl$)
+    DIM worse = []
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(rows) - 1
+        DIM row$ AS STRING = TRIM$(rows[i])
+        IF STARTSWITH(row$, "REGRESSED") ORELSE STARTSWITH(row$, "NEW+RED") THEN worse = APPEND(worse, row$)
+    NEXT i
+    RETURN worse
+ENDFUNC
+
+FUNC TRAKR(route$, payload)
+    DIM base$ AS STRING = GETENV$("JDTRAKR_URL")
+    IF GETENV$("JDTRAKR_API") = "" ORELSE base$ = "" ORELSE dry_run THEN RETURN {}
+    TRY
+        HTTP.CLEARHEADERS()
+        HTTP.SETHEADER "X-API-Key", GETENV$("JDTRAKR_API")
+        RETURN JSON.PARSE(HTTP.POST$(base$ + route$, JSON.STRINGIFY$(payload), "application/json"))
+    CATCH
+        NOTE("- trakr " + route$ + " failed: " + ERRMSG$)
+    ENDTRY
+    RETURN {}
+ENDFUNC
+
+FUNC TICKET(title$, body$, kind$, status$)
+    DIM made = TRAKR("/api/create", {"title": title$, "description": body$, "assignee": "Squad", "priority": "medium", "severity": "major", "type": kind$, "project": "jdbasic"})
+    IF NOT MAP.EXISTS(made, "id") THEN RETURN 0
+    IF status$ <> "todo" THEN DIM moved = TRAKR("/api/move", {"id": made{"id"}, "status": status$})
+    RETURN made{"id"}
+ENDFUNC
+
+' Ends the day without a commit; what the stages left goes into a stash
+SUB PARK(reason$)
+    NOTE("")
+    NOTE("**Parked:** " + reason$)
+    IF NOT dry_run ANDALSO LEN(CHANGED()) > 0 THEN
+        DIM kept$ AS STRING = GIT$("stash push -u -m " + q$ + "squad parked " + stamp$ + q$)
+        NOTE("Working tree kept as a stash: " + TAIL$(kept$, 1))
+    ENDIF
+    END 1
+ENDSUB
+
+' ---------------------------------------------------------------- 0 sync
+
+IF OS.GETOS$() <> "LINUX" THEN
+    PRINT "squad.jdb runs on Linux"
+    END 2
+ENDIF
+IF GIT$("rev-parse --abbrev-ref HEAD") <> BRANCH$ THEN
+    PRINT "not on branch " + BRANCH$
+    END 2
+ENDIF
+IF LEN(CHANGED()) > 0 THEN
+    PRINT "working tree is not clean: " + CHANGED()[0]
+    END 2
+ENDIF
+IF NOT FILE.EXISTS(claude$) THEN
+    PRINT "no claude at " + claude$
+    END 2
+ENDIF
+
+NOTE("## Stages")
+IF want_sync ANDALSO NOT dry_run THEN
+    DIM fetched = SH("git fetch -q origin", 600)
+    DIM merged = SH("git merge --no-edit origin/main", 600)
+    IF merged{"exit"} <> 0 THEN
+        DIM undone = SH("git merge --abort", 60)
+        NOTE("- sync: merge of origin/main failed: " + TAIL$(merged{"output"}, 3))
+        END 2
+    ENDIF
+    NOTE("- sync: origin/main merged, HEAD " + GIT$("rev-parse --short HEAD"))
+ENDIF
+
+DIM gate_note$ AS STRING = "The gate is green on both backends."
+IF NOT dry_run THEN
+    DIM before = SH("bash tools/verify.sh", VERIFY_SECS)
+    TXTWRITER work$ + "/gate_before.txt", before{"output"}
+    IF before{"exit"} = 2 THEN
+        NOTE("- verify: the build failed: " + TAIL$(before{"output"}, 5))
+        END 2
+    ENDIF
+    IF before{"exit"} <> 0 THEN gate_note$ = "THE GATE IS RED before any change. That is today's theme. See " + work$ + "/gate_before.txt"
+    NOTE("- verify: " + IIF(before{"exit"} = 0, "green", "RED"))
+ENDIF
+
+' ------------------------------------------------------------- 1 measure
+
+DIM worse_before = []
+IF want_parity ANDALSO NOT dry_run THEN
+    DIM swept = SH("bash tests/parity.sh -t 12 -o " + q$ + work$ + "/parity_before.tsv" + q$, PARITY_SECS)
+    TXTWRITER work$ + "/parity_before.txt", swept{"output"}
+    worse_before = PARITY_WORSE(swept{"output"})
+    DIM tally = FILTER(LAMBDA row -> INSTR(row, "regressed ") >= 0, SPLIT(swept{"output"}, nl$))
+    DIM tally$ AS STRING = "no comparison with the baseline"
+    IF LEN(tally) > 0 THEN tally$ = TRIM$(tally[0])
+    NOTE("- parity: " + tally$ + ", " + STR$(LEN(worse_before)) + " rows worse before any change")
+ENDIF
+
+' --------------------------------------------------------------- 2 scout
+
+DIM areas = FILTER(LAMBDA row -> LEN(TRIM$(row)) > 0 ANDALSO NOT STARTSWITH(row, "#"), SPLIT(READ$("tools/squad/areas.txt"), nl$))
+DIM area$ AS STRING = areas[VAL(FORMAT_DATE$(NOW(), "%j")) MOD LEN(areas)]
+DIM scout = AGENT("scout", SCOUT_MODEL$, PROMPT$("scout", {"WORK": work$, "AREA": area$, "GATE": gate_note$}), "Read,Grep,Glob,Bash,Write,Edit", SCOUT_SECS)
+IF dry_run THEN
+    DIM t1 = AGENT("tests", TESTS_MODEL$, "", "Read,Grep,Glob,Bash,Write,Edit", TESTS_SECS)
+    DIM t2 = AGENT("coder", CODER_MODEL$, "", "Read,Grep,Glob,Bash,Write,Edit", CODER_SECS)
+    DIM t3 = AGENT("review", REVIEW_MODEL$, "", "Read,Grep,Glob", REVIEW_SECS)
+    NOTE("Area of the day: " + area$)
+    END 0
+ENDIF
+IF NOT scout{"ok"} THEN PARK("the scout did not finish: " + TAIL$(scout{"output"}, 3))
+IF LEN(CHANGED()) > 0 THEN PARK("the scout changed the tree: " + CHANGED()[0])
+
+DIM findings = []
+TRY
+    IF FILE.EXISTS(work$ + "/findings.json") THEN findings = JSON.PARSE(READ$(work$ + "/findings.json"))
+CATCH
+    NOTE("- findings.json is not valid JSON")
+ENDTRY
+NOTE("")
+NOTE("## Findings (" + STR$(LEN(findings)) + ")")
+DIM f AS INTEGER
+FOR f = 0 TO LEN(findings) - 1
+    DIM filed AS INTEGER = TICKET(findings[f]{"title"}, findings[f]{"description"}, findings[f]{"type"}, "todo")
+    NOTE("- " + IIF(filed > 0, "#" + STR$(filed) + " ", "") + findings[f]{"title"})
+NEXT f
+
+DIM theme$ AS STRING = READ$(work$ + "/theme.md")
+DIM repro$ AS STRING = work$ + "/repro.jdb"
+IF theme$ = "" ORELSE NOT FILE.EXISTS(repro$) ORELSE NOT FILE.EXISTS(work$ + "/expected.txt") THEN PARK("the scout left no theme with repro and expected output")
+
+DIM title$ AS STRING = ""
+DIM slug$ AS STRING = ""
+DIM head_rows = SPLIT(theme$, nl$)
+DIM h AS INTEGER
+FOR h = 0 TO LEN(head_rows) - 1
+    IF STARTSWITH(head_rows[h], "TITLE:") THEN title$ = TRIM$(MID$(head_rows[h], 6))
+    IF STARTSWITH(head_rows[h], "SLUG:") THEN slug$ = REGEX.REPLACE$("[^a-z0-9_]", LCASE$(TRIM$(MID$(head_rows[h], 5))), "")
+NEXT h
+IF title$ = "" ORELSE slug$ = "" THEN PARK("theme.md has no TITLE: and SLUG: rows")
+
+' The repro has to show the defect here, or there is no theme
+DIM expected$ AS STRING = TRIM$(READ$(work$ + "/expected.txt"))
+DIM got_interp = RUN_JDB(repro$, FALSE, 60)
+DIM got_native = RUN_JDB(repro$, TRUE, 60)
+DIM interp_ok AS INTEGER = TRIM$(got_interp{"output"}) = expected$
+DIM native_ok AS INTEGER = TRIM$(got_native{"output"}) = expected$
+TXTWRITER work$ + "/repro_check.txt", "--- interpreter" + nl$ + got_interp{"output"} + nl$ + "--- native" + nl$ + got_native{"output"}
+NOTE("")
+NOTE("## Theme: " + title$)
+NOTE("Repro against expected.txt: interpreter " + IIF(interp_ok, "matches", "DIFFERS") + ", native " + IIF(native_ok, "matches", "DIFFERS"))
+IF interp_ok ANDALSO native_ok THEN PARK("the repro prints the expected output on both backends: nothing to fix")
+
+DIM theme_ticket AS INTEGER = TICKET(title$, theme$, "bug", "doing")
+IF theme_ticket > 0 THEN NOTE("Ticket #" + STR$(theme_ticket))
+
+IF scout_only THEN
+    NOTE("")
+    NOTE("Scout only: no code written. Theme in " + work$ + "/theme.md")
+    END 0
+ENDIF
+
+' --------------------------------------------------------------- 3 tests
+
+DIM test_file$ AS STRING = "tests/regression/test_squad_" + slug$ + ".jdb"
+IF FILE.EXISTS(test_file$) THEN PARK(test_file$ + " exists already")
+DIM author = AGENT("tests", TESTS_MODEL$, PROMPT$("tests", {"THEME": theme$, "TEST": test_file$}), "Read,Grep,Glob,Bash,Write,Edit", TESTS_SECS)
+IF NOT author{"ok"} THEN PARK("the test author did not finish")
+DIM after_tests = CHANGED()
+IF LEN(after_tests) <> 1 ORELSE after_tests[0] <> test_file$ THEN PARK("the test author changed more than " + test_file$)
+DIM red_interp = RUN_JDB(test_file$, FALSE, 300)
+DIM red_native = RUN_JDB(test_file$, TRUE, 300)
+NOTE("Test before the fix: interpreter " + TAIL$(red_interp{"output"}, 1) + " | native " + TAIL$(red_native{"output"}, 1))
+IF GREEN(red_interp) ANDALSO GREEN(red_native) THEN PARK("the new test is green before any fix: it does not catch the defect")
+DIM test_hash$ AS STRING = CODEC.SHA256$(READ$(test_file$))
+
+' ------------------------------------------------------ 4 coder, 5 review
+
+DIM feedback$ AS STRING = "None. This is the first attempt."
+DIM accepted AS INTEGER = FALSE
+DIM attempt AS INTEGER
+FOR attempt = 1 TO MAX_ATTEMPTS
+    DIM stage$ AS STRING = "coder" + STR$(attempt)
+    DIM coder = AGENT(stage$, CODER_MODEL$, PROMPT$("coder", {"THEME": theme$, "TEST": test_file$, "WORK": work$, "FEEDBACK": feedback$}), "Read,Grep,Glob,Bash,Write,Edit", CODER_SECS)
+    IF NOT coder{"ok"} THEN PARK("the coder did not finish (attempt " + STR$(attempt) + ")")
+
+    DIM touched = CHANGED()
+    IF CODEC.SHA256$(READ$(test_file$)) <> test_hash$ THEN PARK("the coder edited the test")
+    IF JUDGE_TOUCHED$(touched) <> "" THEN PARK("the coder touched a judge: " + JUDGE_TOUCHED$(touched))
+    DIM stray$ AS STRING = FOREIGN$(touched, ["src/", "doc/", "lib/", "tests/regression/", "tests/leak/", "help.txt", "build.sh", "build_rt.sh", "build.bat", "build_rt.bat"])
+    IF stray$ <> "" THEN PARK("the coder changed a path outside its area: " + stray$)
+    DIM sizes = SPLIT(GIT$("diff --numstat"), nl$)
+    DIM patch_rows AS INTEGER = 0
+    DIM s AS INTEGER
+    FOR s = 0 TO LEN(sizes) - 1
+        DIM cols = SPLIT(sizes[s], CHR$(9))
+        IF LEN(cols) >= 2 THEN patch_rows = patch_rows + VAL(cols[0]) + VAL(cols[1])
+    NEXT s
+    IF patch_rows > MAX_PATCH_ROWS THEN PARK("the patch has " + STR$(patch_rows) + " changed rows, the cap is " + STR$(MAX_PATCH_ROWS))
+
+    DIM problems$ AS STRING = ""
+    DIM verified = SH("bash tools/verify.sh", VERIFY_SECS)
+    TXTWRITER work$ + "/gate_" + stage$ + ".txt", verified{"output"}
+    IF verified{"exit"} <> 0 THEN problems$ = problems$ + "tools/verify.sh is red:" + nl$ + TAIL$(verified{"output"}, 25) + nl$
+    DIM fix_interp = RUN_JDB(test_file$, FALSE, 300)
+    DIM fix_native = RUN_JDB(test_file$, TRUE, 300)
+    IF NOT GREEN(fix_interp) THEN problems$ = problems$ + test_file$ + " in the interpreter:" + nl$ + TAIL$(fix_interp{"output"}, 20) + nl$
+    IF NOT GREEN(fix_native) THEN problems$ = problems$ + test_file$ + " compiled:" + nl$ + TAIL$(fix_native{"output"}, 20) + nl$
+    IF problems$ = "" ANDALSO want_parity THEN
+        DIM resweep = SH("bash tests/parity.sh -t 12 -o " + q$ + work$ + "/parity_" + stage$ + ".tsv" + q$, PARITY_SECS)
+        DIM worse_now = PARITY_WORSE(resweep{"output"})
+        DIM w AS INTEGER
+        FOR w = 0 TO LEN(worse_now) - 1
+            IF INDEXOF(worse_before, worse_now[w]) < 0 THEN problems$ = problems$ + "parity: " + worse_now[w] + nl$
+        NEXT w
+    ENDIF
+    NOTE("  attempt " + STR$(attempt) + ": " + STR$(patch_rows) + " changed rows, checks " + IIF(problems$ = "", "green", "RED"))
+    IF problems$ <> "" THEN
+        feedback$ = "Your last attempt is still in the working tree. These checks failed:" + nl$ + problems$
+        CONTINUEFOR
+    ENDIF
+
+    DIM patch_file$ AS STRING = work$ + "/patch_" + stage$ + ".diff"
+    TXTWRITER patch_file$, SH("git diff", 300){"output"} + nl$ + "--- new file " + test_file$ + nl$ + READ$(test_file$)
+    DIM review = AGENT("review" + STR$(attempt), REVIEW_MODEL$, PROMPT$("review", {"THEME": theme$, "PATCH": patch_file$, "FILES": JOIN(touched, nl$)}), "Read,Grep,Glob", REVIEW_SECS)
+    IF NOT review{"ok"} THEN PARK("the reviewer did not finish")
+    IF LEN(CHANGED()) <> LEN(touched) THEN PARK("the reviewer changed the tree")
+    IF TRIM$(TAIL$(review{"output"}, 1)) = "VERDICT: PASS" THEN
+        accepted = TRUE
+        EXITFOR
+    ENDIF
+    feedback$ = "Your last attempt is still in the working tree. The reviewer blocked it:" + nl$ + review{"output"}
+NEXT attempt
+IF NOT accepted THEN PARK("no accepted patch after " + STR$(MAX_ATTEMPTS) + " attempts. Last feedback:" + nl$ + TAIL$(feedback$, 30))
+
+' --------------------------------------------------------------- 6 close
+
+' The message is the scout's title and the test, written here and by no agent
+DIM message$ AS STRING = REPLACE$(title$, CHR$(226) + CHR$(128) + CHR$(148), "-") + ". " + test_file$
+DIM message_file$ AS STRING = work$ + "/commit_final.txt"
+TXTWRITER message_file$, message$
+DIM staged = SH("git add -A && git commit -q -F " + q$ + message_file$ + q$, 300)
+IF staged{"exit"} <> 0 THEN PARK("git commit failed: " + TAIL$(staged{"output"}, 5))
+DIM commit$ AS STRING = GIT$("rev-parse --short HEAD")
+NOTE("")
+NOTE("**Committed** " + commit$ + " on " + BRANCH$ + ": " + title$)
+IF want_push THEN
+    DIM pushed = SH("git push -q origin " + BRANCH$, 600)
+    NOTE("Push: " + IIF(pushed{"exit"} = 0, "done", "FAILED " + TAIL$(pushed{"output"}, 3)))
+ENDIF
+IF theme_ticket > 0 THEN
+    DIM said = TRAKR("/api/comment", {"ticket_id": theme_ticket, "body": "Commit " + commit$ + " on branch " + BRANCH$ + ", test " + test_file$ + ". Linux gate, parity and review green; Windows gate before the merge to main."})
+    DIM done = TRAKR("/api/move", {"id": theme_ticket, "status": "review"})
+ENDIF
+END 0
