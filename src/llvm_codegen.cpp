@@ -824,7 +824,8 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_setenv",  "SETENV",   void_type,   {i8_ptr_type, i8_ptr_type}, -1);
     reg("jdb_mktemp",  "MKTEMP$",  i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
     reg("jdb_iif",     "IIF",      f64_type, {i64_type, f64_type, f64_type}, JD_TAG_F64);
-    reg("jdb_array_iif", "__arr_iif", i8_ptr_type, {i8_ptr_type, f64_type, i32_type, f64_type, i32_type}, JD_TAG_ARR);
+    reg("jdb_array_iif", "__arr_iif", i8_ptr_type, {i8_ptr_type, i64_type, i32_type, i64_type, i32_type}, JD_TAG_ARR);
+    reg("jdb_bits_may_be_array", "__bits_may_be_array", i32_type, {i64_type}, -1);
     reg("jdb_isnum",   "ISNUM",    i64_type, {f64_type}, JD_TAG_BOOL);
 
     // Bit rotation (2-arg, implicit 64-bit width; 3-arg falls back to VM bridge)
@@ -2539,6 +2540,9 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                     std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
                     if (builtin_reduces_axis(upper) && x->args.size() == 2)
                         return is_array_expr(x->args[0].get());
+                    // IIF over an array condition answers one cell per cell.
+                    if (upper == "IIF" && x->args.size() == 3)
+                        return is_array_expr(x->args[0].get());
                     if (!builtin_sig(upper) || builtin_no_vectorize(upper)) return false;
                     for (auto& a : x->args)
                         if (is_array_expr(a.get())) return true;
@@ -4025,6 +4029,16 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                     {
                         std::string up = e.func_name;
                         std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+                        // IIF over an array condition answers an array; over
+                        // a condition known only at run time, either kind.
+                        if (up == "IIF" && e.args.size() == 3 && e.args[0]) {
+                            int kc = kind_of_ref(*e.args[0]);
+                            if (kc == JD_TAG_ARR || kc == JD_TAG_RUNTIME) return kc;
+                            for (auto& p : decl.stmt->params())
+                                if (e.args[0]->kind == ExprKind::VARIABLE && p.name == e.args[0]->str_val &&
+                                    p.type_name.empty() && (kc == JD_TAG_F64 || kc == 0))
+                                    return JD_TAG_RUNTIME;
+                        }
                         if (builtin_is(up, BuiltinRet::Arr)) return JD_TAG_ARR;
                         // A builtin with its own native binding says what it
                         // answers in the registration table: ZEROS, ONES and
@@ -4863,6 +4877,10 @@ LLVMCodegen::StaticType LLVMCodegen::infer_expr_type(const Expr& e) const {
                 }
                 if (builtin_reduces_axis(upper) && e.args.size() == 2 && e.args[0] &&
                     infer_expr_type(*e.args[0]).kind == K::ARRAY) return make(K::ARRAY);
+                // IIF answers an array for an array condition, else the
+                // arm it picks, of whatever kind that arm is.
+                if (upper == "IIF" && e.args.size() == 3)
+                    return make(e.args[0] && infer_expr_type(*e.args[0]).kind == K::ARRAY ? K::ARRAY : K::UNKNOWN);
             }
             auto rit = runtime_funcs.find(e.func_name);
             if (rit != runtime_funcs.end()) {
@@ -12864,13 +12882,33 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             if (r.fresh_container && (r.tag == JD_TAG_ARR || r.tag == JD_TAG_NATIVE_MAP) &&
                 LLVMGetTypeKind(LLVMTypeOf(r.val)) == LLVMPointerTypeKind) {
                 r.val = rc_born(r.val, r.tag, !r.fresh_flat);
-                if (rc_on && !rc_escape && &expr == cell_owner_rhs && r.tag == JD_TAG_ARR) {
+                // IIF copies every text it puts in a cell, so its answer
+                // owns them wherever it goes.
+                bool own_texts = !user_functions.count(expr.func_name) && [&] {
+                    std::string u = expr.func_name;
+                    std::transform(u.begin(), u.end(), u.begin(), ::toupper);
+                    return u == "IIF"; }();
+                if (rc_on && !rc_escape && (&expr == cell_owner_rhs || own_texts) && r.tag == JD_TAG_ARR) {
                     // Texts handed on from an argument become the array's
                     // own copies; texts made for this answer are its already.
                     auto& fn = runtime_funcs[hands_on_cells(expr) ? "__rc_take_cells" : "__rc_own_cells"];
                     LLVMValueRef a[] = { rc_bits(r.val) };
                     LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 1, "");
                 }
+            }
+            else if (r.fresh_arr && rc_on && !rc_escape) {
+                // An array built for this answer alone, of a kind only the
+                // running program knows, is registered like one known here,
+                // and owns the texts IIF copied into it.
+                LLVMBasicBlockRef bb_reg = LLVMAppendBasicBlock(current_fn, "fresh.arr");
+                LLVMBasicBlockRef bb_end = LLVMAppendBasicBlock(current_fn, "fresh.end");
+                LLVMBuildCondBr(builder, r.fresh_arr, bb_reg, bb_end);
+                LLVMPositionBuilderAtEnd(builder, bb_reg);
+                rc_born(LLVMBuildIntToPtr(builder, r.val, i8_ptr_type, "fresh_p"), JD_TAG_ARR, true);
+                auto& own = runtime_funcs["__rc_own_cells"];
+                LLVMBuildCall2(builder, own.fn_type, own.fn, &r.val, 1, "");
+                LLVMBuildBr(builder, bb_end);
+                LLVMPositionBuilderAtEnd(builder, bb_end);
             }
             else if (outer_escape) rc_pin(r);
             return r;
@@ -19053,15 +19091,20 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             runtime_var = v && v->tag == JD_TAG_RUNTIME;
         }
         bool elem_read = arg.kind == ExprKind::INDEX;
+        // IIF answers the arm it picks, or an array, each of its own kind.
+        bool iif_call = arg.kind == ExprKind::CALL && !user_functions.count(arg.func_name) &&
+            [&] { std::string u = arg.func_name;
+                  std::transform(u.begin(), u.end(), u.begin(), ::toupper);
+                  return u == "IIF"; }();
         bool none_test = upper == "ISNONE" || upper == "ISNULL";
-        if ((!none_test && (runtime_var || elem_read)) || (none_test && runtime_var)) {
+        if ((!none_test && (runtime_var || elem_read || iif_call)) || (none_test && runtime_var)) {
             {
                 TypedValue av;
                 {
                     ScopedLeafTag _lt(this, elem_read ? JD_TAG_RUNTIME : -1);
                     av = codegen_expr(arg);
                 }
-                if (elem_read && av.tag != JD_TAG_RUNTIME) {
+                if ((elem_read || iif_call) && av.tag != JD_TAG_RUNTIME) {
                     bool hit = false;
                     if (upper == "ISNUM") hit = av.tag == JD_TAG_I64 || jd_is_f64_tag(av.tag);
                     else if (upper == "ISSTR") hit = av.tag == JD_TAG_STR;
@@ -19554,6 +19597,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             // An IIF arm answers whatever it holds: a cell read keeps its kind.
             if (upper == "IIF" && i > 0 && expr.args[i] && expr.args[i]->kind == ExprKind::INDEX)
                 hint = JD_TAG_RUNTIME;
+            // An IIF condition read from a cell or a map field may hold an
+            // array, which IIF picks from cell by cell.
+            if (upper == "IIF" && i == 0 && expr.args.size() == 3 &&
+                expr.args[0] && expr.args[0]->kind == ExprKind::INDEX)
+                hint = JD_TAG_RUNTIME;
             // A builtin without a native binding runs in the VM, which takes
             // every argument with its tag: a cell read keeps its kind, so a
             // text cell of an untyped array arrives as text, not as a number.
@@ -20011,33 +20059,78 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             return v.tag == JD_TAG_ARR || jd_is_f64_tag(v.tag) || v.tag == JD_TAG_I64 || v.tag == JD_TAG_BOOL ||
                    (v.tag == JD_TAG_RUNTIME && v.runtime_tag);
         };
+        auto cell_arm = [&](const TypedValue& v) { return num_or_arr(v) || v.tag == JD_TAG_STR; };
         // An array condition picks cell by cell in the runtime; the branches
-        // go as bits with their kind, since a branch may be an array itself.
-        if (cond.tag == JD_TAG_ARR && num_or_arr(val1) && num_or_arr(val2)) {
+        // go as bits with their kind, since a branch may be an array or a text.
+        auto pick_cells = [&](LLVMValueRef cond_arr) -> LLVMValueRef {
             auto& fn = runtime_funcs["__arr_iif"];
-            auto branch = [&](const TypedValue& v, LLVMValueRef& f, LLVMValueRef& t) {
-                if (v.tag == JD_TAG_ARR) {
-                    f = pun_i64_to_f64(LLVMBuildPtrToInt(builder, v.val, i64_type, "iif_p2i"));
-                    t = LLVMConstInt(i32_type, JD_TAG_ARR, 0);
-                } else if (v.tag == JD_TAG_RUNTIME) {
-                    // a cell read: an array arm by its pointer, else the number
-                    LLVMValueRef is_arr = LLVMBuildICmp(builder, LLVMIntEQ, v.runtime_tag,
-                        LLVMConstInt(i32_type, JD_TAG_ARR, 0), "iif_rtarr");
-                    f = LLVMBuildSelect(builder, is_arr, pun_i64_to_f64(v.val),
-                                        coerce_to(v, f64_type), "iif_rtf");
-                    t = LLVMBuildSelect(builder, is_arr, LLVMConstInt(i32_type, JD_TAG_ARR, 0),
-                                        LLVMConstInt(i32_type, JD_TAG_F64, 0), "iif_rtt");
-                } else {
-                    f = coerce_to(v, f64_type);
-                    t = LLVMConstInt(i32_type, JD_TAG_F64, 0);
-                }
-            };
             LLVMValueRef b1, t1, b2, t2;
-            branch(val1, b1, t1);
-            branch(val2, b2, t2);
-            LLVMValueRef args[] = { cond.val, b1, t1, b2, t2 };
-            TypedValue out{ LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 5, "iif_arr"), JD_TAG_ARR };
+            to_bits_tag(val1, b1, t1);
+            to_bits_tag(val2, b2, t2);
+            LLVMValueRef args[] = { cond_arr, b1, t1, b2, t2 };
+            return LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 5, "iif_arr");
+        };
+        // Texts made for the call are copied into the cells, so they go.
+        auto drop_arm_temps = [&] {
+            drop_fresh_temp(*expr.args[1], val1);
+            drop_fresh_temp(*expr.args[2], val2);
+        };
+        if (cond.tag == JD_TAG_ARR && cell_arm(val1) && cell_arm(val2)) {
+            TypedValue out{ pick_cells(cond.val), JD_TAG_ARR };
+            drop_arm_temps();
             out.fresh_container = true;
+            return out;
+        }
+        // A condition whose kind only the running program knows (a cell, a
+        // map field, an untyped parameter) picks cell by cell when it turns
+        // out to be an array, else answers the arm it chooses. An untyped
+        // parameter carries an array as its pointer bits.
+        if (jd_is_f64_tag(cond.tag) && expr.args[0] && expr.args[0]->kind == ExprKind::VARIABLE &&
+            current_untyped_params.count(expr.args[0]->str_val) && cell_arm(val1) && cell_arm(val2)) {
+            auto& may = runtime_funcs["__bits_may_be_array"];
+            LLVMValueRef bits = pun_f64_to_i64(cond.val);
+            LLVMValueRef is_arr = LLVMBuildICmp(builder, LLVMIntNE,
+                LLVMBuildCall2(builder, may.fn_type, may.fn, &bits, 1, "iif_may"),
+                LLVMConstInt(i32_type, 0, 0), "iif_parr");
+            cond = { bits, JD_TAG_RUNTIME,
+                     LLVMBuildSelect(builder, is_arr, LLVMConstInt(i32_type, JD_TAG_ARR, 0),
+                                     LLVMConstInt(i32_type, JD_TAG_F64, 0), "iif_ptag") };
+        }
+        if (cond.tag == JD_TAG_RUNTIME && cond.runtime_tag && cell_arm(val1) && cell_arm(val2)) {
+            LLVMValueRef is_arr = LLVMBuildICmp(builder, LLVMIntEQ, cond.runtime_tag,
+                LLVMConstInt(i32_type, JD_TAG_ARR, 0), "iif_cisarr");
+            LLVMBasicBlockRef bb_arr = LLVMAppendBasicBlockInContext(ctx, current_fn, "iif.arr");
+            LLVMBasicBlockRef bb_one = LLVMAppendBasicBlockInContext(ctx, current_fn, "iif.one");
+            LLVMBasicBlockRef bb_join = LLVMAppendBasicBlockInContext(ctx, current_fn, "iif.join");
+            LLVMBuildCondBr(builder, is_arr, bb_arr, bb_one);
+            LLVMPositionBuilderAtEnd(builder, bb_arr);
+            LLVMValueRef arr = pick_cells(LLVMBuildIntToPtr(builder, cond.val, i8_ptr_type, "iif_carr"));
+            LLVMValueRef arr_bits = LLVMBuildPtrToInt(builder, arr, i64_type, "iif_abits");
+            drop_arm_temps();
+            LLVMBasicBlockRef bb_arr_end = LLVMGetInsertBlock(builder);
+            LLVMBuildBr(builder, bb_join);
+            LLVMPositionBuilderAtEnd(builder, bb_one);
+            LLVMValueRef cond_i1 = to_i1(cond);
+            LLVMValueRef b1, t1, b2, t2;
+            to_bits_tag(val1, b1, t1);
+            to_bits_tag(val2, b2, t2);
+            LLVMValueRef one_bits = LLVMBuildSelect(builder, cond_i1, b1, b2, "iif_b");
+            LLVMValueRef one_tag = LLVMBuildSelect(builder, cond_i1, t1, t2, "iif_t");
+            LLVMBasicBlockRef bb_one_end = LLVMGetInsertBlock(builder);
+            LLVMBuildBr(builder, bb_join);
+            LLVMPositionBuilderAtEnd(builder, bb_join);
+            LLVMValueRef bits = LLVMBuildPhi(builder, i64_type, "iif_bits");
+            LLVMValueRef tag = LLVMBuildPhi(builder, i32_type, "iif_tag");
+            LLVMValueRef bv[] = { arr_bits, one_bits };
+            LLVMValueRef tv[] = { LLVMConstInt(i32_type, JD_TAG_ARR, 0), one_tag };
+            LLVMBasicBlockRef bbs[] = { bb_arr_end, bb_one_end };
+            LLVMAddIncoming(bits, bv, bbs, 2);
+            LLVMAddIncoming(tag, tv, bbs, 2);
+            TypedValue out{ bits, JD_TAG_RUNTIME, tag };
+            out.fresh_arr = LLVMBuildPhi(builder, LLVMInt1TypeInContext(ctx), "iif_fresh");
+            LLVMValueRef fv[] = { LLVMConstInt(LLVMInt1TypeInContext(ctx), 1, 0),
+                                  LLVMConstInt(LLVMInt1TypeInContext(ctx), 0, 0) };
+            LLVMAddIncoming(out.fresh_arr, fv, bbs, 2);
             return out;
         }
         // A number condition with two array branches answers one of them whole.
@@ -21990,7 +22083,7 @@ bool LLVMCodegen::hands_on_cells(const Expr& e) {
         return false;
     static const std::unordered_set<std::string> fresh_texts = {
         "SPLIT", "LINES", "WORDS", "CHARS", "MAP.KEYS", "OS.ARGS", "ZIP.LIST",
-        "STR$", "DIR$", "FILE.LIST" };
+        "STR$", "DIR$", "FILE.LIST", "IIF" };
     if (builtin_answers_new(up) || fresh_texts.count(up)) return false;
     for (auto& a : e.args)
         if (a && a->kind != ExprKind::LITERAL_INT && a->kind != ExprKind::LITERAL_FLOAT &&

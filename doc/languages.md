@@ -2322,6 +2322,7 @@ Integer-to-string formatting helpers live under **[String Functions](#string-fun
 #### Utility
 
 * **`IIF(condition, value_if_true, value_if_false) -> value or array`**: A vectorized ternary operator. Evaluates a condition (scalar or array) and returns the corresponding true/false value element-wise.
+  * An array condition answers an array of its own shape (nested rows included, an empty condition an empty array); cell `i` is the true value where `condition[i]` is not zero, else the false value. This holds wherever the condition comes from: a variable, a comparison, a map field, a cell, a FUNC result or an untyped parameter. A value that is an array as long as the condition gives its own cell `i`. Each cell keeps the kind of the value it came from, so `IIF([TRUE, FALSE], "pos", 0)` is `[pos, 0]`.
 
 ### Regular Expression Functions
 

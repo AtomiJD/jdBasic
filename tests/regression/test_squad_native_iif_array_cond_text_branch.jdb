@@ -1,0 +1,162 @@
+' IIF with an array condition answers one cell per condition cell, and a
+' text branch keeps its text in those cells, in both backends alike.
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Check(ok AS BOOLEAN, label$)
+    IF ok THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: "; label$
+    ENDIF
+ENDSUB
+
+' kinds$ has one letter per cell: T for a text cell, N for a number cell.
+' A number cell is compared by its STR$ form against the text in expected.
+FUNC CellsMatch(actual, expected, kinds$) AS BOOLEAN
+    IF NOT ISARR(actual) THEN RETURN FALSE
+    IF LEN(actual) <> LEN(expected) THEN RETURN FALSE
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(expected) - 1
+        DIM kind$ = MID$(kinds$, i, 1)
+        IF kind$ = "T" THEN
+            IF NOT ISSTR(actual[i]) THEN RETURN FALSE
+            IF actual[i] <> expected[i] THEN RETURN FALSE
+        ELSE
+            IF NOT ISNUM(actual[i]) THEN RETURN FALSE
+            IF STR$(actual[i]) <> expected[i] THEN RETURN FALSE
+        ENDIF
+    NEXT
+    RETURN TRUE
+ENDFUNC
+
+FUNC Pos$()
+    RETURN "pos"
+ENDFUNC
+
+FUNC SizeFlags(amounts)
+    RETURN amounts > 10
+ENDFUNC
+
+FUNC Label(flags)
+    RETURN IIF(flags, "hi", "lo")
+ENDFUNC
+
+FUNC LabelVar(flags)
+    DIM yes$ = "pos"
+    DIM no$ = "neg"
+    RETURN IIF(flags, yes$, no$)
+ENDFUNC
+
+FUNC LabelFromCellsInside()
+    DIM signs = [TRUE, FALSE, TRUE, FALSE, TRUE]
+    RETURN IIF(signs, "pos", "neg")
+ENDFUNC
+
+DIM signs = [TRUE, FALSE, TRUE, FALSE, TRUE]
+DIM vals = [3, -1, 2, -5, 4]
+DIM alternating = ["pos", "neg", "pos", "neg", "pos"]
+DIM kindsText$ = "TTTTT"
+
+' --- 1. scalar condition ---
+Check(IIF(TRUE, "yes", "no") = "yes", "a true scalar condition answers the true text")
+Check(IIF(FALSE, "yes", "no") = "no", "a false scalar condition answers the false text")
+Check(IIF(5, "yes", "no") = "yes", "a not-zero number condition answers the true text")
+Check(IIF(0, "yes", "no") = "no", "a zero number condition answers the false text")
+DIM flagOn AS BOOLEAN = TRUE
+Check(IIF(flagOn, 10, 20) = 10, "a scalar condition with number branches answers the true number")
+Check(IIF(NOT flagOn, 10, 20) = 20, "a scalar condition with number branches answers the false number")
+DIM wholeArm = IIF(TRUE, [1, 2], [3])
+Check(CellsMatch(wholeArm, ["1", "2"], "NN"), "a true scalar condition answers the whole array branch")
+Check(ISSTR(IIF(TRUE, "yes", 0)), "a scalar condition answers a text branch as a text")
+
+' --- 2. array condition, both branches scalar ---
+Check(CellsMatch(IIF(signs, 1, 0), ["1", "0", "1", "0", "1"], "NNNNN"), "an array condition with two numbers gives one number per cell")
+Check(CellsMatch(IIF(signs, "pos", "neg"), alternating, kindsText$), "an array condition with two text literals gives one text per cell")
+Check(CellsMatch(IIF(vals > 0, "pos", "neg"), alternating, kindsText$), "a comparison written in place as condition gives one text per cell")
+Check(CellsMatch(IIF([TRUE, FALSE], "pos", "neg"), ["pos", "neg"], "TT"), "an array literal as condition gives one text per cell")
+Check(CellsMatch(IIF([1, 0, 2], "pos", "neg"), ["pos", "neg", "pos"], "TTT"), "an array of numbers as condition treats not zero as true")
+DIM yes$ = "pos"
+DIM no$ = "neg"
+Check(CellsMatch(IIF(signs, yes$, no$), alternating, kindsText$), "text branches from $ variables give one text per cell")
+Check(CellsMatch(IIF(signs, "p" + "os", "n" + "eg"), alternating, kindsText$), "text branches from expressions give one text per cell")
+Check(CellsMatch(IIF(signs, Pos$(), no$), alternating, kindsText$), "a text branch from a function call gives one text per cell")
+DIM words = ["pos", "neg"]
+Check(CellsMatch(IIF(signs, words[0], words[1]), alternating, kindsText$), "text branches from array cells give one text per cell")
+DIM names = {"yes": "pos", "no": "neg"}
+Check(CellsMatch(IIF(signs, names{"yes"}, names{"no"}), alternating, kindsText$), "text branches from map fields give one text per cell")
+Check(CellsMatch(IIF(signs, 7, "neg"), ["7", "neg", "7", "neg", "7"], "NTNTN"), "a number true branch and a text false branch keep their kinds per cell")
+Check(CellsMatch(IIF(signs, "pos", 0), ["pos", "0", "pos", "0", "pos"], "TNTNT"), "a text true branch and a number false branch keep their kinds per cell")
+Check(CellsMatch(IIF(signs, "", "neg"), ["", "neg", "", "neg", ""], kindsText$), "an empty text branch gives empty texts in the true cells")
+Check(CellsMatch(IIF(signs, "pos", ""), ["pos", "", "pos", "", "pos"], kindsText$), "an empty text branch gives empty texts in the false cells")
+
+DIM cfg = {"flags": [TRUE, FALSE, TRUE, FALSE, TRUE]}
+Check(CellsMatch(IIF(cfg{"flags"}, "pos", "neg"), alternating, kindsText$), "a condition from a map field gives one text per cell")
+DIM conds = [[TRUE, FALSE, TRUE], [FALSE, FALSE, TRUE]]
+Check(CellsMatch(IIF(conds[1], "pos", "neg"), ["neg", "neg", "pos"], "TTT"), "a condition from an array cell gives one text per cell")
+Check(CellsMatch(IIF(SizeFlags([4, 8, 12, 20]), "big", "small"), ["small", "small", "big", "big"], "TTTT"), "a condition from a FUNC result gives one text per cell")
+Check(CellsMatch(Label(signs), ["hi", "lo", "hi", "lo", "hi"], kindsText$), "an untyped FUNC parameter as condition gives one text per cell")
+Check(CellsMatch(Label([1, 0, 3]), ["hi", "lo", "hi"], "TTT"), "an untyped FUNC parameter holding numbers as condition gives one text per cell")
+Check(CellsMatch(LabelVar(vals > 0), alternating, kindsText$), "text variables inside a FUNC give one text per cell")
+Check(CellsMatch(LabelFromCellsInside(), alternating, kindsText$), "an array condition local to a FUNC gives one text per cell")
+
+' --- 3. array branches of the condition's length ---
+DIM firstArm = ["a", "b", "c", "d", "e"]
+DIM secondArm = ["v", "w", "x", "y", "z"]
+Check(CellsMatch(IIF(signs, firstArm, secondArm), ["a", "w", "c", "y", "e"], kindsText$), "two text array branches give each its own cell")
+Check(CellsMatch(IIF(signs, ["a", "b", "c", "d", "e"], ["v", "w", "x", "y", "z"]), ["a", "w", "c", "y", "e"], kindsText$), "two text array literal branches give each its own cell")
+Check(CellsMatch(IIF(vals > 0, vals, 0), ["3", "0", "2", "0", "4"], "NNNNN"), "a number array branch against a number gives its own cell")
+Check(CellsMatch(IIF(signs, firstArm, "none"), ["a", "none", "c", "none", "e"], kindsText$), "a text array branch against a text gives its own cell")
+Check(CellsMatch(IIF(signs, "none", secondArm), ["none", "w", "none", "y", "none"], kindsText$), "a text against a text array branch gives the array's own cell")
+Check(CellsMatch(IIF(signs, firstArm, 0), ["a", "0", "c", "0", "e"], "TNTNT"), "a text array branch against a number keeps both kinds")
+Check(CellsMatch(IIF(vals > 0, vals, "neg"), ["3", "neg", "2", "neg", "4"], "NTNTN"), "a number array branch against a text keeps both kinds")
+
+' --- 4. no true cell, no false cell, empty, one cell ---
+DIM allFalse = [FALSE, FALSE, FALSE, FALSE, FALSE]
+Check(CellsMatch(IIF(allFalse, "pos", "neg"), ["neg", "neg", "neg", "neg", "neg"], kindsText$), "a condition with no true cell still gives one text per cell")
+Check(CellsMatch(IIF(vals > 100, "pos", "neg"), ["neg", "neg", "neg", "neg", "neg"], kindsText$), "a comparison with no true cell still gives one text per cell")
+Check(CellsMatch(IIF(vals > -100, "pos", "neg"), ["pos", "pos", "pos", "pos", "pos"], kindsText$), "a condition with no false cell still gives one text per cell")
+Check(CellsMatch(IIF([TRUE], "pos", "neg"), ["pos"], "T"), "a one-cell condition gives a one-cell array")
+Check(CellsMatch(IIF([0], "pos", "neg"), ["neg"], "T"), "a one-cell false condition gives a one-cell array")
+DIM emptyCond = []
+DIM emptyAnswer = IIF(emptyCond, "pos", "neg")
+Check(ISARR(emptyAnswer), "an empty array condition answers an array")
+Check(LEN(emptyAnswer) = 0, "an empty array condition answers an array of length 0")
+Check(LEN(IIF([], "pos", "neg")) = 0, "an empty array literal condition answers an array of length 0")
+
+' --- 5. nested condition ---
+DIM grid = [[1, 0], [0, 1]]
+DIM gridNumbers = IIF(grid, 1, 0)
+Check(ISARR(gridNumbers) ANDALSO LEN(gridNumbers) = 2, "a nested condition with number branches answers its two rows")
+IF ISARR(gridNumbers) ANDALSO LEN(gridNumbers) = 2 THEN
+    Check(CellsMatch(gridNumbers[0], ["1", "0"], "NN"), "the first row of a nested number answer")
+    Check(CellsMatch(gridNumbers[1], ["0", "1"], "NN"), "the last row of a nested number answer")
+ENDIF
+DIM gridTexts = IIF(grid, "on", "off")
+Check(ISARR(gridTexts) ANDALSO LEN(gridTexts) = 2, "a nested condition with text branches answers its two rows")
+IF ISARR(gridTexts) ANDALSO LEN(gridTexts) = 2 THEN
+    Check(CellsMatch(gridTexts[0], ["on", "off"], "TT"), "the first row of a nested text answer is on, off")
+    Check(CellsMatch(gridTexts[1], ["off", "on"], "TT"), "the last row of a nested text answer is off, on")
+ENDIF
+
+' --- 6. the result is a real array ---
+DIM picked = IIF(signs, "pos", "neg")
+Check(TYPEOF(picked) = "ARRAY", "TYPEOF of the answer is ARRAY")
+Check(ISARR(picked) ANDALSO LEN(picked) = 5, "LEN of the answer is the length of the condition")
+IF ISARR(picked) ANDALSO LEN(picked) = 5 THEN
+    Check(picked[1] = "neg", "a cell read of the answer gives the cell")
+    Check(picked[4] = "pos", "a read of the last cell of the answer gives the cell")
+    PRINT "stored answer: "; picked
+ELSE
+    Check(FALSE, "a cell read of the answer gives the cell")
+    Check(FALSE, "a read of the last cell of the answer gives the cell")
+ENDIF
+DIM mixedPicked = IIF(signs, 7, "neg")
+Check(TYPEOF(mixedPicked) = "ARRAY", "TYPEOF of a mixed-kind answer is ARRAY")
+
+PRINT "RESULTS: "; passed; " passed, "; failed; " failed"
+IF failed > 0 THEN END 1

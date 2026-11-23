@@ -455,6 +455,9 @@ private:
         // i1: a string this program's heap copied out for the read (a
         // native map hands out a copy); drop_read_temp gives it back.
         LLVMValueRef fresh_native = nullptr;
+        // i1, for a runtime-tagged answer: it is an array this call built
+        // for its caller alone, which the caller registers with the counts.
+        LLVMValueRef fresh_arr = nullptr;
     };
     // An argument a builtin's own path already evaluated before it fell
     // through to the general call: the general path takes it from here

@@ -553,6 +553,16 @@ ELSEIF pattern$ = "lambdatext" THEN
         total = total + LEN(pick("a"))
         IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
     NEXT i
+ELSEIF pattern$ = "iiftext" THEN
+    DIM iflags = [TRUE, FALSE, TRUE]
+    DIM icfg AS MAP = {}
+    icfg{"flags"} = iflags
+    FOR i = 1 TO passes
+        total = total + LEN(IIF(iflags, "p" + STR$(i), "n"))
+        glob = IIF(icfg{"flags"}, "q" + STR$(i), 0)
+        total = total + LEN(LeakLabel(iflags))
+        IF i MOD rounds = 0 THEN marks$ = marks$ + " " + STR$(SYS.HEAP())
+    NEXT i
 ELSE
     FOR i = 1 TO passes
         total = total + i * 0.5
@@ -579,6 +589,10 @@ ENDFUNC
 ' called with a number and with arrays, so x is of run-time kind
 FUNC LeakRound(x, digits)
     RETURN ROUND(x * 1, digits)
+ENDFUNC
+
+FUNC LeakLabel(flags)
+    RETURN IIF(flags, "hi", "lo")
 ENDFUNC
 
 FUNC Decorate$(n)

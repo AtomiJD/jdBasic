@@ -6253,18 +6253,69 @@ double jdb_iif(int64_t cond, double a, double b) {
     return cond ? a : b;
 }
 
+// The native array model for IIF over an array condition: like RtShape, but
+// a cell carries its kind, so a text, a map or a handle keeps it in the
+// answer. A text is the answer's own copy; a level stays untagged while its
+// cells are all numbers, all texts or rows and numbers.
+struct RtCell { double v = 0.0; int kind = JD_TAG_F64; };
+struct RtPick {
+    using Arr = JdbArray*;
+    using Val = RtCell;
+    static int64_t len(JdbArray* a) { return a ? a->length : 0; }
+    static bool is_row(JdbArray* a, int64_t i) { return a && ::cell_is_arr(a, i); }
+    static JdbArray* row(JdbArray* a, int64_t i) { return decode_inner(a->data[i]); }
+    static RtCell cell(JdbArray* a, int64_t i) { return { a->data[i], cell_kind(a, i) }; }
+    static JdbArray* make(int64_t n) { return jdb_array_new(n); }
+    static void put_row(JdbArray* a, int64_t i, JdbArray* r) {
+        if (arr_tagged(a) || (a->flags & 2)) put_kind(a, i, encode_inner(r), JD_TAG_ARR);
+        else { a->data[i] = encode_inner(r); a->flags |= 1; }
+    }
+    static void put(JdbArray* a, int64_t i, const RtCell& c) {
+        bool plain = !arr_tagged(a);
+        if (c.kind == JD_TAG_F64 && plain && !(a->flags & 2)) { a->data[i] = c.v; return; }
+        double v = c.v;
+        if (c.kind == JD_TAG_STR) {
+            char* s = jdb_str_dup_binary(decode_str(c.v));
+            memcpy(&v, &s, sizeof(double));
+            if (plain && (i == 0 ? !(a->flags & 1) : (a->flags & 3) == 3)) {
+                a->data[i] = v;
+                a->flags |= 3;
+                return;
+            }
+        }
+        put_kind(a, i, keep_vm_handle(v, c.kind), c.kind);
+    }
+};
+
 // IIF over an array condition picks cell by cell, into nested rows as well;
 // a branch that is an array gives its own cell (its rows for a nested
-// condition), a number is the same in every cell. The branches arrive as
-// bits with their kind, since an array is a pointer punned into the double.
-JdbArray* jdb_array_iif(JdbArray* cond, double a, int32_t a_tag, double b, int32_t b_tag) {
-    if (!cond) return jdb_array_new(0);
-    auto branch = [](double v, int32_t tag) -> jdb_shape::Branch<RtShape> {
-        if (tag == JD_TAG_ARR) return { true, decode_inner(v), 0.0 };
-        return { false, nullptr, v };
-    };
-    return jdb_shape::pick<RtShape>(cond, branch(a, a_tag), branch(b, b_tag),
-        [](const double& c) { return c != 0.0; });
+// condition), a number or a text is the same in every cell. The branches
+// arrive as bits with their kind, since an array or a text is a pointer.
+JdbArray* jdb_array_iif(JdbArray* cond, int64_t a, int32_t a_tag, int64_t b, int32_t b_tag) {
+    return jdb_guard([&]() -> JdbArray* {
+        if (!cond) return jdb_array_new(0);
+        auto branch = [](int64_t bits, int32_t tag) -> jdb_shape::Branch<RtPick> {
+            union { int64_t i; double d; } u; u.i = bits;
+            if (tag == JD_TAG_ARR) return { true, (JdbArray*)(intptr_t)bits, RtCell() };
+            if (tag == JD_TAG_I64) return { false, nullptr, { (double)bits, JD_TAG_F64 } };
+            if (tag == JD_TAG_BOOL) return { false, nullptr, { bits ? 1.0 : 0.0, JD_TAG_BOOL } };
+            return { false, nullptr, { u.d, tag } };
+        };
+        return settle_kinds(jdb_shape::pick<RtPick>(cond, branch(a, a_tag), branch(b, b_tag),
+            [](const RtCell& c) { return c.v != 0.0; }));
+    }, [] { return jdb_array_new(0); });
+}
+
+// Whether bits an untyped parameter carries may be an array: they look like
+// a pointer, not a number, and the counts, when they run, know no other
+// container by them.
+int32_t jdb_bits_may_be_array(int64_t bits) {
+    if ((uint64_t)bits < 4096 || (uint64_t)bits >= (1ULL << 47)) return 0;
+    if (g_rc.cap && rc_ready()) {
+        int kind = rc_kind_of((uintptr_t)bits);
+        return kind == -1 || kind == JD_TAG_ARR;
+    }
+    return 1;
 }
 
 // ISNUM, ISSTR, ISARR - type checking (simplified for native)
