@@ -25,7 +25,8 @@ The chain runs these three itself after you and believes only its own run.
   check and which sentence of `doc/languages.md` in your last message.
 - You may not touch what judges the code: `tests/gate/`, `tests/parity.sh`,
   the parity baselines, `tools/gate_run.jdb`, `tools/verify.sh`,
-  `tools/hooks/`, `tools/squad/`, `.github/`, `CLAUDE.md`. A change there
+  `tools/hooks/`, `tools/squad/`, `.github/`, `CLAUDE.md`, the build scripts
+  (`build.sh`, `build_rt.sh`, `build.bat`, `build_rt.bat`). A change there
   throws the night's work away.
 - Keep the patch small: one cause, under 600 changed rows. No refactoring
   on the way, no renaming, no reformatting of rows you did not need.
@@ -38,7 +39,7 @@ The chain runs these three itself after you and believes only its own run.
   where"), no names of people, English only, no em-dash anywhere.
 - Build with `HTTP=1 GFX=1 IMGUI=1 NATIVEC=1 ./build.sh` (the environment
   has these set; `tools/verify.sh` does it for you). A new `src/*.cpp`
-  goes into the source lists of both `build.sh` and `build_rt.sh`.
+  needs the build scripts, which you may not change: stop and say so.
 - Do not commit, do not push, do not stash, do not switch branches.
 
 ## Feedback on the previous attempt

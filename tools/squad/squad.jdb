@@ -42,7 +42,7 @@ DIM MAX_ATTEMPTS AS INTEGER = 3
 DIM BRANCH$ AS STRING = "squad"
 
 ' Paths no stage may change: what judges the code
-DIM JUDGES = ["tests/gate/", "tests/parity.sh", "tests/parity_baseline", "tests/memory_check.sh", "tests/sanitize_gate.sh", "tests/leak_check.sh", "tools/gate_run.jdb", "tools/verify.sh", "tools/hooks/", "tools/squad/", ".github/", ".claude/", "CLAUDE.md"]
+DIM JUDGES = ["tests/gate/", "tests/parity.sh", "tests/parity_baseline", "tests/memory_check.sh", "tests/sanitize_gate.sh", "tests/leak_check.sh", "tools/gate_run.jdb", "tools/verify.sh", "tools/hooks/", "tools/squad/", ".github/", ".claude/", "CLAUDE.md", "build.sh", "build_rt.sh", "build.bat", "build_rt.bat", "build_libs.sh"]
 
 DIM q$ AS STRING = CHR$(39)
 DIM nl$ AS STRING = CHR$(10)
@@ -112,7 +112,7 @@ ENDFUNC
 
 ' Changed and untracked paths of the working tree
 FUNC CHANGED()
-    DIM rows = SPLIT(SH("git status --porcelain --untracked-files=all", 300){"output"}, nl$)
+    DIM rows = SPLIT(SH("git status --porcelain --untracked-files=all --no-renames", 300){"output"}, nl$)
     DIM found = []
     DIM i AS INTEGER
     FOR i = 0 TO LEN(rows) - 1
@@ -279,7 +279,7 @@ ENDIF
 
 DIM gate_note$ AS STRING = "The gate is green on both backends."
 IF NOT dry_run THEN
-    DIM before = SH("bash tools/verify.sh", VERIFY_SECS)
+    DIM before = SH("timeout -k 15 " + STR$(VERIFY_SECS) + " bash tools/verify.sh", VERIFY_SECS + 60)
     TXTWRITER work$ + "/gate_before.txt", before{"output"}
     IF before{"exit"} = 2 THEN
         NOTE("- verify: the build failed: " + TAIL$(before{"output"}, 5))
@@ -293,18 +293,22 @@ ENDIF
 
 DIM worse_before = []
 IF want_parity ANDALSO NOT dry_run THEN
-    DIM swept = SH("bash tests/parity.sh -t 12 -o " + q$ + work$ + "/parity_before.tsv" + q$, PARITY_SECS)
+    DIM swept = SH("timeout -k 15 " + STR$(PARITY_SECS) + " bash tests/parity.sh -t 12 -o " + q$ + work$ + "/parity_before.tsv" + q$, PARITY_SECS + 60)
     TXTWRITER work$ + "/parity_before.txt", swept{"output"}
     worse_before = PARITY_WORSE(swept{"output"})
-    DIM tally = FILTER(LAMBDA row -> INSTR(row, "regressed ") >= 0, SPLIT(swept{"output"}, nl$))
-    DIM tally$ AS STRING = "no comparison with the baseline"
-    IF LEN(tally) > 0 THEN tally$ = TRIM$(tally[0])
-    NOTE("- parity: " + tally$ + ", " + STR$(LEN(worse_before)) + " rows worse before any change")
+    DIM sum_rows = FILTER(LAMBDA row -> INSTR(row, "regressed ") >= 0, SPLIT(swept{"output"}, nl$))
+    DIM compared$ AS STRING = "no comparison with the baseline"
+    IF LEN(sum_rows) > 0 THEN compared$ = TRIM$(sum_rows[0])
+    NOTE("- parity: " + compared$ + ", " + STR$(LEN(worse_before)) + " rows worse before any change")
 ENDIF
 
 ' --------------------------------------------------------------- 2 scout
 
 DIM areas = FILTER(LAMBDA row -> LEN(TRIM$(row)) > 0 ANDALSO NOT STARTSWITH(row, "#"), SPLIT(READ$("tools/squad/areas.txt"), nl$))
+IF LEN(areas) = 0 THEN
+    NOTE("- tools/squad/areas.txt names no area")
+    END 2
+ENDIF
 DIM area$ AS STRING = areas[VAL(FORMAT_DATE$(NOW(), "%j")) MOD LEN(areas)]
 DIM scout = AGENT("scout", SCOUT_MODEL$, PROMPT$("scout", {"WORK": work$, "AREA": area$, "GATE": gate_note$}), "Read,Grep,Glob,Bash,Write,Edit", SCOUT_SECS)
 IF dry_run THEN
@@ -320,16 +324,23 @@ IF LEN(CHANGED()) > 0 THEN PARK("the scout changed the tree: " + CHANGED()[0])
 DIM findings = []
 TRY
     IF FILE.EXISTS(work$ + "/findings.json") THEN findings = JSON.PARSE(READ$(work$ + "/findings.json"))
+    IF NOT ISARR(findings) THEN findings = []
 CATCH
     NOTE("- findings.json is not valid JSON")
 ENDTRY
 NOTE("")
 NOTE("## Findings (" + STR$(LEN(findings)) + ")")
 DIM f AS INTEGER
-FOR f = 0 TO LEN(findings) - 1
-    DIM filed AS INTEGER = TICKET(findings[f]{"title"}, findings[f]{"description"}, findings[f]{"type"}, "todo")
-    NOTE("- " + IIF(filed > 0, "#" + STR$(filed) + " ", "") + findings[f]{"title"})
-NEXT f
+TRY
+    FOR f = 0 TO LEN(findings) - 1
+        DIM kind$ AS STRING = "bug"
+        IF MAP.EXISTS(findings[f], "type") ANDALSO findings[f]{"type"} = "idea" THEN kind$ = "idea"
+        DIM filed AS INTEGER = TICKET("" + findings[f]{"title"}, "" + findings[f]{"description"}, kind$, "todo")
+        NOTE("- " + IIF(filed > 0, "#" + STR$(filed) + " ", "") + findings[f]{"title"})
+    NEXT f
+CATCH
+    NOTE("- findings.json has an entry the chain cannot read: " + ERRMSG$)
+ENDTRY
 
 DIM theme$ AS STRING = READ$(work$ + "/theme.md")
 DIM repro$ AS STRING = work$ + "/repro.jdb"
@@ -393,7 +404,7 @@ FOR attempt = 1 TO MAX_ATTEMPTS
     DIM touched = CHANGED()
     IF CODEC.SHA256$(READ$(test_file$)) <> test_hash$ THEN PARK("the coder edited the test")
     IF JUDGE_TOUCHED$(touched) <> "" THEN PARK("the coder touched a judge: " + JUDGE_TOUCHED$(touched))
-    DIM stray$ AS STRING = FOREIGN$(touched, ["src/", "doc/", "lib/", "tests/regression/", "tests/leak/", "help.txt", "build.sh", "build_rt.sh", "build.bat", "build_rt.bat"])
+    DIM stray$ AS STRING = FOREIGN$(touched, ["src/", "doc/", "lib/", "tests/regression/", "tests/leak/", "help.txt"])
     IF stray$ <> "" THEN PARK("the coder changed a path outside its area: " + stray$)
     DIM sizes = SPLIT(GIT$("diff --numstat"), nl$)
     DIM patch_rows AS INTEGER = 0
@@ -405,7 +416,7 @@ FOR attempt = 1 TO MAX_ATTEMPTS
     IF patch_rows > MAX_PATCH_ROWS THEN PARK("the patch has " + STR$(patch_rows) + " changed rows, the cap is " + STR$(MAX_PATCH_ROWS))
 
     DIM problems$ AS STRING = ""
-    DIM verified = SH("bash tools/verify.sh", VERIFY_SECS)
+    DIM verified = SH("timeout -k 15 " + STR$(VERIFY_SECS) + " bash tools/verify.sh", VERIFY_SECS + 60)
     TXTWRITER work$ + "/gate_" + stage$ + ".txt", verified{"output"}
     IF verified{"exit"} <> 0 THEN problems$ = problems$ + "tools/verify.sh is red:" + nl$ + TAIL$(verified{"output"}, 25) + nl$
     DIM fix_interp = RUN_JDB(test_file$, FALSE, 300)
@@ -413,7 +424,7 @@ FOR attempt = 1 TO MAX_ATTEMPTS
     IF NOT GREEN(fix_interp) THEN problems$ = problems$ + test_file$ + " in the interpreter:" + nl$ + TAIL$(fix_interp{"output"}, 20) + nl$
     IF NOT GREEN(fix_native) THEN problems$ = problems$ + test_file$ + " compiled:" + nl$ + TAIL$(fix_native{"output"}, 20) + nl$
     IF problems$ = "" ANDALSO want_parity THEN
-        DIM resweep = SH("bash tests/parity.sh -t 12 -o " + q$ + work$ + "/parity_" + stage$ + ".tsv" + q$, PARITY_SECS)
+        DIM resweep = SH("timeout -k 15 " + STR$(PARITY_SECS) + " bash tests/parity.sh -t 12 -o " + q$ + work$ + "/parity_" + stage$ + ".tsv" + q$, PARITY_SECS + 60)
         DIM worse_now = PARITY_WORSE(resweep{"output"})
         DIM w AS INTEGER
         FOR w = 0 TO LEN(worse_now) - 1
@@ -445,7 +456,15 @@ IF NOT accepted THEN PARK("no accepted patch after " + STR$(MAX_ATTEMPTS) + " at
 DIM message$ AS STRING = REPLACE$(title$, CHR$(226) + CHR$(128) + CHR$(148), "-") + ". " + test_file$
 DIM message_file$ AS STRING = work$ + "/commit_final.txt"
 TXTWRITER message_file$, message$
-DIM staged = SH("git add -A && git commit -q -F " + q$ + message_file$ + q$, 300)
+' Only the paths the checks saw are staged, and what is staged is compared
+' with them once more; no hook of the clone runs in the commit
+IF CODEC.SHA256$(READ$(test_file$)) <> test_hash$ THEN PARK("the test changed after the checks")
+DIM final_paths = CHANGED()
+IF JOIN(SORT(final_paths), nl$) <> JOIN(SORT(touched), nl$) THEN PARK("the tree changed after the checks")
+DIM added = SH("git add -- " + q$ + JOIN(touched, q$ + " " + q$) + q$, 300)
+DIM in_index = SPLIT(GIT$("diff --cached --name-only --no-renames"), nl$)
+IF added{"exit"} <> 0 ORELSE JOIN(SORT(in_index), nl$) <> JOIN(SORT(touched), nl$) THEN PARK("what is staged is not what was checked")
+DIM staged = SH("git -c core.hooksPath=/dev/null commit -q -F " + q$ + message_file$ + q$, 300)
 IF staged{"exit"} <> 0 THEN PARK("git commit failed: " + TAIL$(staged{"output"}, 5))
 DIM commit$ AS STRING = GIT$("rev-parse --short HEAD")
 NOTE("")
