@@ -65,7 +65,7 @@ case "$(uname -s)" in
         fi
         ;;
     *)
-        jdb=build/jdBasic
+        jdb=build/jdbasic
         if [ "$force" = 1 ] || out_of_date "$jdb"; then
             ./build.sh || { echo "VERIFY build.sh failed"; exit 2; }
         fi
