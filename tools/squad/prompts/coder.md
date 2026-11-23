@@ -41,6 +41,8 @@ The chain runs these three itself after you and believes only its own run.
   has these set; `tools/verify.sh` does it for you). A new `src/*.cpp`
   needs the build scripts, which you may not change: stop and say so.
 - Do not commit, do not push, do not stash, do not switch branches.
+- When you finish, `git status --short` shows your patch and nothing else:
+  remove every file your own test runs left in the tree.
 
 ## Feedback on the previous attempt
 
