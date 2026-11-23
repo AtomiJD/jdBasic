@@ -98,6 +98,16 @@ FUNC GIT$(args$)
     RETURN TRIM$(SH("git " + args$, 300){"output"})
 ENDFUNC
 
+' A check run that may leave files behind: the index holds the tree as it
+' was, and afterwards everything the run wrote outside ignored paths is
+' removed again
+FUNC CHECKED(cmd$, secs)
+    DIM held = SH("git add -A", 300)
+    DIM r = SH("timeout -k 15 " + STR$(secs) + " " + cmd$, secs + 60)
+    DIM swept_up = SH("git clean -fdq && git checkout -q -- . && git reset -q", 300)
+    RETURN r
+ENDFUNC
+
 ' The last rows of a text, for a report or a prompt
 FUNC TAIL$(text$, n)
     DIM rows = SPLIT(TRIM$(text$), nl$)
@@ -279,7 +289,7 @@ ENDIF
 
 DIM gate_note$ AS STRING = "The gate is green on both backends."
 IF NOT dry_run THEN
-    DIM before = SH("timeout -k 15 " + STR$(VERIFY_SECS) + " bash tools/verify.sh", VERIFY_SECS + 60)
+    DIM before = CHECKED("bash tools/verify.sh", VERIFY_SECS)
     TXTWRITER work$ + "/gate_before.txt", before{"output"}
     IF before{"exit"} = 2 THEN
         NOTE("- verify: the build failed: " + TAIL$(before{"output"}, 5))
@@ -293,7 +303,7 @@ ENDIF
 
 DIM worse_before = []
 IF want_parity ANDALSO NOT dry_run THEN
-    DIM swept = SH("timeout -k 15 " + STR$(PARITY_SECS) + " bash tests/parity.sh -t 12 -o " + q$ + work$ + "/parity_before.tsv" + q$, PARITY_SECS + 60)
+    DIM swept = CHECKED("bash tests/parity.sh -t 12 -o " + q$ + work$ + "/parity_before.tsv" + q$, PARITY_SECS)
     TXTWRITER work$ + "/parity_before.txt", swept{"output"}
     worse_before = PARITY_WORSE(swept{"output"})
     DIM sum_rows = FILTER(LAMBDA row -> INSTR(row, "regressed ") >= 0, SPLIT(swept{"output"}, nl$))
@@ -418,7 +428,7 @@ FOR attempt = 1 TO MAX_ATTEMPTS
     IF patch_rows > MAX_PATCH_ROWS THEN PARK("the patch has " + STR$(patch_rows) + " changed rows, the cap is " + STR$(MAX_PATCH_ROWS))
 
     DIM problems$ AS STRING = ""
-    DIM verified = SH("timeout -k 15 " + STR$(VERIFY_SECS) + " bash tools/verify.sh", VERIFY_SECS + 60)
+    DIM verified = CHECKED("bash tools/verify.sh", VERIFY_SECS)
     TXTWRITER work$ + "/gate_" + stage$ + ".txt", verified{"output"}
     IF verified{"exit"} <> 0 THEN problems$ = problems$ + "tools/verify.sh is red:" + nl$ + TAIL$(verified{"output"}, 25) + nl$
     DIM fix_interp = RUN_JDB(test_file$, FALSE, 300)
@@ -426,7 +436,7 @@ FOR attempt = 1 TO MAX_ATTEMPTS
     IF NOT GREEN(fix_interp) THEN problems$ = problems$ + test_file$ + " in the interpreter:" + nl$ + TAIL$(fix_interp{"output"}, 20) + nl$
     IF NOT GREEN(fix_native) THEN problems$ = problems$ + test_file$ + " compiled:" + nl$ + TAIL$(fix_native{"output"}, 20) + nl$
     IF problems$ = "" ANDALSO want_parity THEN
-        DIM resweep = SH("timeout -k 15 " + STR$(PARITY_SECS) + " bash tests/parity.sh -t 12 -o " + q$ + work$ + "/parity_" + stage$ + ".tsv" + q$, PARITY_SECS + 60)
+        DIM resweep = CHECKED("bash tests/parity.sh -t 12 -o " + q$ + work$ + "/parity_" + stage$ + ".tsv" + q$, PARITY_SECS)
         DIM worse_now = PARITY_WORSE(resweep{"output"})
         DIM w AS INTEGER
         FOR w = 0 TO LEN(worse_now) - 1
