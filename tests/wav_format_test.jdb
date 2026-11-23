@@ -81,7 +81,7 @@ FUNC READBACK(path$, chunks$) AS OBJECT
     RETURN WAV.READ(path$)
 ENDFUNC
 
-DIM tmp$ = "tests" + CHR$(92) + "tmp_wavfmt.wav"
+DIM tmp$ = PATH.JOIN$("tests", "tmp_wavfmt.wav")
 
 PRINT "--- 16-bit PCM, the format WAV.WRITE produces"
 
