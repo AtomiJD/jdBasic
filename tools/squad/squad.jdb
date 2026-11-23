@@ -402,6 +402,8 @@ FOR attempt = 1 TO MAX_ATTEMPTS
     IF NOT coder{"ok"} THEN PARK("the coder did not finish (attempt " + STR$(attempt) + ")")
 
     DIM touched = CHANGED()
+    DIM odd = FILTER(LAMBDA p -> LEN(REGEX.REPLACE$("[A-Za-z0-9_./-]", p, "")) > 0, touched)
+    IF LEN(odd) > 0 THEN PARK("the coder left a path with characters outside A-Z a-z 0-9 _ . / -")
     IF CODEC.SHA256$(READ$(test_file$)) <> test_hash$ THEN PARK("the coder edited the test")
     IF JUDGE_TOUCHED$(touched) <> "" THEN PARK("the coder touched a judge: " + JUDGE_TOUCHED$(touched))
     DIM stray$ AS STRING = FOREIGN$(touched, ["src/", "doc/", "lib/", "tests/regression/", "tests/leak/", "help.txt"])
