@@ -2,7 +2,7 @@
 ' reviewed by separate agents, committed on the branch "squad".
 '
 '   jdbasic tools/squad/squad.jdb [--scout-only] [--dry-run] [--push]
-'                                 [--no-sync] [--no-parity]
+'                                 [--no-sync] [--no-parity] [--theme=TICKET]
 '
 ' Runs from the repo root of a clean checkout of the branch "squad" on
 ' Linux. Each stage is its own `claude -p` call with its own model, tools
@@ -19,6 +19,8 @@
 '   5 review   reads the patch; BLOCK sends it back to the coder
 '   6 close    commit, with --push `git push origin squad`
 '
+' --theme=N skips the scout and takes theme.md, repro.jdb and expected.txt
+' as they lie in today's folder, with ticket N as the theme's ticket.
 ' --scout-only ends after stage 2. --dry-run starts no agent and changes
 ' nothing in git; it prints what would run. Tickets are filed when
 ' JDTRAKR_URL and JDTRAKR_API are set, otherwise the findings stay in the
@@ -56,6 +58,7 @@ DIM dry_run AS INTEGER = FALSE
 DIM want_push AS INTEGER = FALSE
 DIM want_sync AS INTEGER = TRUE
 DIM want_parity AS INTEGER = TRUE
+DIM reuse_ticket AS INTEGER = 0
 DIM a AS INTEGER
 FOR a = 1 TO LEN(cli) - 1
     IF cli[a] = "--scout-only" THEN scout_only = TRUE
@@ -63,6 +66,7 @@ FOR a = 1 TO LEN(cli) - 1
     IF cli[a] = "--push" THEN want_push = TRUE
     IF cli[a] = "--no-sync" THEN want_sync = FALSE
     IF cli[a] = "--no-parity" THEN want_parity = FALSE
+    IF STARTSWITH(cli[a], "--theme=") THEN reuse_ticket = VAL(MID$(cli[a], 8))
 NEXT a
 
 DIM stamp$ AS STRING = FORMAT_DATE$(NOW(), "%Y-%m-%d")
@@ -324,6 +328,7 @@ IF LEN(areas) = 0 THEN
     END 2
 ENDIF
 DIM area$ AS STRING = areas[VAL(FORMAT_DATE$(NOW(), "%j")) MOD LEN(areas)]
+IF reuse_ticket = 0 THEN
 ' A second run on one day starts without the first one's answers; its
 ' findings are kept for the scout under another name
 DIM leftovers = ["theme.md", "repro.jdb", "expected.txt"]
@@ -367,6 +372,10 @@ CATCH
     NOTE("- findings.json has an entry the chain cannot read: " + ERRMSG$)
 ENDTRY
 
+ELSE
+    NOTE("- scout: skipped, the theme of ticket #" + STR$(reuse_ticket) + " in " + work$ + " is used again")
+ENDIF
+
 DIM theme$ AS STRING = READ$(work$ + "/theme.md")
 DIM repro$ AS STRING = work$ + "/repro.jdb"
 IF theme$ = "" ORELSE NOT FILE.EXISTS(repro$) ORELSE NOT FILE.EXISTS(work$ + "/expected.txt") THEN PARK("the scout left no theme with repro and expected output")
@@ -393,7 +402,8 @@ NOTE("## Theme: " + title$)
 NOTE("Repro against expected.txt: interpreter " + IIF(interp_ok, "matches", "DIFFERS") + ", native " + IIF(native_ok, "matches", "DIFFERS"))
 IF interp_ok ANDALSO native_ok THEN PARK("the repro prints the expected output on both backends: nothing to fix")
 
-DIM theme_ticket AS INTEGER = TICKET(title$, theme$, "bug", "doing")
+DIM theme_ticket AS INTEGER = reuse_ticket
+IF theme_ticket = 0 THEN theme_ticket = TICKET(title$, theme$, "bug", "doing")
 IF theme_ticket > 0 THEN NOTE("Ticket #" + STR$(theme_ticket))
 
 IF scout_only THEN
