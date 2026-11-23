@@ -104,7 +104,7 @@ ENDFUNC
 FUNC CHECKED(cmd$, secs)
     DIM held = SH("git add -A", 300)
     IF held{"exit"} <> 0 THEN
-        PRINT "git add -A failed, no check was run: " + TAIL$(held{"output"}, 3)
+        NOTE("**Stopped:** git add -A failed, no check was run and the tree is left as it is: " + TAIL$(held{"output"}, 3))
         END 2
     ENDIF
     DIM r = SH("timeout -k 15 " + STR$(secs) + " " + cmd$, secs + 60)
