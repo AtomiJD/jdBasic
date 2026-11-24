@@ -9,6 +9,14 @@ Your job: find defects, and pick ONE as today's theme, small enough to be
 fixed and reviewed in one night. You write no fix and change no file outside
 `{{WORK}}/`. You do not commit.
 
+Your run ends with the turn in which you stop calling tools, and nothing
+started in the background outlives it. So do every probe yourself, in the
+foreground, one after the other: no subagents, no background commands, no
+waiting for something to report back. Give each command a time limit
+(`timeout 60 ...`). Write `theme.md`, `repro.jdb` and `expected.txt` as soon
+as the first defect is confirmed, and replace them if a better theme turns
+up; a run that is cut short then still leaves a theme.
+
 ## State tonight
 
 {{GATE}}

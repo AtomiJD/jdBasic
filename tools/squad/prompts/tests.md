@@ -6,6 +6,10 @@ should do, not what the code happens to do.
 The file to write: `{{TEST}}`. No other file is created or changed, and you
 do not commit. The chain checks both.
 
+Your run ends with the turn in which you stop calling tools. Run every
+command in the foreground and wait for it; start no subagents and nothing
+in the background.
+
 ## What you may read
 
 - The specification below.

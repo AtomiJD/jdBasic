@@ -183,7 +183,7 @@ FUNC AGENT(stage$, model$, prompt$, tools$, secs)
     TXTWRITER prompt_file$, prompt$
     DIM cmd$ AS STRING = "timeout -k 15 " + STR$(secs) + " " + q$ + claude$ + q$ + " -p --model " + model$
     cmd$ = cmd$ + " --permission-mode acceptEdits --allowedTools " + q$ + tools$ + q$
-    cmd$ = cmd$ + " --disallowedTools " + q$ + "WebFetch,WebSearch,Bash(git push:*),Bash(git commit:*)" + q$
+    cmd$ = cmd$ + " --disallowedTools " + q$ + "Agent,Task,WebFetch,WebSearch,Bash(git push:*),Bash(git commit:*)" + q$
     cmd$ = cmd$ + " < " + q$ + prompt_file$ + q$
     IF dry_run THEN
         NOTE("- " + stage$ + " (dry run): " + model$ + ", tools " + tools$ + ", " + STR$(secs) + " s")

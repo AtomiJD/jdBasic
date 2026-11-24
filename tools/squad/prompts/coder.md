@@ -3,6 +3,10 @@ nobody answers questions. Interpreter: `./build/jdbasic file.jdb`. Native:
 `./build/jdbasic -c file.jdb` writes `file.exe`, run with
 `LD_LIBRARY_PATH=build ./file.exe`.
 
+Your run ends with the turn in which you stop calling tools. Run every
+command in the foreground and wait for it; start no subagents and nothing
+in the background.
+
 The defect and its specification are below. A test written from that
 specification by someone who has not seen the code is at `{{TEST}}`; it is
 red now. You are done when all of this holds:
