@@ -20,6 +20,11 @@ changed from the File menu, and choosing a line ending there makes them all
 the same. A change made to the open file by another program is noticed when
 either pane gets the focus again.
 
+The window opens where and as large as it was closed, maximized if it was.
+A monitor that is no longer attached, or a smaller one, does not put it out
+of reach: the window moves to the nearest monitor and is shrunk to fit it.
+The text keeps a small margin to the left and right edge of its pane.
+
 ### Regular expressions
 
 Tick **Regular expression** in Find / Replace to search with a pattern
@@ -91,7 +96,8 @@ document on the right. Both panes are editable and kept in step:
   step per sync, and the view is redrawn from the source.
 
 View menu: **Plain Text**, **Markdown Split** (Ctrl+M), **Markdown
-Rendered** (Ctrl+Shift+M, the view alone).
+Rendered** (Ctrl+Shift+M, the view alone). The layout chosen last is the one
+the next Markdown file opens in, also after a restart.
 
 Format > Markdown and the button bar above the panes:
 

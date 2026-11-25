@@ -491,6 +491,24 @@ LRESULT form_default_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 // sends for it; the status bar paints itself in statusbar_proc.
 
 std::set<int> g_dark_forms;
+std::set<int> g_show_maximized;   // hidden forms whose placement says maximized
+
+// The rectangle moved, and shrunk where it has to be, so that it lies within
+// the work area of the monitor it overlaps most, or of the nearest one.
+RECT fit_to_monitors(RECT r) {
+    MONITORINFO mi = { sizeof(mi) };
+    if (!GetMonitorInfoW(MonitorFromRect(&r, MONITOR_DEFAULTTONEAREST), &mi)) return r;
+    const RECT& wa = mi.rcWork;
+    int w = (std::min)((int)(r.right - r.left), (int)(wa.right - wa.left));
+    int h = (std::min)((int)(r.bottom - r.top), (int)(wa.bottom - wa.top));
+    int x = (std::max)((int)wa.left, (std::min)((int)r.left, (int)wa.right - w));
+    int y = (std::max)((int)wa.top, (std::min)((int)r.top, (int)wa.bottom - h));
+    return RECT{ x, y, x + w, y + h };
+}
+
+int show_command(int handle) {
+    return g_show_maximized.erase(handle) ? SW_SHOWMAXIMIZED : SW_SHOW;
+}
 
 const COLORREF DARK_BAR_BACK = RGB(0x2B, 0x2B, 0x2B);
 const COLORREF DARK_BAR_HOT  = RGB(0x41, 0x41, 0x41);
@@ -2309,6 +2327,11 @@ bool edit_set_prop(int handle, FormsItem& it, const std::string& prop, const Val
     } else if (prop == "TABWIDTH") {
         g_tab_width[handle] = (int)v.to_int();
         apply_tab_width(it, handle);
+    } else if (prop == "MARGIN") {
+        int m = px((int)v.to_int());
+        if (m < 0) m = 0;
+        SendMessageW(h, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(m, m));
+        InvalidateRect(h, nullptr, TRUE);
     } else if (prop == "WORDWRAP" && rich) {
         // NULL target device: 0 wraps at the window edge, 1 never wraps
         SendMessageW(h, EM_SETTARGETDEVICE, 0, v.to_bool() ? 0 : 1);
@@ -2384,6 +2407,8 @@ bool edit_get_prop(int handle, FormsItem& it, const std::string& prop, Value& ou
         if (prop == "SELSTART") out = Value::make_i64(u16_to_u8(w, a));
         else if (prop == "SELLENGTH") out = Value::make_i64(u16_to_u8(w, b) - u16_to_u8(w, a));
         else out = Value::make_string(narrow(w.substr(a, b - a)));
+    } else if (prop == "MARGIN") {
+        out = Value::make_i64(lg((int)LOWORD(SendMessageW(h, EM_GETMARGINS, 0, 0))));
     } else if (prop == "CANUNDO") {
         out = Value::make_bool(SendMessageW(h, EM_CANUNDO, 0, 0) != 0);
     } else if (prop == "CANREDO") {
@@ -2507,6 +2532,24 @@ void set_prop(int handle, FormsItem& it, const std::string& prop, const Value& v
         } else {
             ShowWindow(h, v.to_bool() ? SW_MAXIMIZE : SW_RESTORE);
         }
+        return;
+    }
+
+    if (prop == "PLACEMENT" && it.kind == "FORM") {
+        int x, y, w, hh, zoomed;
+        std::string s = v.to_string();
+        if (sscanf(s.c_str(), "%d,%d,%d,%d,%d", &x, &y, &w, &hh, &zoomed) != 5) return;
+        if (w < 120 || hh < 80) return;
+        WINDOWPLACEMENT wp = { sizeof(wp) };
+        GetWindowPlacement(h, &wp);
+        wp.rcNormalPosition = fit_to_monitors(RECT{ x, y, x + w, y + hh });
+        if (IsWindowVisible(h)) {
+            wp.showCmd = zoomed ? SW_SHOWMAXIMIZED : SW_SHOWNORMAL;
+        } else {
+            wp.showCmd = SW_HIDE;
+            if (zoomed) g_show_maximized.insert(handle); else g_show_maximized.erase(handle);
+        }
+        SetWindowPlacement(h, &wp);
         return;
     }
 
@@ -2812,6 +2855,17 @@ Value get_prop(int handle, FormsItem& it, const std::string& prop, const char* w
 
     if (prop == "MAXIMIZED" && is_form_kind(it.kind))
         return Value::make_bool(IsZoomed(h) != 0);
+    if (prop == "PLACEMENT" && it.kind == "FORM") {
+        WINDOWPLACEMENT wp = { sizeof(wp) };
+        GetWindowPlacement(h, &wp);
+        const RECT& r = wp.rcNormalPosition;
+        bool zoomed = !IsWindowVisible(h) ? g_show_maximized.count(handle) != 0
+                    : IsIconic(h) ? (wp.flags & WPF_RESTORETOMAXIMIZED) != 0 : IsZoomed(h) != 0;
+        char buf[96];
+        snprintf(buf, sizeof(buf), "%d,%d,%d,%d,%d", (int)r.left, (int)r.top,
+                 (int)(r.right - r.left), (int)(r.bottom - r.top), zoomed ? 1 : 0);
+        return Value::make_string(buf);
+    }
     if (prop == "DARKMODE" && is_form_kind(it.kind))
         return Value::make_bool(g_dark_forms.count(handle) != 0);
     if (prop == "BORDERSTYLE" && it.kind == "FORM")
@@ -4072,7 +4126,7 @@ void register_forms_builtins(VM& vm) {
     // FORM.SHOW(frm)  show a (secondary) form and fire its LOAD event
     vm.register_native("FORM.SHOW", 1, 1, [](const std::vector<Value>& args) -> Value {
         FormsItem& f = form_of(arg_int(args, 0), "FORM.SHOW");
-        ShowWindow(f.hwnd, SW_SHOW);
+        ShowWindow(f.hwnd, show_command(arg_int(args, 0)));
         UpdateWindow(f.hwnd);
         bring_to_front(f.hwnd);
         g_last_form = f.hwnd;
@@ -4085,7 +4139,7 @@ void register_forms_builtins(VM& vm) {
     // form is closed. Events dispatch on this (the VM) thread.
     vm.register_native("FORM.RUN", 1, 1, [](const std::vector<Value>& args) -> Value {
         FormsItem& f = form_of(arg_int(args, 0), "FORM.RUN");
-        ShowWindow(f.hwnd, SW_SHOW);
+        ShowWindow(f.hwnd, show_command(arg_int(args, 0)));
         UpdateWindow(f.hwnd);
         bring_to_front(f.hwnd);
         g_last_form = f.hwnd;

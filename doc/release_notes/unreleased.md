@@ -35,6 +35,15 @@ Range: `v1.3.0..HEAD`.
   a long document with many pictures again is faster than before. A
   picture is converted only when its first bytes say GIF, BMP or TIFF, so a
   document cannot hand its files to any other installed image decoder.
+- **Form `PLACEMENT`**: `FORM.GET(frm, "PLACEMENT")` answers where a form
+  sits and whether it is maximized as one text, `FORM.SET` puts it back and
+  fits it to the monitors attached now. A program that stores it opens the
+  way it was closed, and a monitor that is gone or smaller does not leave
+  the window out of reach.
+- **Edit field `MARGIN`**: `FORM.SET(h, "MARGIN", n)` keeps room left and
+  right of the text of a `TEXTBOX` or `RICHTEXT`.
+- **jdTexti** opens where and as large as it was closed, keeps a margin
+  beside the text, and opens a Markdown file in the layout chosen last.
 - **`FORM.SHAPE`** fires `MOUSEDOWN`, `MOUSEUP` and `MOUSEMOVE` and keeps the
   mouse while the left button is down, so a thin shape can be dragged as a
   splitter bar; `CURSOR` takes `SIZEWE` and `SIZENS`. jdTexti uses it for

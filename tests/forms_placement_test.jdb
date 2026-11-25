@@ -1,0 +1,65 @@
+' FORM PLACEMENT and MARGIN: a stored window placement is fitted to the
+' monitors attached now, and an edit field keeps a margin beside its text.
+' The form stays hidden; no message loop runs.
+
+DIM pass AS INTEGER = 0
+DIM fail AS INTEGER = 0
+
+SUB CHECK(label AS STRING, ok)
+    IF ok THEN
+        pass = pass + 1
+    ELSE
+        fail = fail + 1
+        PRINT "FAIL: " + label
+    ENDIF
+ENDSUB
+
+FUNC PARTS(frm)
+    RETURN SELECT(LAMBDA s -> VAL(s), SPLIT(FORM.GET(frm, "PLACEMENT"), ","))
+ENDFUNC
+
+DIM frm = FORM.CREATE("Placement", 400, 300, "PL")
+DIM first AS ARRAY = PARTS(frm)
+CHECK("a placement has five numbers", LEN(first) = 5)
+CHECK("a new form is not maximized", first[4] = 0)
+
+FORM.SET(frm, "PLACEMENT", "-30000,-30000,500,400,0")
+DIM far AS ARRAY = PARTS(frm)
+CHECK("a placement off every monitor moves onto one", far[0] > -20000 ANDALSO far[1] > -20000)
+CHECK("  and keeps its size", far[2] = 500 ANDALSO far[3] = 400)
+
+DIM home$ = FORM.GET(frm, "PLACEMENT")
+FORM.SET(frm, "PLACEMENT", home$)
+CHECK("a placement that fits stays as it is", FORM.GET(frm, "PLACEMENT") = home$)
+
+FORM.SET(frm, "PLACEMENT", STR$(far[0]) + "," + STR$(far[1]) + ",50000,40000,0")
+DIM huge AS ARRAY = PARTS(frm)
+CHECK("a placement larger than the monitor is shrunk", huge[2] < 50000 ANDALSO huge[3] < 40000)
+CHECK("  and still starts on it", huge[0] > -20000 ANDALSO huge[1] > -20000)
+
+FORM.SET(frm, "PLACEMENT", home$)
+FORM.SET(frm, "PLACEMENT", "nonsense")
+CHECK("a text that is no placement is ignored", FORM.GET(frm, "PLACEMENT") = home$)
+FORM.SET(frm, "PLACEMENT", "10,10,20,20,0")
+CHECK("a placement too small to use is ignored", FORM.GET(frm, "PLACEMENT") = home$)
+
+FORM.SET(frm, "PLACEMENT", STR$(far[0]) + "," + STR$(far[1]) + ",500,400,1")
+DIM zoomed AS ARRAY = PARTS(frm)
+CHECK("a hidden form remembers that it opens maximized", zoomed[4] = 1)
+CHECK("  and keeps the size it has when restored", zoomed[2] = 500 ANDALSO zoomed[3] = 400)
+CHECK("  and stays hidden", NOT FORM.GET(frm, "VISIBLE"))
+FORM.SET(frm, "PLACEMENT", home$)
+CHECK("  until a placement says otherwise", PARTS(frm)[4] = 0)
+
+DIM rt = FORM.RICHTEXT(frm, "RT", 0, 0, 300, 200)
+DIM tb = FORM.TEXTBOX(frm, "TB", "", 0, 210, 300, 22)
+FORM.SET(rt, "MARGIN", 12)
+CHECK("a rich edit keeps its margin", ABS(FORM.GET(rt, "MARGIN") - 12) <= 1)
+FORM.SET(tb, "MARGIN", 6)
+CHECK("a text box keeps its margin", ABS(FORM.GET(tb, "MARGIN") - 6) <= 1)
+FORM.SET(rt, "MARGIN", -5)
+CHECK("a negative margin is none", FORM.GET(rt, "MARGIN") = 0)
+
+FORM.CLOSE(frm)
+PRINT ""
+PRINT "RESULTS: " + STR$(pass) + " passed, " + STR$(fail) + " failed"

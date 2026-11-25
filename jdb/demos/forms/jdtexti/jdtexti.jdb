@@ -86,6 +86,11 @@ DIM mdv AS DOUBLE = 0
 DIM mdprint AS DOUBLE = 0
 DIM md_on AS INTEGER = 0
 DIM md_layout AS INTEGER = 1
+' The layout a Markdown file opens in: the one chosen last, kept across runs.
+DIM md_pref AS INTEGER = 1
+' Where the window sat when the program was closed, as FORM PLACEMENT text.
+DIM window_place AS STRING = ""
+DIM TEXT_MARGIN AS INTEGER = 10
 ' The bar between source and view: where it sits as a share of the width,
 ' and while it is dragged, where in the bar the mouse took hold.
 DIM split_bar AS DOUBLE = 0
@@ -360,6 +365,9 @@ SUB LOAD_SETTINGS()
     split_pct = VAL(REG_GET$("SplitPercent", STR$(split_pct)))
     IF font_size < 1 THEN font_size = 11
     IF split_pct < 5 ORELSE split_pct > 95 THEN split_pct = 50.0
+    md_pref = REG_GET_INT("MarkdownLayout", md_pref)
+    IF md_pref <> 2 THEN md_pref = 1
+    window_place = REG_GET$("Window", "")
 ENDSUB
 
 SUB SAVE_SETTINGS()
@@ -371,6 +379,7 @@ SUB SAVE_SETTINGS()
     REG_PUT("FontBold", STR$(font_bold))
     REG_PUT("FontItalic", STR$(font_italic))
     REG_PUT("SplitPercent", STR$(ROUND(split_pct, 1)))
+    REG_PUT("MarkdownLayout", STR$(md_pref))
 ENDSUB
 
 ' ── Markdown ────────────────────────────────────────────────────
@@ -899,7 +908,7 @@ SUB LOAD_DOC(path AS STRING)
     doc_chars = CHAR_COUNT(FORM.GET(txt, "TEXT"))
     ADD_RECENT(path)
     IF IS_MD_PATH(path) THEN
-        MD_START(1)
+        MD_START(md_pref)
     ELSEIF md_on THEN
         md_on = 0
         LAYOUT()
@@ -1132,6 +1141,7 @@ SUB MAIN_UNLOAD(e)
         e[0]{"cancel"} = TRUE
         RETURN
     ENDIF
+    REG_PUT("Window", FORM.GET(frm, "PLACEMENT"))
     quitting = 1
     FORM.CLOSE(dlg)
 ENDSUB
@@ -1584,6 +1594,8 @@ SUB MNUMDSPLIT_CLICK(e)
     ELSE
         MD_START(1)
     ENDIF
+    md_pref = md_layout
+    SAVE_SETTINGS()
 ENDSUB
 
 SUB MNUMDRENDERED_CLICK(e)
@@ -1597,6 +1609,8 @@ SUB MNUMDRENDERED_CLICK(e)
     ELSE
         MD_START(2)
     ENDIF
+    md_pref = md_layout
+    SAVE_SETTINGS()
 ENDSUB
 
 SUB MNUMDBOLD_CLICK(e)
@@ -1852,10 +1866,12 @@ FORM.SET(txt, "DROPFILES", TRUE)
 FORM.SET(frm, "DROPFILES", TRUE)
 APPLY_FONT()
 FORM.SET(txt, "TABWIDTH", tab_w)
+FORM.SET(txt, "MARGIN", TEXT_MARGIN)
 mdv = FORM.RICHTEXT(frm, "mdv", 0, 0, client_w, client_h - SB_HEIGHT)
 FORM.SET(mdv, "MAXLENGTH", 0)
 FORM.SET(mdv, "HIDESELECTION", FALSE)
 FORM.SET(mdv, "SPELLCHECK", spell_on)
+FORM.SET(mdv, "MARGIN", TEXT_MARGIN)
 FORM.SET(mdv, "VISIBLE", FALSE)
 mdprint = FORM.RICHTEXT(frm, "mdprint", 0, 0, client_w, client_h - SB_HEIGHT)
 FORM.SET(mdprint, "MAXLENGTH", 0)
@@ -1914,5 +1930,7 @@ APPLY_COLORS()
 DIM args AS ARRAY = OS.ARGS()
 IF LEN(args) > 1 THEN LOAD_DOC(args[1])
 UPDATE_TITLE()
+
+IF window_place <> "" THEN FORM.SET(frm, "PLACEMENT", window_place)
 
 FORM.RUN(frm)
