@@ -4355,6 +4355,9 @@ extern "C" void jdb_rc_func_leave(void) { if (rc_on_owner() && g_rc.func_depth >
 // are dropped.
 extern "C" void jdb_rc_drain(int64_t mark, int32_t main_level) {
     if (!rc_on_owner()) return;
+    // An IIF answer is owned within the statement that made it or not at all.
+    g_iif_answer = nullptr;
+    g_iif_built.clear();
     // A raise that left a FUNC skipped its leave; the main program is depth 0.
     if (main_level) g_rc.func_depth = 0;
     if (g_rc.func_depth == 0 && (!g_rc.str_later.empty() || !g_rc.udt_later.empty()))
