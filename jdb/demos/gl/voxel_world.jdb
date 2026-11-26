@@ -25,7 +25,7 @@ CONST BT_AIR   = 0
 CONST BT_GRASS = 1
 CONST BT_DIRT  = 2
 CONST BT_STONE = 3
-CONST REACH = 8.0
+CONST REACH = 32.0
 
 ' --------------------------- shaders ---------------------------
 
