@@ -626,6 +626,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_rc_new_rows", "__rc_new_rows", i8_ptr_type, {i8_ptr_type}, -1);
     reg("jdb_rc_pin",     "__rc_pin",     void_type, {i64_type}, -1);
     reg("jdb_rc_own_cells", "__rc_own_cells", void_type, {i64_type}, -1);
+    reg("jdb_rc_own_iif_cells", "__rc_own_iif_cells", void_type, {i64_type}, -1);
     reg("jdb_rc_take_cells", "__rc_take_cells", void_type, {i64_type}, -1);
     reg("jdb_rc_adopt",   "__rc_adopt",   void_type, {i64_type, i64_type}, -1);
     reg("jdb_rc_adopt_cell", "__rc_adopt_cell", void_type, {i64_type, i64_type, i64_type}, -1);
@@ -1442,6 +1443,10 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 for (auto& c : up) c = (char)toupper((unsigned char)c);
                 if (!e.args.empty() && e.args[0] && builtin_sig(up) && !builtin_has(up, BF_NO_VEC) &&
                     (builtin_is(up, BuiltinRet::F64) || builtin_is(up, BuiltinRet::I64)) &&
+                    arr_operand(*e.args[0], infer_expr_tag))
+                    return JD_TAG_ARR;
+                // IIF over an array condition answers one cell per cell.
+                if (up == "IIF" && e.args.size() == 3 && e.args[0] &&
                     arr_operand(*e.args[0], infer_expr_tag))
                     return JD_TAG_ARR;
             }
@@ -5305,6 +5310,26 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
         }
     }
     scan_owned_str_globals(program);
+
+    // FUNCs whose every RETURN hands back an IIF answer as it is.
+    for (auto& top : program) {
+        if (!top || top->kind != StmtKind::FUNCTION) continue;
+        int iifs = 0, others = 0;
+        std::function<void(const Stmt&)> walk = [&](const Stmt& s) {
+            if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB) return;
+            if (s.kind == StmtKind::RETURN && s.expr) {
+                std::string u = s.expr->kind == ExprKind::CALL ? s.expr->func_name : "";
+                std::transform(u.begin(), u.end(), u.begin(), ::toupper);
+                (u == "IIF" && s.expr->args.size() == 3 ? iifs : others)++;
+            }
+            for (auto& b : s.body) if (b) walk(*b);
+            for (auto& br : s.branches) for (auto& b : br.body) if (b) walk(*b);
+            for (auto& c : s.catch_body()) if (c) walk(*c);
+            for (auto& f : s.finally_body()) if (f) walk(*f);
+        };
+        for (auto& b : top->body) if (b) walk(*b);
+        if (iifs && !others) iif_returning_funcs.insert(top->func_name);
+    }
 
     // A name that is handed a string by PUSH anywhere in the program
     // holds strings, whichever function does the pushing. Without this a
@@ -10854,6 +10879,7 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
         // Special case: PRINT arr[idx] - use runtime-aware printer that
         // handles ptr-encoded strings in nested arrays (e.g. SPLIT results).
         const Expr& pe = *stmt.print_exprs[i];
+        ScopedReadOnly _ro(this, &pe);
         // A string key (`arr{"k"}`) parses to INDEX too; routing it through the
         // numeric __print_arr_elem would hand an i8* where an i64 index is
         // expected and the IR verifier aborts the whole compile. Only take this
@@ -12879,36 +12905,50 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 r = codegen_call(expr);
             }
             m_raise_pending = true;
+            bool iif = iif_returning_funcs.count(expr.func_name) ||
+                       (!user_functions.count(expr.func_name) && [&] {
+                           std::string u = expr.func_name;
+                           std::transform(u.begin(), u.end(), u.begin(), ::toupper);
+                           return u == "IIF"; }());
             if (r.fresh_container && (r.tag == JD_TAG_ARR || r.tag == JD_TAG_NATIVE_MAP) &&
                 LLVMGetTypeKind(LLVMTypeOf(r.val)) == LLVMPointerTypeKind) {
                 r.val = rc_born(r.val, r.tag, !r.fresh_flat);
-                // IIF copies every text it puts in a cell, so its answer
-                // owns them wherever it goes.
-                bool own_texts = !user_functions.count(expr.func_name) && [&] {
-                    std::string u = expr.func_name;
-                    std::transform(u.begin(), u.end(), u.begin(), ::toupper);
-                    return u == "IIF"; }();
-                if (rc_on && !rc_escape && (&expr == cell_owner_rhs || own_texts) && r.tag == JD_TAG_ARR) {
+                if (rc_on && !rc_escape && r.tag == JD_TAG_ARR &&
+                    (&expr == cell_owner_rhs || (iif && &expr == read_only_operand))) {
                     // Texts handed on from an argument become the array's
-                    // own copies; texts made for this answer are its already.
-                    auto& fn = runtime_funcs[hands_on_cells(expr) ? "__rc_take_cells" : "__rc_own_cells"];
+                    // own copies; texts made for this answer are its already,
+                    // and IIF's are in the rows it made as well.
+                    auto& fn = runtime_funcs[iif ? "__rc_own_iif_cells"
+                                           : hands_on_cells(expr) ? "__rc_take_cells" : "__rc_own_cells"];
                     LLVMValueRef a[] = { rc_bits(r.val) };
                     LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 1, "");
                 }
             }
             else if (r.fresh_arr && rc_on && !rc_escape) {
                 // An array built for this answer alone, of a kind only the
-                // running program knows, is registered like one known here,
-                // and owns the texts IIF copied into it.
+                // running program knows, is registered like one known here;
+                // a variable that alone reaches it, or a reader that only
+                // reads it, owns the texts IIF copied.
                 LLVMBasicBlockRef bb_reg = LLVMAppendBasicBlock(current_fn, "fresh.arr");
                 LLVMBasicBlockRef bb_end = LLVMAppendBasicBlock(current_fn, "fresh.end");
                 LLVMBuildCondBr(builder, r.fresh_arr, bb_reg, bb_end);
                 LLVMPositionBuilderAtEnd(builder, bb_reg);
                 rc_born(LLVMBuildIntToPtr(builder, r.val, i8_ptr_type, "fresh_p"), JD_TAG_ARR, true);
-                auto& own = runtime_funcs["__rc_own_cells"];
-                LLVMBuildCall2(builder, own.fn_type, own.fn, &r.val, 1, "");
+                if (&expr == cell_owner_rhs || &expr == read_only_operand) {
+                    auto& own = runtime_funcs["__rc_own_iif_cells"];
+                    LLVMBuildCall2(builder, own.fn_type, own.fn, &r.val, 1, "");
+                }
                 LLVMBuildBr(builder, bb_end);
                 LLVMPositionBuilderAtEnd(builder, bb_end);
+            }
+            else if (rc_on && !rc_escape && iif && user_functions.count(expr.func_name) &&
+                     (r.tag == JD_TAG_ARR || r.tag == JD_TAG_RUNTIME) &&
+                     (&expr == cell_owner_rhs || &expr == read_only_operand)) {
+                // The IIF answer a FUNC handed back as it is; the runtime
+                // owns it only if it is that answer and nothing holds it.
+                auto& own = runtime_funcs["__rc_own_iif_cells"];
+                LLVMValueRef a[] = { rc_bits(r.val) };
+                LLVMBuildCall2(builder, own.fn_type, own.fn, a, 1, "");
             }
             else if (outer_escape) rc_pin(r);
             return r;
@@ -18811,6 +18851,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         {
             bool cell = expr.args[0] && expr.args[0]->kind == ExprKind::INDEX;
             ScopedLeafTag _lt(this, cell ? JD_TAG_RUNTIME : -1);
+            ScopedReadOnly _ro(this, expr.args[0].get());
             av = codegen_expr(*expr.args[0]);
         }
         if (av.tag == JD_TAG_STR) {
@@ -20071,9 +20112,13 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             return LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 5, "iif_arr");
         };
         // Texts made for the call are copied into the cells, so they go.
+        // A text read from a map arrives as a copy made for the read; an
+        // array arm may share its rows with the answer, so it stays.
         auto drop_arm_temps = [&] {
             drop_fresh_temp(*expr.args[1], val1);
             drop_fresh_temp(*expr.args[2], val2);
+            drop_read_temp(val1, false);
+            drop_read_temp(val2, false);
         };
         if (cond.tag == JD_TAG_ARR && cell_arm(val1) && cell_arm(val2)) {
             TypedValue out{ pick_cells(cond.val), JD_TAG_ARR };
@@ -22129,8 +22174,11 @@ void LLVMCodegen::scan_cell_owners(const std::vector<StmtPtr>& program) {
             std::string up = e.func_name;
             std::transform(up.begin(), up.end(), up.begin(), ::toupper);
             if (user_fn(e.func_name, up)) {
+                // A cell handed to a FUNC may come back as its answer or be
+                // written into there, neither as a copy.
                 for (size_t i = 0; i < e.args.size(); i++)
-                    if (e.args[i]) scan(*e.args[i], param_escapes_at(e.func_name, i));
+                    if (e.args[i]) scan(*e.args[i], param_escapes_at(e.func_name, i) ||
+                                                    e.args[i]->kind == ExprKind::INDEX);
                 return;
             }
             // PUSH only grows the array it is handed, and a string pushed

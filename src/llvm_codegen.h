@@ -622,6 +622,15 @@ private:
     // when it is freed.
     std::unordered_set<std::string> cell_owner_vars;
     const Expr* cell_owner_rhs = nullptr;
+    // Operands consumed in place by something that only reads them (a PRINT
+    // item, the argument of LEN): no text goes into them and no cell leaves.
+    const Expr* read_only_operand = nullptr;
+    struct ScopedReadOnly {
+        LLVMCodegen* cg; const Expr* saved;
+        ScopedReadOnly(LLVMCodegen* c, const Expr* e) : cg(c), saved(c->read_only_operand) { c->read_only_operand = e; }
+        ~ScopedReadOnly() { cg->read_only_operand = saved; }
+    };
+    std::unordered_set<std::string> iif_returning_funcs;
     // Variables only ever given array or map literals, whose cells are only
     // read in place: a container written into one of their cells, from a
     // literal, a call or a variable, is counted by the cell (jdb_rc_adopt).

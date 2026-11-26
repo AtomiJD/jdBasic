@@ -1,0 +1,201 @@
+' The texts in an answer of IIF over an array condition stay intact however
+' the answer is used afterwards: written into, aliased, pushed onto, read
+' out, taken apart into rows, handed to a FUNC, consumed in place or returned
+' from a FUNC. A text written into the answer keeps its own variable intact.
+' Run the native build with JDB_RC_POISON=1 to see any text freed too early.
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Expect(want$, label$)
+    DIM got$ = OUTPUT.CAPTURE_END$()
+    IF got$ = want$ THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: "; label$; ": got "; got$; ", want "; want$
+    ENDIF
+ENDSUB
+
+FUNC Label(flags)
+    RETURN IIF(flags, "hi", "lo")
+ENDFUNC
+
+FUNC FirstCell(arr)
+    RETURN arr[0]
+ENDFUNC
+
+SUB Poke(arr)
+    arr[2] = "poked"
+ENDSUB
+
+FUNC PokeRow(row AS ARRAY)
+    row[0] = keep$
+    RETURN 0
+ENDFUNC
+
+FUNC FirstOf(row AS ARRAY)
+    RETURN row[0]
+ENDFUNC
+
+DIM signs = [1, 0, 1]
+DIM grid = [[1, 0], [0, 1]]
+DIM keep$ = "keep" + STR$(7)
+DIM names AS MAP
+names{"yes"} = "y" + STR$(1)
+names{"no"} = "n" + STR$(2)
+DIM cfg AS MAP
+cfg{"flags"} = signs
+DIM i AS INTEGER
+
+FOR i = 1 TO 3
+    DIM yb = IIF(signs, "a", "b")
+    yb[0] = keep$
+    OUTPUT.CAPTURE_BEGIN
+    PRINT yb;
+    Expect("[keep7, b, a]", "a text written into an answer that is printed")
+NEXT i
+OUTPUT.CAPTURE_BEGIN
+PRINT keep$;
+Expect("keep7", "the written text after the answers went")
+FOR i = 1 TO 3
+    DIM y = IIF(signs, "a", "b")
+    y[0] = keep$
+    Poke(y)
+    OUTPUT.CAPTURE_BEGIN
+    PRINT y;
+    Expect("[keep7, b, poked]", "an answer written into by a SUB")
+NEXT i
+DIM w = IIF(signs, "p", "q")
+DIM w2 = w
+w2[1] = keep$
+w = 0
+OUTPUT.CAPTURE_BEGIN
+PRINT w2;
+Expect("[p, keep7, p]", "an alias written into after the answer let go")
+w2 = 0
+PUSH(signs, 1)
+DIM pu = IIF(signs, "x", "z")
+PUSH(pu, keep$)
+OUTPUT.CAPTURE_BEGIN
+PRINT pu;
+Expect("[x, z, x, x, keep7]", "a text pushed onto an answer")
+pu = 0
+signs = [1, 0, 1]
+
+DIM r = IIF(signs, "a" + STR$(i), "b")
+DIM t = r[0]
+DIM t$ = r[1]
+DIM u = FirstCell(r)
+r = 0
+OUTPUT.CAPTURE_BEGIN
+PRINT t; " "; t$; " "; u;
+Expect("a4 b a4", "cells read out of an answer that went")
+DIM ans = IIF(signs, "pos" + STR$(i), "neg")
+DIM s = IIF(1, ans[0], 5)
+ans = IIF(signs, "x", "z")
+OUTPUT.CAPTURE_BEGIN
+PRINT s;
+Expect("pos4", "a cell picked by a scalar IIF after its answer was replaced")
+
+DIM g = IIF(grid, "on" + STR$(i), "off")
+DIM row = g[1]
+g = 0
+OUTPUT.CAPTURE_BEGIN
+PRINT row;
+Expect("[off, on4]", "a row taken out of a nested answer that went")
+row[0] = keep$
+OUTPUT.CAPTURE_BEGIN
+PRINT row;
+Expect("[keep7, on4]", "a row written into after its answer went")
+row = 0
+DIM g2 = IIF(grid, "on", "off")
+g2[0][1] = keep$
+OUTPUT.CAPTURE_BEGIN
+PRINT g2;
+Expect("[[on, keep7], [off, on]]", "a text written into a row of a nested answer")
+g2 = 0
+
+DIM mat = [["a", "b"], ["c", "d"]]
+DIM gm = IIF([1, 0], mat, "x")
+gm = 0
+OUTPUT.CAPTURE_BEGIN
+PRINT mat;
+Expect("[[a, b], [c, d]]", "a matrix arm after the answer went")
+DIM x = []
+FOR i = 1 TO 50
+    x = IIF([1, 0], [{"a": 1}, {"b": 2}], 0)
+NEXT i
+OUTPUT.CAPTURE_BEGIN
+PRINT x[0]{"a"};
+Expect("1", "maps in an array arm")
+DIM maps = [{"a": 1}, {"b": 2}]
+x = IIF([1, 0], maps, 0)
+maps = []
+OUTPUT.CAPTURE_BEGIN
+PRINT x[0]{"a"};
+Expect("1", "maps of an arm variable that was cleared")
+OUTPUT.CAPTURE_BEGIN
+PRINT IIF(signs, names{"yes"}, names{"no"}); " "; IIF(cfg{"flags"}, names{"yes"}, "-");
+Expect("[y1, n2, y1] [y1, -, y1, y1]", "arms and a condition read from maps")
+
+OUTPUT.CAPTURE_BEGIN
+PRINT Label(signs); " "; Label(TRUE); " "; Label(0);
+Expect("[hi, lo, hi] hi lo", "an IIF answer returned from a FUNC")
+DIM caught AS INTEGER = 0
+TRY
+    DIM ob = IIF(grid, "on", "off")
+    ob[0][9] = keep$
+CATCH
+    caught = 1
+ENDTRY
+OUTPUT.CAPTURE_BEGIN
+PRINT caught;
+Expect("1", "a write past a row of the answer is caught")
+
+DIM c0 = ""
+DIM so = []
+DIM fc = ""
+DIM fe = ""
+DIM n AS INTEGER = 0
+FOR i = 1 TO 3
+    c0 = IIF(signs, "c" + STR$(i), "d")[0]
+    so = SORT(IIF(signs, "q" + STR$(i), "p"))
+    fc = FirstCell(IIF(signs, "f" + STR$(i), "g"))
+    FOR EACH fe IN IIF(signs, "e" + STR$(i), "h")
+        n = n + 1
+    NEXT
+    n = n + LEN(IIF(grid, "on" + STR$(i), "off"))
+    OUTPUT.CAPTURE_BEGIN
+    PRINT IIF(grid, names{"yes"}, keep$);
+    Expect("[[y1, keep7], [keep7, y1]]", "a printed answer with a text variable as arm")
+    DIM lb = Label(signs)
+    lb[0] = keep$
+    OUTPUT.CAPTURE_BEGIN
+    PRINT lb; " "; Label(signs)[1]; " "; LEN(Label(signs));
+    Expect("[keep7, lo, hi] lo 3", "a FUNC's IIF answer written into, indexed and counted")
+NEXT i
+OUTPUT.CAPTURE_BEGIN
+PRINT c0; " "; so; " "; fc; " "; fe; " "; n;
+Expect("c3 [p, q3, q3] f3 e3 15", "answers consumed without a variable")
+OUTPUT.CAPTURE_BEGIN
+PRINT names{"yes"}; " "; names{"no"}; " "; keep$;
+Expect("y1 n2 keep7", "the texts the arms came from")
+
+DIM mask = [[1, 0], [0, 1]]
+DIM back = ""
+DIM poked AS INTEGER = 0
+FOR i = 1 TO 3
+    DIM xr = IIF(mask, "yes" + STR$(i), "no")
+    poked = PokeRow(xr[0])
+    back = FirstOf(xr[1])
+    xr = 0
+NEXT i
+OUTPUT.CAPTURE_BEGIN
+PRINT keep$; " "; back;
+Expect("keep7 no", "rows of a nested answer handed to FUNCs that write and return a cell")
+
+PRINT "RESULTS: "; passed; " passed, "; failed; " failed"
+IF failed > 0 THEN END 1

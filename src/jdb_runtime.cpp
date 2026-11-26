@@ -3808,6 +3808,15 @@ static bool rc_poison() {
     return on == 1;
 }
 
+// The arrays the last IIF over an array condition built (jdb_array_iif): its
+// answer and the rows it made. A row of an arm that IIF put into the answer
+// is not among them, and one that is freed leaves.
+static thread_local std::unordered_set<const void*> g_iif_built;
+// The answer itself, and the generation the counts gave it when it was
+// entered; an array entered later at the same address is not that answer.
+static thread_local const void* g_iif_answer = nullptr;
+static thread_local uint64_t g_iif_answer_gen = 0;
+
 static void rc_remove(RcEntry* e);
 static void rc_free_container(uintptr_t k, uint8_t kind, bool owns_cells, uint64_t gen);
 static JdbArray* rc_cell_row(const JdbArray* arr, int64_t idx);
@@ -3849,6 +3858,8 @@ static void rc_release_child(uintptr_t holder, uint64_t holder_gen, double bits)
 }
 
 static void rc_free_container(uintptr_t k, uint8_t kind, bool owns_cells, uint64_t gen) {
+    if (!g_iif_built.empty()) g_iif_built.erase((const void*)k);
+    if ((const void*)k == g_iif_answer) g_iif_answer = nullptr;
     if (kind == JD_TAG_ARR) {
         JdbArray* a = (JdbArray*)k;
         // Its rows outside the counts are nobody else's.
@@ -3984,6 +3995,7 @@ extern "C" void jdb_rc_cell_out(int64_t row_bits) {
 }
 
 static void rc_free_implicit_row(JdbArray* row) {
+    if (!g_iif_built.empty()) g_iif_built.erase(row);
     row->flags &= ~JDB_ARR_IMPLICIT_ROW;
     row->parent = nullptr;
     if (rc_poison()) {
@@ -4101,6 +4113,7 @@ extern "C" void* jdb_rc_new(void* p, int32_t kind) {
     e->owns_cells = 0;
     e->owner = 0;
     e->owner_gen = 0;
+    if (p == g_iif_answer && !g_iif_answer_gen) g_iif_answer_gen = gen;
     g_rc.pool.push_back({ k, gen });
     return p;
 }
@@ -4216,6 +4229,30 @@ static void rc_disown_cell(const void* holder, double old) {
 extern "C" void jdb_rc_own_cells(int64_t bits) {
     if (!g_rc.cap || !rc_ready()) return;
     if (RcEntry* e = rc_find((uintptr_t)bits)) if (e->kind == JD_TAG_ARR) e->owns_cells = 1;
+}
+
+static void rc_own_built(RcEntry* e) {
+    e->owns_cells = 1;
+    JdbArray* a = (JdbArray*)e->key;
+    if (!a->data) return;
+    for (int64_t i = 0; i < a->length; i++) {
+        JdbArray* row = rc_cell_row(a, i);
+        if (!row || !g_iif_built.count(row)) continue;
+        if (RcEntry* c = rc_find((uintptr_t)row))
+            if (c->kind == JD_TAG_ARR && c->owner == e->key && c->owner_gen == e->gen) rc_own_built(c);
+    }
+}
+
+// The answer of IIF going into a variable that alone reaches it, or to a
+// reader that only reads it: it and the rows IIF made for it own the texts
+// IIF copied into them. An answer something holds already is left as it is.
+extern "C" void jdb_rc_own_iif_cells(int64_t bits) {
+    if (g_rc.cap && rc_ready() && g_iif_answer && (const void*)(intptr_t)bits == g_iif_answer)
+        if (RcEntry* e = rc_find((uintptr_t)bits))
+            if (e->kind == JD_TAG_ARR && e->gen == g_iif_answer_gen && e->rc == 0 &&
+                !e->owner && !e->pinned) rc_own_built(e);
+    g_iif_built.clear();
+    g_iif_answer = nullptr;
 }
 
 // An array whose texts are another array's (TAKE, FILTER, SORT answer
@@ -6265,7 +6302,11 @@ struct RtPick {
     static bool is_row(JdbArray* a, int64_t i) { return a && ::cell_is_arr(a, i); }
     static JdbArray* row(JdbArray* a, int64_t i) { return decode_inner(a->data[i]); }
     static RtCell cell(JdbArray* a, int64_t i) { return { a->data[i], cell_kind(a, i) }; }
-    static JdbArray* make(int64_t n) { return jdb_array_new(n); }
+    static JdbArray* make(int64_t n) {
+        JdbArray* a = jdb_array_new(n);
+        g_iif_built.insert(a);
+        return a;
+    }
     static void put_row(JdbArray* a, int64_t i, JdbArray* r) {
         if (arr_tagged(a) || (a->flags & 2)) put_kind(a, i, encode_inner(r), JD_TAG_ARR);
         else { a->data[i] = encode_inner(r); a->flags |= 1; }
@@ -6293,6 +6334,9 @@ struct RtPick {
 // arrive as bits with their kind, since an array or a text is a pointer.
 JdbArray* jdb_array_iif(JdbArray* cond, int64_t a, int32_t a_tag, int64_t b, int32_t b_tag) {
     return jdb_guard([&]() -> JdbArray* {
+        g_iif_built.clear();
+        g_iif_answer = nullptr;
+        g_iif_answer_gen = 0;
         if (!cond) return jdb_array_new(0);
         auto branch = [](int64_t bits, int32_t tag) -> jdb_shape::Branch<RtPick> {
             union { int64_t i; double d; } u; u.i = bits;
@@ -6301,8 +6345,10 @@ JdbArray* jdb_array_iif(JdbArray* cond, int64_t a, int32_t a_tag, int64_t b, int
             if (tag == JD_TAG_BOOL) return { false, nullptr, { bits ? 1.0 : 0.0, JD_TAG_BOOL } };
             return { false, nullptr, { u.d, tag } };
         };
-        return settle_kinds(jdb_shape::pick<RtPick>(cond, branch(a, a_tag), branch(b, b_tag),
+        JdbArray* out = settle_kinds(jdb_shape::pick<RtPick>(cond, branch(a, a_tag), branch(b, b_tag),
             [](const RtCell& c) { return c.v != 0.0; }));
+        g_iif_answer = out;
+        return out;
     }, [] { return jdb_array_new(0); });
 }
 

@@ -478,7 +478,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"HTTP.SETTIMEOUT", BuiltinRet::None, BF_NO_VEC},
     {"HTTP.STATUSCODE", BuiltinRet::I64, BF_NO_VEC},
     {"IFFT", BuiltinRet::Arr, BF_NO_VEC | BF_READS_ARRS},
-    {"IIF", BuiltinRet::Unknown, BF_NO_VEC | BF_COMPILER_HANDLES},
+    {"IIF", BuiltinRet::Unknown, BF_NO_VEC | BF_COMPILER_HANDLES | BF_TAGGED_CELLS},
     {"IMAGE.CONVERT", BuiltinRet::I64, BF_NO_VEC},
     {"INDEXOF", BuiltinRet::I64, BF_NO_VEC | BF_READS_ARRS},
     {"INKEY$", BuiltinRet::Str, BF_NO_VEC},

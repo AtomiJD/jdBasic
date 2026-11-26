@@ -1,0 +1,319 @@
+' IIF with an array condition lets every text it copies go with its answer:
+' 20000 calls leave the heap where 500 calls left it, for a flat or a nested
+' condition, for text arms, arms read from a map and an array of texts as arm,
+' whether the answer is assigned, counted, printed or returned from a FUNC.
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+CONST WARMUP_CALLS = 500
+CONST MEASURED_CALLS = 20000
+CONST HEAP_LIMIT = 32768
+
+SUB Check(ok AS BOOLEAN, label$)
+    IF ok THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: "; label$
+    ENDIF
+ENDSUB
+
+FUNC TextsMatch(actual, expected) AS BOOLEAN
+    IF NOT ISARR(actual) THEN RETURN FALSE
+    IF LEN(actual) <> LEN(expected) THEN RETURN FALSE
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(expected) - 1
+        IF NOT ISSTR(actual[i]) THEN RETURN FALSE
+        IF actual[i] <> expected[i] THEN RETURN FALSE
+    NEXT
+    RETURN TRUE
+ENDFUNC
+
+FUNC GridMatches(actual, firstRow, lastRow) AS BOOLEAN
+    IF NOT ISARR(actual) THEN RETURN FALSE
+    IF LEN(actual) <> 2 THEN RETURN FALSE
+    IF NOT TextsMatch(actual[0], firstRow) THEN RETURN FALSE
+    RETURN TextsMatch(actual[1], lastRow)
+ENDFUNC
+
+DIM signs = [1, 0, 1]
+DIM vals = [3, -2, 5]
+DIM grid = [[1, 0], [0, 1]]
+DIM names = {"yes": "y", "no": "n"}
+DIM words = ["w0", "w1", "w2"]
+DIM armCells = ["on", "off"]
+DIM cfg = {"grid": [[1, 0], [0, 1]], "signs": [1, 0, 1]}
+DIM gridCells = [[[1, 0], [0, 1]]]
+DIM onWord$ = "on"
+DIM offWord$ = "off"
+DIM pos$ = "pos"
+DIM neg$ = "neg"
+
+FUNC OnText$()
+    RETURN "on"
+ENDFUNC
+
+FUNC OffText$()
+    RETURN "off"
+ENDFUNC
+
+FUNC FlatLabels(flags)
+    RETURN IIF(flags, "pos", "neg")
+ENDFUNC
+
+FUNC GridLabels(cells)
+    RETURN IIF(cells, "on", "off")
+ENDFUNC
+
+FUNC FlatFromMap(flags, table)
+    RETURN IIF(flags, table{"yes"}, table{"no"})
+ENDFUNC
+
+FUNC FlatFromLocalMap()
+    DIM localFlags = [1, 0, 1]
+    DIM localNames = {"yes": "y", "no": "n"}
+    RETURN IIF(localFlags, localNames{"yes"}, localNames{"no"})
+ENDFUNC
+
+FUNC FlatWithWords(flags, texts)
+    RETURN IIF(flags, texts, "neg")
+ENDFUNC
+
+FUNC GridFromMap(cells, table)
+    RETURN IIF(cells, table{"yes"}, table{"no"})
+ENDFUNC
+
+FUNC GridLocal()
+    DIM localGrid = [[1, 0], [0, 1]]
+    RETURN IIF(localGrid, "on", "off")
+ENDFUNC
+
+FUNC GridFromLocalMap()
+    DIM localGrid = [[1, 0], [0, 1]]
+    DIM localNames = {"yes": "y", "no": "n"}
+    RETURN IIF(localGrid, localNames{"yes"}, localNames{"no"})
+ENDFUNC
+
+SUB RunForm(form AS INTEGER, calls AS INTEGER)
+    DIM i AS INTEGER
+    DIM answer = []
+    DIM total AS INTEGER = 0
+    SWITCH form
+        ' 1. flat condition, text arms
+        CASE 101
+            FOR i = 1 TO calls
+                answer = IIF(signs, "pos", "neg")
+            NEXT
+        CASE 102
+            FOR i = 1 TO calls
+                total = total + LEN(IIF(signs, "pos", "neg"))
+            NEXT
+        CASE 103
+            FOR i = 1 TO calls
+                PRINT IIF(signs, "pos", "neg")
+            NEXT
+        CASE 104
+            FOR i = 1 TO calls
+                answer = FlatLabels(signs)
+            NEXT
+        CASE 105
+            FOR i = 1 TO calls
+                answer = IIF(signs, pos$, neg$)
+            NEXT
+        CASE 108
+            FOR i = 1 TO calls
+                answer = IIF(cfg{"signs"}, "pos", "neg")
+            NEXT
+        ' 2. nested condition, text arms
+        CASE 201
+            FOR i = 1 TO calls
+                answer = IIF(grid, "on", "off")
+            NEXT
+        CASE 202
+            FOR i = 1 TO calls
+                total = total + LEN(IIF(grid, "on", "off"))
+            NEXT
+        CASE 203
+            FOR i = 1 TO calls
+                PRINT IIF(grid, "on", "off")
+            NEXT
+        CASE 204
+            FOR i = 1 TO calls
+                answer = GridLabels(grid)
+            NEXT
+        CASE 205
+            FOR i = 1 TO calls
+                answer = IIF(grid, onWord$, offWord$)
+            NEXT
+        CASE 206
+            FOR i = 1 TO calls
+                answer = IIF(grid, "o" + "n", "of" + "f")
+            NEXT
+        CASE 207
+            FOR i = 1 TO calls
+                answer = IIF(grid, OnText$(), OffText$())
+            NEXT
+        CASE 208
+            FOR i = 1 TO calls
+                answer = IIF(grid, armCells[0], armCells[1])
+            NEXT
+        CASE 210
+            FOR i = 1 TO calls
+                answer = IIF(cfg{"grid"}, "on", "off")
+            NEXT
+        CASE 211
+            FOR i = 1 TO calls
+                answer = IIF(gridCells[0], "on", "off")
+            NEXT
+        ' 3. flat condition, arms read from a map
+        CASE 301
+            FOR i = 1 TO calls
+                answer = IIF(signs, names{"yes"}, names{"no"})
+            NEXT
+        CASE 302
+            FOR i = 1 TO calls
+                total = total + LEN(IIF(signs, names{"yes"}, names{"no"}))
+            NEXT
+        CASE 303
+            FOR i = 1 TO calls
+                PRINT IIF(signs, names{"yes"}, names{"no"})
+            NEXT
+        CASE 304
+            FOR i = 1 TO calls
+                answer = FlatFromMap(signs, names)
+            NEXT
+        CASE 306
+            FOR i = 1 TO calls
+                answer = IIF(signs, names{"yes"}, "n")
+            NEXT
+        CASE 307
+            FOR i = 1 TO calls
+                answer = IIF(signs, "y", names{"no"})
+            NEXT
+        ' 4. flat condition, an array of texts as an arm
+        CASE 401
+            FOR i = 1 TO calls
+                answer = IIF(signs, words, "neg")
+            NEXT
+        CASE 402
+            FOR i = 1 TO calls
+                total = total + LEN(IIF(signs, words, "neg"))
+            NEXT
+        CASE 403
+            FOR i = 1 TO calls
+                PRINT IIF(signs, words, "neg")
+            NEXT
+        CASE 404
+            FOR i = 1 TO calls
+                answer = FlatWithWords(signs, words)
+            NEXT
+        ' 6. nested condition with arms read from a map
+        CASE 601
+            FOR i = 1 TO calls
+                answer = IIF(grid, names{"yes"}, names{"no"})
+            NEXT
+        CASE 602
+            FOR i = 1 TO calls
+                total = total + LEN(IIF(grid, names{"yes"}, names{"no"}))
+            NEXT
+        CASE 603
+            FOR i = 1 TO calls
+                PRINT IIF(grid, names{"yes"}, names{"no"})
+            NEXT
+        CASE 604
+            FOR i = 1 TO calls
+                answer = GridFromMap(grid, names)
+            NEXT
+    ENDSWITCH
+ENDSUB
+
+SUB CheckSteady(form AS INTEGER, label$)
+    RunForm(form, WARMUP_CALLS)
+    DIM before AS INTEGER = SYS.HEAP()
+    RunForm(form, MEASURED_CALLS)
+    DIM middle AS INTEGER = SYS.HEAP()
+    RunForm(form, MEASURED_CALLS)
+    DIM after AS INTEGER = SYS.HEAP()
+    ' A table the runtime grows once shows in one round only; a leak in both.
+    DIM grown AS INTEGER = middle - before
+    IF after - middle < grown THEN grown = after - middle
+    IF grown >= HEAP_LIMIT THEN PRINT "  grown by "; grown; " bytes: "; label$
+    Check(grown < HEAP_LIMIT, label$ + " uses no more heap after 20000 calls than after 500")
+ENDSUB
+
+' --- 7. the answers ---
+Check(GridMatches(IIF(grid, "on", "off"), ["on", "off"], ["off", "on"]), "IIF(grid, ""on"", ""off"") is [[on, off], [off, on]]")
+Check(GridMatches(IIF(grid, onWord$, offWord$), ["on", "off"], ["off", "on"]), "a nested condition with text variables as arms is [[on, off], [off, on]]")
+Check(GridMatches(IIF(grid, "o" + "n", "of" + "f"), ["on", "off"], ["off", "on"]), "a nested condition with text expressions as arms is [[on, off], [off, on]]")
+Check(GridMatches(IIF(grid, OnText$(), OffText$()), ["on", "off"], ["off", "on"]), "a nested condition with function answers as arms is [[on, off], [off, on]]")
+Check(GridMatches(IIF(grid, armCells[0], armCells[1]), ["on", "off"], ["off", "on"]), "a nested condition with array cells as arms is [[on, off], [off, on]]")
+Check(GridMatches(IIF([[1, 0], [0, 1]], "on", "off"), ["on", "off"], ["off", "on"]), "a nested literal condition is [[on, off], [off, on]]")
+Check(GridMatches(IIF(cfg{"grid"}, "on", "off"), ["on", "off"], ["off", "on"]), "a nested condition from a map field is [[on, off], [off, on]]")
+Check(GridMatches(IIF(gridCells[0], "on", "off"), ["on", "off"], ["off", "on"]), "a nested condition from an array cell is [[on, off], [off, on]]")
+Check(GridMatches(GridLabels(grid), ["on", "off"], ["off", "on"]), "a nested condition inside a FUNC is [[on, off], [off, on]]")
+Check(GridMatches(GridLocal(), ["on", "off"], ["off", "on"]), "a nested condition local to a FUNC is [[on, off], [off, on]]")
+Check(LEN(IIF(grid, "on", "off")) = 2, "LEN of the nested answer is its two rows")
+PRINT IIF(grid, "on", "off")
+
+Check(TextsMatch(IIF(signs, names{"yes"}, names{"no"}), ["y", "n", "y"]), "IIF(signs, names{""yes""}, names{""no""}) is [y, n, y]")
+Check(TextsMatch(IIF(vals > 0, names{"yes"}, names{"no"}), ["y", "n", "y"]), "a comparison as condition with map arms is [y, n, y]")
+Check(TextsMatch(IIF(signs, names{"yes"}, "n"), ["y", "n", "y"]), "a map arm beside a literal is [y, n, y]")
+Check(TextsMatch(IIF(signs, "y", names{"no"}), ["y", "n", "y"]), "a literal beside a map arm is [y, n, y]")
+Check(TextsMatch(FlatFromMap(signs, names), ["y", "n", "y"]), "map arms inside a FUNC are [y, n, y]")
+Check(TextsMatch(FlatFromLocalMap(), ["y", "n", "y"]), "map arms local to a FUNC are [y, n, y]")
+Check(LEN(IIF(signs, names{"yes"}, names{"no"})) = 3, "LEN of the answer with map arms is the length of the condition")
+PRINT IIF(signs, names{"yes"}, names{"no"})
+
+Check(TextsMatch(IIF(signs, "pos", "neg"), ["pos", "neg", "pos"]), "a flat condition with text arms is [pos, neg, pos]")
+Check(TextsMatch(IIF(signs, words, "neg"), ["w0", "neg", "w2"]), "an array of texts as arm gives its own cells [w0, neg, w2]")
+Check(TextsMatch(FlatWithWords(signs, words), ["w0", "neg", "w2"]), "an array of texts as arm inside a FUNC gives [w0, neg, w2]")
+Check(GridMatches(IIF(grid, names{"yes"}, names{"no"}), ["y", "n"], ["n", "y"]), "a nested condition with map arms is [[y, n], [n, y]]")
+Check(GridMatches(GridFromMap(grid, names), ["y", "n"], ["n", "y"]), "a nested condition with map arms inside a FUNC is [[y, n], [n, y]]")
+Check(GridMatches(GridFromLocalMap(), ["y", "n"], ["n", "y"]), "a nested condition with local map arms in a FUNC is [[y, n], [n, y]]")
+Check(names{"yes"} = "y" ANDALSO names{"no"} = "n","the map keeps its own text after the reads")
+Check(TextsMatch(words, ["w0", "w1", "w2"]), "the array of texts used as arm stays [w0, w1, w2]")
+
+' --- 1. to 6. the heap ---
+DIM heapNow AS INTEGER = SYS.HEAP()
+Check(heapNow > 0, "SYS.HEAP answers a number of bytes")
+
+CheckSteady(101, "flat condition, text arms, assigned")
+CheckSteady(102, "flat condition, text arms, as an argument of LEN")
+CheckSteady(103, "flat condition, text arms, printed")
+CheckSteady(104, "flat condition, text arms, returned from a FUNC")
+CheckSteady(105, "flat condition, text variables as arms")
+CheckSteady(108, "flat condition from a map field, text arms")
+
+CheckSteady(201, "nested condition, text arms, assigned")
+CheckSteady(202, "nested condition, text arms, as an argument of LEN")
+CheckSteady(203, "nested condition, text arms, printed")
+CheckSteady(204, "nested condition, text arms, returned from a FUNC")
+CheckSteady(205, "nested condition, text variables as arms")
+CheckSteady(206, "nested condition, text expressions as arms")
+CheckSteady(207, "nested condition, function answers as arms")
+CheckSteady(208, "nested condition, array cells as arms")
+CheckSteady(210, "nested condition from a map field, text arms")
+CheckSteady(211, "nested condition from an array cell, text arms")
+
+CheckSteady(301, "flat condition, arms read from a map, assigned")
+CheckSteady(302, "flat condition, arms read from a map, as an argument of LEN")
+CheckSteady(303, "flat condition, arms read from a map, printed")
+CheckSteady(304, "flat condition, arms read from a map, returned from a FUNC")
+CheckSteady(306, "flat condition, a map arm beside a literal arm")
+CheckSteady(307, "flat condition, a literal arm beside a map arm")
+
+CheckSteady(401, "flat condition, an array of texts as an arm, assigned")
+CheckSteady(402, "flat condition, an array of texts as an arm, as an argument of LEN")
+CheckSteady(403, "flat condition, an array of texts as an arm, printed")
+CheckSteady(404, "flat condition, an array of texts as an arm, returned from a FUNC")
+
+CheckSteady(601, "nested condition with arms read from a map, assigned")
+CheckSteady(602, "nested condition with arms read from a map, as an argument of LEN")
+CheckSteady(603, "nested condition with arms read from a map, printed")
+CheckSteady(604, "nested condition with arms read from a map, returned from a FUNC")
+
+PRINT "RESULTS: "; passed; " passed, "; failed; " failed"
+IF failed > 0 THEN END 1
