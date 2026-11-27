@@ -34,6 +34,11 @@
 #include <unordered_set>
 #include <vector>
 
+// gdiplus.h uses min and max, which NOMINMAX takes away.
+namespace Gdiplus { using std::min; using std::max; }
+#include <gdiplus.h>
+#pragma comment(lib, "gdiplus.lib")
+
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "comdlg32.lib")
 #pragma comment(lib, "winspool.lib")
@@ -389,6 +394,20 @@ SYSTEMTIME epoch_to_systime(double epoch) {
 // displayed. "stretch" hands Windows one bitmap scaled to the control, as
 // PICTURE always did; "fit" and "zoom" are painted here, from the full
 // picture or from a copy scaled to the current factor when shrinking.
+// How FORM.DRAW and FORM.PREVIEW draw a shape.
+struct DrawStyle {
+    uint32_t color = 0;
+    double width = 2;
+    bool has_fill = false;
+    uint32_t fill = 0;
+    int alpha = 255;
+    bool dash = false;
+    std::wstring text;
+    std::wstring font = L"Segoe UI";
+    double size = 24;
+    bool bold = false;
+};
+
 struct PicView {
     HBITMAP full = nullptr;     // premultiplied BGRA, top-down
     uint32_t* bits = nullptr;
@@ -398,7 +417,14 @@ struct PicView {
     double sx = 0, sy = 0;      // picture pixel at the top-left in "zoom"
     HBITMAP scaled = nullptr;   // the picture at cache_scale, for scale < 1
     double cache_scale = 0;
+    // Drawn on since `scaled` was made: painted straight from `full` until
+    // the drawing pauses and the timer makes a new scaled copy.
+    bool stale = false;
+    std::string pre_shape;      // FORM.PREVIEW, "" for none
+    std::vector<double> pre_points;
+    DrawStyle pre_style;
 };
+const UINT_PTR kPicRescaleTimer = 0x5EED;
 std::map<int, PicView> g_picviews;
 const double kPicMaxPixels = 100000000.0;
 
@@ -414,6 +440,7 @@ void picview_free(PicView& v) {
     v.full = nullptr;
     v.bits = nullptr;
     v.w = v.h = 0;
+    v.stale = false;
 }
 
 HBITMAP new_dib(int w, int h, uint32_t** bits) {
@@ -543,6 +570,145 @@ void picview_geometry(PicView& v, int cw, int ch, double& scale, double& ox, dou
     }
 }
 
+void gdiplus_ready() {
+    static ULONG_PTR token = 0;
+    if (token) return;
+    Gdiplus::GdiplusStartupInput in;
+    Gdiplus::GdiplusStartup(&token, &in, nullptr);
+}
+
+// Draws one FORM.DRAW shape on `g`, whose units are picture pixels. The
+// number of points has been checked for the shape.
+void draw_shape(Gdiplus::Graphics& g, const std::string& shape, const std::vector<double>& p,
+                const DrawStyle& st);
+
+// A shape that is not opaque is drawn opaque into a layer of its own, which
+// goes on `g` at st.alpha as a whole, so outline, fill and an arrow's head
+// do not darken where they overlap.
+void draw_shape_layer(Gdiplus::Graphics& g, const std::string& shape, const std::vector<double>& p,
+                      const DrawStyle& st) {
+    using namespace Gdiplus;
+    double x0 = p[0], y0 = p[1], x1 = p[0], y1 = p[1];
+    for (size_t i = 0; i + 1 < p.size(); i += 2) {
+        x0 = std::min(x0, p[i]); x1 = std::max(x1, p[i]);
+        y0 = std::min(y0, p[i + 1]); y1 = std::max(y1, p[i + 1]);
+    }
+    double pad = st.width + std::max(10.0, st.width * 4) + 4;
+    if (shape == "text") {
+        FontFamily family(st.font.c_str());
+        FontFamily fallback(L"Segoe UI");
+        Font font(family.IsAvailable() ? &family : &fallback, (REAL)st.size,
+                  st.bold ? FontStyleBold : FontStyleRegular, UnitPixel);
+        RectF box;
+        g.MeasureString(st.text.c_str(), (INT)st.text.size(), &font, PointF((REAL)p[0], (REAL)p[1]), &box);
+        x1 = std::max(x1, (double)box.GetRight());
+        y1 = std::max(y1, (double)box.GetBottom());
+    }
+    x0 = std::floor(x0 - pad); y0 = std::floor(y0 - pad);
+    x1 = std::ceil(x1 + pad); y1 = std::ceil(y1 + pad);
+    // Only the part over the picture or the control is needed.
+    RectF clip;
+    g.GetVisibleClipBounds(&clip);
+    x0 = std::max(x0, std::floor((double)clip.X));
+    y0 = std::max(y0, std::floor((double)clip.Y));
+    x1 = std::min(x1, std::ceil((double)clip.GetRight()));
+    y1 = std::min(y1, std::ceil((double)clip.GetBottom()));
+    if (x1 <= x0 || y1 <= y0 || (x1 - x0) * (y1 - y0) > kPicMaxPixels) return;
+    Bitmap layer((INT)(x1 - x0), (INT)(y1 - y0), PixelFormat32bppPARGB);
+    {
+        Graphics lg(&layer);
+        lg.TranslateTransform((REAL)-x0, (REAL)-y0);
+        DrawStyle opaque = st;
+        opaque.alpha = 255;
+        draw_shape(lg, shape, p, opaque);
+    }
+    ColorMatrix cm = { { {1, 0, 0, 0, 0}, {0, 1, 0, 0, 0}, {0, 0, 1, 0, 0},
+                         {0, 0, 0, (REAL)(st.alpha / 255.0), 0}, {0, 0, 0, 0, 1} } };
+    ImageAttributes ia;
+    ia.SetColorMatrix(&cm);
+    g.SetInterpolationMode(InterpolationModeNearestNeighbor);
+    g.DrawImage(&layer, RectF((REAL)x0, (REAL)y0, (REAL)(x1 - x0), (REAL)(y1 - y0)),
+                0, 0, (REAL)(x1 - x0), (REAL)(y1 - y0), UnitPixel, &ia);
+}
+
+void draw_shape(Gdiplus::Graphics& g, const std::string& shape, const std::vector<double>& p,
+                const DrawStyle& st) {
+    using namespace Gdiplus;
+    if (st.alpha < 255) {
+        if (st.alpha > 0) draw_shape_layer(g, shape, p, st);
+        return;
+    }
+    g.SetSmoothingMode(SmoothingModeAntiAlias);
+    g.SetPixelOffsetMode(PixelOffsetModeHalf);
+    auto col = [&](uint32_t rgb) {
+        return Color((BYTE)st.alpha, (BYTE)((rgb >> 16) & 255), (BYTE)((rgb >> 8) & 255), (BYTE)(rgb & 255));
+    };
+    Pen pen(col(st.color), (REAL)st.width);
+    pen.SetStartCap(LineCapRound);
+    pen.SetEndCap(LineCapRound);
+    pen.SetLineJoin(LineJoinRound);
+    if (st.dash) {
+        pen.SetDashStyle(DashStyleDash);
+        pen.SetDashCap(DashCapRound);
+    }
+    SolidBrush ink(col(st.color));
+    if (shape == "line") {
+        std::vector<PointF> pts;
+        for (size_t i = 0; i + 1 < p.size(); i += 2) pts.emplace_back((REAL)p[i], (REAL)p[i + 1]);
+        bool dot = true;
+        for (auto& q : pts) dot = dot && q.X == pts[0].X && q.Y == pts[0].Y;
+        if (st.width <= 0) return;
+        if (dot) {
+            REAL r = (REAL)(st.width / 2);
+            g.FillEllipse(&ink, pts[0].X - r, pts[0].Y - r, 2 * r, 2 * r);
+        } else {
+            g.DrawLines(&pen, pts.data(), (INT)pts.size());
+        }
+    } else if (shape == "arrow") {
+        double dx = p[2] - p[0], dy = p[3] - p[1];
+        double len = std::sqrt(dx * dx + dy * dy);
+        if (len < 1e-9) return;
+        double ux = dx / len, uy = dy / len;
+        double head = std::max(10.0, st.width * 4);
+        double half = head * 0.55;
+        double bx = p[2] - ux * head, by = p[3] - uy * head;
+        if (len > head && st.width > 0) {
+            pen.SetEndCap(LineCapFlat);
+            g.DrawLine(&pen, (REAL)p[0], (REAL)p[1], (REAL)(bx + ux * 1), (REAL)(by + uy * 1));
+        }
+        PointF tri[3] = {
+            PointF((REAL)p[2], (REAL)p[3]),
+            PointF((REAL)(bx - uy * half), (REAL)(by + ux * half)),
+            PointF((REAL)(bx + uy * half), (REAL)(by - ux * half)) };
+        g.FillPolygon(&ink, tri, 3);
+    } else if (shape == "rect" || shape == "ellipse") {
+        REAL x = (REAL)std::min(p[0], p[2]), y = (REAL)std::min(p[1], p[3]);
+        REAL w = (REAL)std::fabs(p[2] - p[0]), h = (REAL)std::fabs(p[3] - p[1]);
+        if (shape == "rect") {
+            pen.SetLineJoin(LineJoinMiter);
+            if (st.has_fill) {
+                SolidBrush fill(col(st.fill));
+                g.FillRectangle(&fill, x, y, w, h);
+            }
+            if (st.width > 0) g.DrawRectangle(&pen, x, y, w, h);
+        } else {
+            if (st.has_fill) {
+                SolidBrush fill(col(st.fill));
+                g.FillEllipse(&fill, x, y, w, h);
+            }
+            if (st.width > 0) g.DrawEllipse(&pen, x, y, w, h);
+        }
+    } else if (shape == "text") {
+        if (st.text.empty()) return;
+        FontFamily family(st.font.c_str());
+        FontFamily fallback(L"Segoe UI");
+        const FontFamily* use = family.IsAvailable() ? &family : &fallback;
+        Font font(use, (REAL)st.size, st.bold ? FontStyleBold : FontStyleRegular, UnitPixel);
+        g.SetTextRenderingHint(TextRenderingHintAntiAlias);
+        g.DrawString(st.text.c_str(), (INT)st.text.size(), &font, PointF((REAL)p[0], (REAL)p[1]), &ink);
+    }
+}
+
 void picview_paint(HWND hwnd, int handle, PicView& v) {
     PAINTSTRUCT ps;
     HDC hdc = BeginPaint(hwnd, &ps);
@@ -559,7 +725,13 @@ void picview_paint(HWND hwnd, int handle, PicView& v) {
         picview_geometry(v, cw, ch, scale, ox, oy);
         BLENDFUNCTION bf = { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
         HDC src = CreateCompatibleDC(hdc);
-        if (scale < 1.0) {
+        if (scale < 1.0 && v.stale) {
+            int sw = std::max(1, (int)std::lround(v.w * scale));
+            int sh = std::max(1, (int)std::lround(v.h * scale));
+            HGDIOBJ o = SelectObject(src, v.full);
+            AlphaBlend(mem, (int)std::lround(ox), (int)std::lround(oy), sw, sh, src, 0, 0, v.w, v.h, bf);
+            SelectObject(src, o);
+        } else if (scale < 1.0) {
             int sw = std::max(1, (int)std::lround(v.w * scale));
             int sh = std::max(1, (int)std::lround(v.h * scale));
             if (!v.scaled || v.cache_scale != scale) {
@@ -587,6 +759,13 @@ void picview_paint(HWND hwnd, int handle, PicView& v) {
             }
         }
         DeleteDC(src);
+        if (!v.pre_shape.empty()) {
+            gdiplus_ready();
+            Gdiplus::Graphics g(mem);
+            g.TranslateTransform((Gdiplus::REAL)ox, (Gdiplus::REAL)oy);
+            g.ScaleTransform((Gdiplus::REAL)scale, (Gdiplus::REAL)scale);
+            draw_shape(g, v.pre_shape, v.pre_points, v.pre_style);
+        }
     }
     BitBlt(hdc, 0, 0, cw, ch, mem, 0, 0, SRCCOPY);
     SelectObject(mem, old_canvas);
@@ -645,6 +824,247 @@ void picture_image_point(int handle, int x, int y, double& ix, double& iy) {
     ix = (x - ox) / scale;
     iy = (y - oy) / scale;
 }
+
+// ---- PICTURE: drawing, pixels, undo and saving ------------------------------
+
+// Shows the picture of `handle` again after its pixels changed.
+void picture_changed(int handle, PicView& v) {
+    HWND hwnd = g_items[handle].hwnd;
+    if (v.scaled) {
+        v.stale = true;
+        SetTimer(hwnd, kPicRescaleTimer, 300, nullptr);
+    }
+    if (v.mode == "STRETCH") picview_apply_stretch(handle, v);
+    InvalidateRect(hwnd, nullptr, FALSE);
+}
+
+// Makes `full` (w x h, premultiplied) the picture of v.
+void picview_adopt(PicView& v, HBITMAP full, uint32_t* bits, int w, int h) {
+    picview_free(v);
+    v.full = full;
+    v.bits = bits;
+    v.w = w;
+    v.h = h;
+    v.sx = v.sy = 0;
+}
+
+PicView& drawable_picture(int handle, const char* who) {
+    FormsItem& it = item_of(handle, who);
+    if (it.kind != "PICTURE")
+        throw std::runtime_error(std::string(who) + ": handle " + std::to_string(handle) + " is not a PICTURE");
+    PicView& v = g_picviews[handle];
+    if (!v.full)
+        throw std::runtime_error(std::string(who) + ": the PICTURE holds no picture");
+    return v;
+}
+
+struct PicSnap {
+    int w = 0, h = 0;
+    std::vector<uint32_t> px;
+};
+struct PicHistory {
+    std::deque<PicSnap> undo, redo;
+    size_t bytes = 0;
+};
+std::map<int, PicHistory> g_pichistory;
+const size_t kHistorySteps = 50;
+const size_t kHistoryBytes = (size_t)512 << 20;
+
+void history_clear(int handle) { g_pichistory.erase(handle); }
+
+// A copy of the picture of v; false when the memory is not there.
+bool picview_snap(const PicView& v, PicSnap& s) {
+    s.w = v.w;
+    s.h = v.h;
+    try {
+        if (v.full) s.px.assign(v.bits, v.bits + (size_t)v.w * v.h);
+        else s.px.clear();
+    } catch (const std::bad_alloc&) {
+        return false;
+    }
+    return true;
+}
+
+void history_trim(PicHistory& hs) {
+    while (hs.undo.size() + hs.redo.size() > kHistorySteps || hs.bytes > kHistoryBytes) {
+        std::deque<PicSnap>& from = !hs.undo.empty() ? hs.undo : hs.redo;
+        if (from.empty()) break;
+        PicSnap& oldest = !hs.undo.empty() ? from.front() : from.back();
+        hs.bytes -= oldest.px.size() * 4;
+        if (!hs.undo.empty()) from.pop_front(); else from.pop_back();
+    }
+}
+
+// Puts snapshot s back into the PICTURE `handle`.
+void history_restore(int handle, PicView& v, const PicSnap& s) {
+    if (s.w <= 0 || s.h <= 0 || s.px.empty()) {
+        picview_free(v);
+        InvalidateRect(g_items[handle].hwnd, nullptr, TRUE);
+        return;
+    }
+    uint32_t* bits = nullptr;
+    HBITMAP full = new_dib(s.w, s.h, &bits);
+    if (!full) throw std::runtime_error("FORM.HISTORY: not enough memory for the picture");
+    std::copy(s.px.begin(), s.px.end(), bits);
+    picview_adopt(v, full, bits, s.w, s.h);
+    picture_changed(handle, v);
+}
+
+// Steps from `from` to `to`: the picture now goes onto `to`, the newest of
+// `from` is shown. False when `from` is empty.
+bool history_step(int handle, PicHistory& hs, bool back) {
+    std::deque<PicSnap>& from = back ? hs.undo : hs.redo;
+    std::deque<PicSnap>& to = back ? hs.redo : hs.undo;
+    if (from.empty()) return false;
+    PicView& v = g_picviews[handle];
+    PicSnap now;
+    if (!picview_snap(v, now))
+        throw std::runtime_error("FORM.HISTORY: not enough memory for the step");
+    PicSnap target = std::move(from.back());
+    from.pop_back();
+    hs.bytes -= target.px.size() * 4;
+    hs.bytes += now.px.size() * 4;
+    to.push_back(std::move(now));
+    history_restore(handle, v, target);
+    history_trim(hs);
+    return true;
+}
+
+// The numbers of an array (nested arrays read row by row) or a tensor.
+void value_numbers(const Value& v, std::vector<double>& out) {
+    if (v.type == ValueType::TENSOR) {
+        auto* t = v.as_tensor();
+        out.insert(out.end(), t->data.begin(), t->data.end());
+    } else if (v.type == ValueType::ARRAY) {
+        for (auto& el : v.as_array()->elements) value_numbers(el, out);
+    } else {
+        out.push_back(v.to_double());
+    }
+}
+
+const Value* map_field(const Value& m, const char* key) {
+    if (m.type != ValueType::OBJECT) return nullptr;
+    for (auto& [k, val] : m.as_object()->fields)
+        if (_stricmp(k.c_str(), key) == 0) return &val;
+    return nullptr;
+}
+
+// The shape and points of a FORM.DRAW or FORM.PREVIEW call, checked.
+void draw_args(const std::vector<Value>& args, const char* who, std::string& shape,
+               std::vector<double>& pts, DrawStyle& st) {
+    shape = value_text(args[1]);
+    for (auto& c : shape) c = (char)tolower((unsigned char)c);
+    if (shape.empty()) return;
+    value_numbers(args[2], pts);
+    for (double d : pts)
+        if (!std::isfinite(d)) throw std::runtime_error(std::string(who) + ": a point is not a number");
+    size_t need = shape == "text" ? 2 : 4;
+    if (shape != "line" && shape != "arrow" && shape != "rect" && shape != "ellipse" && shape != "text")
+        throw std::runtime_error(std::string(who) + ": the shape is \"line\", \"arrow\", \"rect\", \"ellipse\" or \"text\"");
+    if (pts.size() < need || (shape == "line" && pts.size() % 2 != 0))
+        throw std::runtime_error(std::string(who) + ": \"" + shape + "\" takes " +
+                                 (shape == "line" ? "pairs of coordinates, two points or more"
+                                  : shape == "text" ? "the point [x, y]" : "the points [x1, y1, x2, y2]"));
+    if (args.size() < 4) return;
+    const Value& m = args[3];
+    if (m.type != ValueType::OBJECT)
+        throw std::runtime_error(std::string(who) + ": style is a map");
+    if (auto* f = map_field(m, "color")) st.color = (uint32_t)f->to_int() & 0xFFFFFF;
+    if (auto* f = map_field(m, "width")) st.width = std::max(0.0, std::min(1000.0, f->to_double()));
+    if (auto* f = map_field(m, "fill")) { st.has_fill = true; st.fill = (uint32_t)f->to_int() & 0xFFFFFF; }
+    if (auto* f = map_field(m, "alpha")) st.alpha = (int)std::max<int64_t>(0, std::min<int64_t>(255, f->to_int()));
+    if (auto* f = map_field(m, "dash")) st.dash = f->to_bool();
+    if (auto* f = map_field(m, "text")) st.text = widen(value_text(*f));
+    if (auto* f = map_field(m, "font")) st.font = widen(value_text(*f));
+    if (auto* f = map_field(m, "size")) st.size = std::max(1.0, std::min(2000.0, f->to_double()));
+    if (auto* f = map_field(m, "bold")) st.bold = f->to_bool();
+}
+
+// The picture written to `path` as PNG, JPEG or BMP by its extension,
+// without metadata; false when it cannot be written.
+bool picview_save(const PicView& v, const std::string& path) {
+    size_t dot = path.find_last_of('.');
+    std::string ext = dot == std::string::npos ? "" : path.substr(dot);
+    for (auto& c : ext) c = (char)tolower((unsigned char)c);
+    GUID container;
+    bool keep_alpha = false;
+    if (ext == ".png") { container = GUID_ContainerFormatPng; keep_alpha = true; }
+    else if (ext == ".jpg" || ext == ".jpeg") container = GUID_ContainerFormatJpeg;
+    else if (ext == ".bmp") container = GUID_ContainerFormatBmp;
+    else return false;
+    std::vector<uint32_t> out;
+    try {
+        out.resize((size_t)v.w * v.h);
+    } catch (const std::bad_alloc&) {
+        return false;
+    }
+    for (size_t i = 0; i < out.size(); i++) {
+        uint32_t p = v.bits[i];
+        uint32_t a = p >> 24, r = (p >> 16) & 255, g = (p >> 8) & 255, b = p & 255;
+        if (keep_alpha) {
+            if (a == 0) { out[i] = 0; continue; }
+            if (a < 255) {
+                r = std::min(255u, (r * 255 + a / 2) / a);
+                g = std::min(255u, (g * 255 + a / 2) / a);
+                b = std::min(255u, (b * 255 + a / 2) / a);
+            }
+            out[i] = (a << 24) | (r << 16) | (g << 8) | b;
+        } else {
+            r = std::min(255u, r + 255 - a);
+            g = std::min(255u, g + 255 - a);
+            b = std::min(255u, b + 255 - a);
+            out[i] = 0xFF000000u | (r << 16) | (g << 8) | b;
+        }
+    }
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    IWICImagingFactory* fac = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                IID_PPV_ARGS(&fac))))
+        return false;
+    std::wstring wpath = widen(path);
+    IWICBitmap* bmp = nullptr;
+    IWICStream* stream = nullptr;
+    IWICBitmapEncoder* enc = nullptr;
+    IWICBitmapFrameEncode* frame = nullptr;
+    IPropertyBag2* props = nullptr;
+    bool opened = false, ok = false;
+    do {
+        if (FAILED(fac->CreateBitmapFromMemory((UINT)v.w, (UINT)v.h, GUID_WICPixelFormat32bppBGRA,
+                                               (UINT)v.w * 4, (UINT)(out.size() * 4),
+                                               (BYTE*)out.data(), &bmp))) break;
+        if (FAILED(fac->CreateStream(&stream))) break;
+        if (FAILED(stream->InitializeFromFilename(wpath.c_str(), GENERIC_WRITE))) break;
+        opened = true;
+        if (FAILED(fac->CreateEncoder(container, nullptr, &enc))) break;
+        if (FAILED(enc->Initialize(stream, WICBitmapEncoderNoCache))) break;
+        if (FAILED(enc->CreateNewFrame(&frame, &props))) break;
+        if (container == GUID_ContainerFormatJpeg && props) {
+            PROPBAG2 opt = {};
+            opt.pstrName = (LPOLESTR)L"ImageQuality";
+            VARIANT q;
+            VariantInit(&q);
+            q.vt = VT_R4;
+            q.fltVal = 0.92f;
+            props->Write(1, &opt, &q);
+        }
+        if (FAILED(frame->Initialize(props))) break;
+        if (FAILED(frame->SetSize((UINT)v.w, (UINT)v.h))) break;
+        WICPixelFormatGUID fmt = keep_alpha ? GUID_WICPixelFormat32bppBGRA : GUID_WICPixelFormat24bppBGR;
+        if (FAILED(frame->SetPixelFormat(&fmt))) break;
+        if (FAILED(frame->WriteSource(bmp, nullptr))) break;
+        if (FAILED(frame->Commit())) break;
+        ok = SUCCEEDED(enc->Commit());
+    } while (false);
+    if (props) props->Release();
+    if (frame) frame->Release();
+    if (enc) enc->Release();
+    if (stream) stream->Release();
+    if (bmp) bmp->Release();
+    fac->Release();
+    if (!ok && opened) DeleteFileW(wpath.c_str());
+    return ok;
+}
+
 HWND toolbar_of(int form_handle) {
     for (auto& [h, it] : g_items)
         if (it.kind == "TOOLBAR" && it.form == form_handle) return it.hwnd;
@@ -1211,6 +1631,7 @@ LRESULT CALLBACK form_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                             picview_free(pview->second);
                             g_picviews.erase(pview);
                         }
+                        history_clear(it->first);
                         auto bb2 = g_back_brush.find(it->first);
                         if (bb2 != g_back_brush.end()) {
                             DeleteObject(bb2->second);
@@ -1401,6 +1822,16 @@ LRESULT CALLBACK ctl_sub_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
                 }
                 break;
             }
+            case WM_TIMER:
+                if (wp == kPicRescaleTimer) {
+                    KillTimer(hwnd, kPicRescaleTimer);
+                    PicView& pv = g_picviews[handle];
+                    pv.stale = false;
+                    picview_drop_cache(pv);
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                    return 0;
+                }
+                break;
             case WM_NCHITTEST:
                 // A STATIC lets the mouse through to the form; a picture
                 // that is looked at takes it.
@@ -4266,6 +4697,184 @@ void register_forms_builtins(VM& vm) {
         if (!picture_load(handle, path))
             throw std::runtime_error("FORM.PICTURE: cannot load image '" + path + "'");
         return Value::make_i64(handle);
+    });
+
+    // FORM.NEWIMAGE(pic, w, h, [rgb=$FFFFFF]): an empty picture.
+    vm.register_native("FORM.NEWIMAGE", 3, 4, [](const std::vector<Value>& args) -> Value {
+        int handle = arg_int(args, 0);
+        FormsItem& it = item_of(handle, "FORM.NEWIMAGE");
+        if (it.kind != "PICTURE")
+            throw std::runtime_error("FORM.NEWIMAGE: handle " + std::to_string(handle) + " is not a PICTURE");
+        int64_t w = args[1].to_int(), h = args[2].to_int();
+        if (w < 1 || h < 1 || (double)w * (double)h > kPicMaxPixels)
+            throw std::runtime_error("FORM.NEWIMAGE: the size is at least 1 x 1 and at most 100 million pixels");
+        uint32_t rgb = args.size() > 3 ? (uint32_t)args[3].to_int() & 0xFFFFFF : 0xFFFFFF;
+        uint32_t* bits = nullptr;
+        HBITMAP full = new_dib((int)w, (int)h, &bits);
+        if (!full) throw std::runtime_error("FORM.NEWIMAGE: not enough memory for the picture");
+        std::fill(bits, bits + (size_t)w * h, 0xFF000000u | rgb);
+        PicView& v = g_picviews[handle];
+        picview_adopt(v, full, bits, (int)w, (int)h);
+        picture_changed(handle, v);
+        return Value::make_none();
+    });
+
+    // FORM.DRAW(pic, shape$, points, [style]): draws into the picture.
+    vm.register_native("FORM.DRAW", 3, 4, [](const std::vector<Value>& args) -> Value {
+        int handle = arg_int(args, 0);
+        PicView& v = drawable_picture(handle, "FORM.DRAW");
+        std::string shape;
+        std::vector<double> pts;
+        DrawStyle st;
+        draw_args(args, "FORM.DRAW", shape, pts, st);
+        if (shape.empty()) throw std::runtime_error("FORM.DRAW: the shape is \"line\", \"arrow\", \"rect\", \"ellipse\" or \"text\"");
+        gdiplus_ready();
+        {
+            Gdiplus::Bitmap target(v.w, v.h, v.w * 4, PixelFormat32bppPARGB, (BYTE*)v.bits);
+            Gdiplus::Graphics g(&target);
+            draw_shape(g, shape, pts, st);
+            g.Flush(Gdiplus::FlushIntentionSync);
+        }
+        picture_changed(handle, v);
+        return Value::make_none();
+    });
+
+    // FORM.PREVIEW(pic, shape$, points, [style]): a shape over the picture.
+    vm.register_native("FORM.PREVIEW", 3, 4, [](const std::vector<Value>& args) -> Value {
+        int handle = arg_int(args, 0);
+        FormsItem& it = item_of(handle, "FORM.PREVIEW");
+        if (it.kind != "PICTURE")
+            throw std::runtime_error("FORM.PREVIEW: handle " + std::to_string(handle) + " is not a PICTURE");
+        std::string shape;
+        std::vector<double> pts;
+        DrawStyle st;
+        draw_args(args, "FORM.PREVIEW", shape, pts, st);
+        PicView& v = g_picviews[handle];
+        if (!shape.empty() && !v.full)
+            throw std::runtime_error("FORM.PREVIEW: the PICTURE holds no picture");
+        v.pre_shape = shape;
+        v.pre_points = std::move(pts);
+        v.pre_style = st;
+        InvalidateRect(it.hwnd, nullptr, FALSE);
+        return Value::make_none();
+    });
+
+    // FORM.PIXELS(pic, x, y, w, h) -> rows of $RRGGBB
+    vm.register_native("FORM.PIXELS", 5, 5, [](const std::vector<Value>& args) -> Value {
+        PicView& v = drawable_picture(arg_int(args, 0), "FORM.PIXELS");
+        int64_t x0 = std::llround(args[1].to_double()), y0 = std::llround(args[2].to_double());
+        int64_t x1 = x0 + std::llround(args[3].to_double()), y1 = y0 + std::llround(args[4].to_double());
+        x0 = std::max<int64_t>(0, x0);
+        y0 = std::max<int64_t>(0, y0);
+        x1 = std::min<int64_t>(v.w, x1);
+        y1 = std::min<int64_t>(v.h, y1);
+        Value rows = Value::make_array();
+        if (x1 <= x0 || y1 <= y0) return rows;
+        auto& out = rows.as_array()->elements;
+        out.reserve((size_t)(y1 - y0));
+        for (int64_t y = y0; y < y1; y++) {
+            Value row = Value::make_array();
+            auto& cells = row.as_array()->elements;
+            cells.reserve((size_t)(x1 - x0));
+            const uint32_t* line = v.bits + (size_t)y * v.w;
+            for (int64_t x = x0; x < x1; x++) {
+                uint32_t p = line[x];
+                uint32_t a = p >> 24, r = (p >> 16) & 255, g = (p >> 8) & 255, b = p & 255;
+                if (a == 0) {
+                    r = g = b = 0;
+                } else if (a < 255) {
+                    r = std::min(255u, (r * 255 + a / 2) / a);
+                    g = std::min(255u, (g * 255 + a / 2) / a);
+                    b = std::min(255u, (b * 255 + a / 2) / a);
+                }
+                cells.push_back(Value::make_f64((double)((r << 16) | (g << 8) | b)));
+            }
+            out.push_back(std::move(row));
+        }
+        return rows;
+    });
+
+    // FORM.SETPIXELS(pic, x, y, pixels): rows of $RRGGBB, opaque.
+    vm.register_native("FORM.SETPIXELS", 4, 4, [](const std::vector<Value>& args) -> Value {
+        int handle = arg_int(args, 0);
+        PicView& v = drawable_picture(handle, "FORM.SETPIXELS");
+        int64_t x0 = std::llround(args[1].to_double()), y0 = std::llround(args[2].to_double());
+        const Value& px = args[3];
+        auto put_row = [&](int64_t y, const std::vector<double>& row) {
+            if (y < 0 || y >= v.h) return;
+            uint32_t* line = v.bits + (size_t)y * v.w;
+            for (size_t i = 0; i < row.size(); i++) {
+                int64_t x = x0 + (int64_t)i;
+                if (x < 0 || x >= v.w) continue;
+                line[x] = 0xFF000000u | ((uint32_t)(int64_t)row[i] & 0xFFFFFF);
+            }
+        };
+        if (px.type == ValueType::TENSOR && px.as_tensor()->shape.size() == 2) {
+            auto* t = px.as_tensor();
+            size_t rh = t->shape[0], rw = t->shape[1];
+            std::vector<double> row(rw);
+            for (size_t r = 0; r < rh; r++) {
+                std::copy(t->data.begin() + r * rw, t->data.begin() + (r + 1) * rw, row.begin());
+                put_row(y0 + (int64_t)r, row);
+            }
+        } else if (px.type == ValueType::ARRAY) {
+            auto& rows = px.as_array()->elements;
+            for (size_t r = 0; r < rows.size(); r++) {
+                if (rows[r].type != ValueType::ARRAY && rows[r].type != ValueType::TENSOR)
+                    throw std::runtime_error("FORM.SETPIXELS: pixels is a matrix of $RRGGBB values");
+                std::vector<double> row;
+                value_numbers(rows[r], row);
+                put_row(y0 + (int64_t)r, row);
+            }
+        } else {
+            throw std::runtime_error("FORM.SETPIXELS: pixels is a matrix of $RRGGBB values");
+        }
+        picture_changed(handle, v);
+        return Value::make_none();
+    });
+
+    // FORM.HISTORY(pic, action$) -> boolean: undo and redo of the picture.
+    vm.register_native("FORM.HISTORY", 2, 2, [](const std::vector<Value>& args) -> Value {
+        int handle = arg_int(args, 0);
+        FormsItem& it = item_of(handle, "FORM.HISTORY");
+        if (it.kind != "PICTURE")
+            throw std::runtime_error("FORM.HISTORY: handle " + std::to_string(handle) + " is not a PICTURE");
+        std::string action = value_text(args[1]);
+        for (auto& c : action) c = (char)tolower((unsigned char)c);
+        if (action == "checkpoint") {
+            PicView& v = drawable_picture(handle, "FORM.HISTORY");
+            PicHistory& hs = g_pichistory[handle];
+            PicSnap s;
+            if (!picview_snap(v, s))
+                throw std::runtime_error("FORM.HISTORY: not enough memory for the step");
+            hs.bytes += s.px.size() * 4;
+            hs.undo.push_back(std::move(s));
+            for (auto& r : hs.redo) hs.bytes -= r.px.size() * 4;
+            hs.redo.clear();
+            history_trim(hs);
+            return Value::make_bool(true);
+        }
+        if (action == "undo" || action == "redo") {
+            auto hs = g_pichistory.find(handle);
+            if (hs == g_pichistory.end()) return Value::make_bool(false);
+            return Value::make_bool(history_step(handle, hs->second, action == "undo"));
+        }
+        if (action == "canundo" || action == "canredo") {
+            auto hs = g_pichistory.find(handle);
+            if (hs == g_pichistory.end()) return Value::make_bool(false);
+            return Value::make_bool(action == "canundo" ? !hs->second.undo.empty() : !hs->second.redo.empty());
+        }
+        if (action == "clear") {
+            history_clear(handle);
+            return Value::make_bool(true);
+        }
+        throw std::runtime_error("FORM.HISTORY: the action is \"checkpoint\", \"undo\", \"redo\", \"canundo\", \"canredo\" or \"clear\"");
+    });
+
+    // FORM.SAVEIMAGE(pic, path$) -> boolean: PNG, JPEG or BMP, no metadata.
+    vm.register_native("FORM.SAVEIMAGE", 2, 2, [](const std::vector<Value>& args) -> Value {
+        PicView& v = drawable_picture(arg_int(args, 0), "FORM.SAVEIMAGE");
+        return Value::make_bool(picview_save(v, arg_str(args, 1, "FORM.SAVEIMAGE")));
     });
 
     // FORM.PROGRESS(frm, name$, x, y, w, h) -> handle  (range 0..100)

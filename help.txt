@@ -4760,6 +4760,52 @@ keys (arrows too): MOUSEDOWN/UP/MOVE, DBLCLICK, KEYDOWN/UP and MOUSEWHEEL
 the picture pixel under the pointer. BACKCOLOR fills around the picture.
 Example: FORM.SET(pic, "SCALEMODE", "fit")
 
+[FORM.NEWIMAGE]
+Syntax: FORM.NEWIMAGE(pic, w, h, [rgb=$FFFFFF])
+Description: Replaces the picture of a PICTURE with an empty one of w x h
+pixels in rgb, at most 100 million pixels.
+Example: FORM.NEWIMAGE(pic, 800, 600)
+
+[FORM.DRAW]
+Syntax: FORM.DRAW(pic, shape$, points, [style])
+Description: Draws into the picture of a PICTURE, smoothed, in picture
+pixels. shape$ "line" (points [x1, y1, x2, y2, ...], round joints),
+"arrow" (head at the second point), "rect", "ellipse" (two corners) or
+"text" ([x, y]). style map: color, width (0 = no outline), fill, alpha
+(0-255), dash, and text, font, size, bold for "text".
+Example: FORM.DRAW(pic, "arrow", [10, 10, 120, 60], {"color": $D02020, "width": 4})
+
+[FORM.PREVIEW]
+Syntax: FORM.PREVIEW(pic, shape$, points, [style])
+Description: Shows one shape over the picture without changing it, scaled
+with it: the rubber band while dragging. FORM.PREVIEW(pic, "", []) removes it.
+Example: FORM.PREVIEW(pic, "rect", [x0, y0, e[0]{"imagex"}, e[0]{"imagey"}], {"dash": TRUE})
+
+[FORM.PIXELS]
+Syntax: FORM.PIXELS(pic, x, y, w, h) -> array
+Description: The pixels of a region as h rows by w columns of $RRGGBB,
+px[row, column], cut to the picture; [] when nothing is left.
+Example: DIM px = FORM.PIXELS(pic, 0, 0, 64, 64)
+
+[FORM.SETPIXELS]
+Syntax: FORM.SETPIXELS(pic, x, y, pixels)
+Description: Writes a matrix of $RRGGBB values, opaque, its top-left value
+at x, y; what falls outside the picture is left out.
+Example: FORM.SETPIXELS(pic, 0, 0, px)
+
+[FORM.HISTORY]
+Syntax: FORM.HISTORY(pic, action$) -> boolean
+Description: Undo and redo of the picture: "checkpoint" before an edit,
+"undo", "redo" (FALSE when there is none), "canundo", "canredo", "clear".
+At most 50 steps or 512 MB; a step may change the size.
+Example: IF NOT FORM.HISTORY(pic, "undo") THEN PRINT "nothing to undo"
+
+[FORM.SAVEIMAGE]
+Syntax: FORM.SAVEIMAGE(pic, path$) -> boolean
+Description: Writes the picture as PNG, JPEG (quality 92, on white) or BMP by
+the extension, without metadata. FALSE when it cannot be written.
+Example: FORM.SAVEIMAGE(pic, "shot.png")
+
 [FORM.PROGRESS]
 Syntax: FORM.PROGRESS(frm, name$, x, y, w, h) -> handle
 Description: Progress bar; VALUE and MAX properties (default 0..100).

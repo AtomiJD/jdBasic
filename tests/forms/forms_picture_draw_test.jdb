@@ -1,0 +1,1360 @@
+' Drawing on a PICTURE: FORM.NEWIMAGE, FORM.DRAW, FORM.PREVIEW, FORM.PIXELS,
+' FORM.SETPIXELS, FORM.HISTORY and FORM.SAVEIMAGE, checked by reading the
+' pixels back with FORM.PIXELS. The form is shown and pumped, never waited
+' on. Files go to a MKTEMP$ directory that is removed at the end.
+' Needs a FORMS build on Windows.
+
+OPTION "EXPLICIT"
+IMPORT TESTKIT
+
+DIM C_WHITE AS INTEGER = $FFFFFF
+DIM C_BLACK AS INTEGER = $000000
+DIM C_RED AS INTEGER = $FF0000
+DIM C_GREEN AS INTEGER = $00FF00
+DIM C_BLUE AS INTEGER = $0000FF
+
+DIM tdir AS STRING = MKTEMP$("fpd")
+DIM fixture_png AS STRING = PATH.JOIN$(tdir, "fixture.png")
+DIM saved_files AS ARRAY = []
+
+DIM frm AS DOUBLE = 0
+DIM pic AS DOUBLE = 0
+DIM pic2 AS DOUBLE = 0
+DIM pic_empty AS DOUBLE = 0
+DIM pic_load AS DOUBLE = 0
+
+' ---- helpers -------------------------------------------------------------
+
+SUB Pump()
+    DIM i AS INTEGER
+    DIM alive AS BOOLEAN
+    FOR i = 1 TO 6
+        alive = FORM.DOEVENTS()
+    NEXT i
+ENDSUB
+
+FUNC Chan(v AS INTEGER, nbits AS INTEGER) AS INTEGER
+    RETURN (v SHR nbits) BAND 255
+ENDFUNC
+
+' every channel of a within tol of the same channel of b
+FUNC NearRgb(a AS INTEGER, b AS INTEGER, tol AS INTEGER) AS BOOLEAN
+    IF a < 0 THEN RETURN FALSE
+    RETURN ABS(Chan(a, 16) - Chan(b, 16)) <= tol ANDALSO ABS(Chan(a, 8) - Chan(b, 8)) <= tol ANDALSO ABS(Chan(a, 0) - Chan(b, 0)) <= tol
+ENDFUNC
+
+FUNC NRows(m AS ARRAY) AS INTEGER
+    RETURN LEN(m)
+ENDFUNC
+
+FUNC NCols(m AS ARRAY) AS INTEGER
+    IF LEN(m) = 0 THEN RETURN 0
+    RETURN LEN(m[0])
+ENDFUNC
+
+' the pixel at x, y, or -1 when PIXELS answers no cell
+FUNC Px(h AS DOUBLE, x AS INTEGER, y AS INTEGER) AS INTEGER
+    DIM m AS ARRAY = FORM.PIXELS(h, x, y, 1, 1)
+    IF LEN(m) = 0 THEN RETURN -1
+    DIM v AS INTEGER = m[0, 0]
+    RETURN v
+ENDFUNC
+
+FUNC CountNot(m AS ARRAY, base_rgb AS INTEGER) AS INTEGER
+    DIM n AS INTEGER = 0
+    DIM r AS INTEGER
+    DIM c AS INTEGER
+    DIM nr AS INTEGER = NRows(m)
+    DIM nc AS INTEGER = NCols(m)
+    FOR r = 0 TO nr - 1
+        FOR c = 0 TO nc - 1
+            IF m[r, c] <> base_rgb THEN n = n + 1
+        NEXT c
+    NEXT r
+    RETURN n
+ENDFUNC
+
+FUNC CountNear(m AS ARRAY, rgb AS INTEGER, tol AS INTEGER) AS INTEGER
+    DIM n AS INTEGER = 0
+    DIM r AS INTEGER
+    DIM c AS INTEGER
+    DIM v AS INTEGER
+    FOR r = 0 TO NRows(m) - 1
+        FOR c = 0 TO NCols(m) - 1
+            v = m[r, c]
+            IF NearRgb(v, rgb, tol) THEN n = n + 1
+        NEXT c
+    NEXT r
+    RETURN n
+ENDFUNC
+
+' rows of m that hold a pixel other than base_rgb
+FUNC InkRows(m AS ARRAY, base_rgb AS INTEGER) AS INTEGER
+    DIM n AS INTEGER = 0
+    DIM r AS INTEGER
+    DIM c AS INTEGER
+    DIM hit AS BOOLEAN
+    FOR r = 0 TO NRows(m) - 1
+        hit = FALSE
+        FOR c = 0 TO NCols(m) - 1
+            IF m[r, c] <> base_rgb THEN hit = TRUE
+        NEXT c
+        IF hit THEN n = n + 1
+    NEXT r
+    RETURN n
+ENDFUNC
+
+FUNC ChangedIn(h AS DOUBLE, x AS INTEGER, y AS INTEGER, w AS INTEGER, hh AS INTEGER, base_rgb AS INTEGER) AS INTEGER
+    IF w <= 0 ORELSE hh <= 0 THEN RETURN 0
+    RETURN CountNot(FORM.PIXELS(h, x, y, w, hh), base_rgb)
+ENDFUNC
+
+FUNC ChangedAll(h AS DOUBLE, base_rgb AS INTEGER) AS INTEGER
+    DIM iw AS INTEGER = FORM.GET(h, "IMAGEWIDTH")
+    DIM ih AS INTEGER = FORM.GET(h, "IMAGEHEIGHT")
+    RETURN ChangedIn(h, 0, 0, iw, ih, base_rgb)
+ENDFUNC
+
+' changed pixels outside the box x1..x2, y1..y2 (inclusive, inside the picture)
+FUNC ChangedOutside(h AS DOUBLE, x1 AS INTEGER, y1 AS INTEGER, x2 AS INTEGER, y2 AS INTEGER, base_rgb AS INTEGER) AS INTEGER
+    DIM iw AS INTEGER = FORM.GET(h, "IMAGEWIDTH")
+    DIM ih AS INTEGER = FORM.GET(h, "IMAGEHEIGHT")
+    DIM n AS INTEGER = 0
+    n = n + ChangedIn(h, 0, 0, iw, y1, base_rgb)
+    n = n + ChangedIn(h, 0, y2 + 1, iw, ih - y2 - 1, base_rgb)
+    n = n + ChangedIn(h, 0, y1, x1, y2 - y1 + 1, base_rgb)
+    n = n + ChangedIn(h, x2 + 1, y1, iw - x2 - 1, y2 - y1 + 1, base_rgb)
+    RETURN n
+ENDFUNC
+
+' a region of exactly w x hh pixels, every one rgb
+FUNC AllIs(h AS DOUBLE, x AS INTEGER, y AS INTEGER, w AS INTEGER, hh AS INTEGER, rgb AS INTEGER) AS BOOLEAN
+    DIM m AS ARRAY = FORM.PIXELS(h, x, y, w, hh)
+    RETURN NRows(m) = hh ANDALSO NCols(m) = w ANDALSO CountNot(m, rgb) = 0
+ENDFUNC
+
+FUNC Whole(h AS DOUBLE) AS ARRAY
+    DIM iw AS INTEGER = FORM.GET(h, "IMAGEWIDTH")
+    DIM ih AS INTEGER = FORM.GET(h, "IMAGEHEIGHT")
+    DIM m AS ARRAY = FORM.PIXELS(h, 0, 0, iw, ih)
+    RETURN m
+ENDFUNC
+
+FUNC ImgW(h AS DOUBLE) AS INTEGER
+    DIM v AS INTEGER = FORM.GET(h, "IMAGEWIDTH")
+    RETURN v
+ENDFUNC
+
+FUNC ImgH(h AS DOUBLE) AS INTEGER
+    DIM v AS INTEGER = FORM.GET(h, "IMAGEHEIGHT")
+    RETURN v
+ENDFUNC
+
+SUB Fresh(w AS INTEGER, hh AS INTEGER)
+    FORM.NEWIMAGE(pic, w, hh)
+ENDSUB
+
+SUB SectionStopped(section AS STRING, msg AS STRING)
+    TESTKIT.ISTRUE(FALSE, section + ": the section ran to its end (stopped on: " + msg + ")")
+ENDSUB
+
+' ---- a fixture picture from bytes ----------------------------------------
+
+FUNC PngChunk(kind AS STRING, body AS STRING) AS STRING
+    RETURN PACK$(">i", LEN(body)) + kind + body + PACK$(">i", CODEC.CRC32(kind + body))
+ENDFUNC
+
+FUNC Rgb3(r AS INTEGER, g AS INTEGER, b AS INTEGER) AS STRING
+    RETURN CHR$(r) + CHR$(g) + CHR$(b)
+ENDFUNC
+
+' an RGB PNG of w x h in four quadrants: $DC2828 | $28C828 over $2828DC | $E6DC1E
+SUB WritePng(path AS STRING, w AS INTEGER, h AS INTEGER)
+    DIM half_w AS INTEGER = INT(w / 2)
+    DIM half_h AS INTEGER = INT(h / 2)
+    DIM top_row AS STRING = CHR$(0) + REPEAT$(Rgb3(220, 40, 40), half_w) + REPEAT$(Rgb3(40, 200, 40), w - half_w)
+    DIM bottom_row AS STRING = CHR$(0) + REPEAT$(Rgb3(40, 40, 220), half_w) + REPEAT$(Rgb3(230, 220, 30), w - half_w)
+    DIM raw AS STRING = REPEAT$(top_row, half_h) + REPEAT$(bottom_row, h - half_h)
+    DIM sig AS STRING = CHR$(137) + "PNG" + CHR$(13) + CHR$(10) + CHR$(26) + CHR$(10)
+    DIM ihdr AS STRING = PACK$(">iibbbbb", w, h, 8, 2, 0, 0, 0)
+    DIM png AS STRING = sig + PngChunk("IHDR", ihdr) + PngChunk("IDAT", CODEC.DEFLATE$(raw, 6, "zlib")) + PngChunk("IEND", "")
+    BINWRITER path, png
+ENDSUB
+
+' ---- value forms -----------------------------------------------------------
+
+FUNC SizeW() AS INTEGER
+    RETURN 12
+ENDFUNC
+
+FUNC TealColor() AS INTEGER
+    RETURN $008080
+ENDFUNC
+
+FUNC RectPoints() AS ARRAY
+    RETURN [20, 10, 60, 40]
+ENDFUNC
+
+FUNC RedFill() AS INTEGER
+    RETURN $FF0000
+ENDFUNC
+
+FUNC RedStyle() AS MAP
+    RETURN {"width": 0, "fill": $FF0000}
+ENDFUNC
+
+' a pen stroke along y = 70 from x 10 to 90, as the mouse would pass it
+FUNC PenStroke() AS ARRAY
+    DIM pts AS ARRAY = []
+    DIM x AS INTEGER
+    FOR x = 10 TO 90 STEP 10
+        pts = APPEND(APPEND(pts, x), 70)
+    NEXT x
+    RETURN pts
+ENDFUNC
+
+SUB NewImageInside(h AS DOUBLE, w AS INTEGER, hh AS INTEGER, rgb AS INTEGER)
+    FORM.NEWIMAGE(h, w, hh, rgb)
+ENDSUB
+
+SUB DrawInside(h AS DOUBLE, shape AS STRING, pts AS ARRAY, st AS MAP)
+    FORM.DRAW(h, shape, pts, st)
+ENDSUB
+
+FUNC NewImageRaises(w AS DOUBLE, hh AS DOUBLE) AS BOOLEAN
+    DIM raised AS BOOLEAN = FALSE
+    TRY
+        FORM.NEWIMAGE(pic, w, hh)
+    CATCH
+        raised = TRUE
+    ENDTRY
+    RETURN raised
+ENDFUNC
+
+FUNC DrawRaises(h AS DOUBLE, shape AS STRING, pts AS ARRAY, st AS MAP) AS BOOLEAN
+    DIM raised AS BOOLEAN = FALSE
+    TRY
+        FORM.DRAW(h, shape, pts, st)
+    CATCH
+        raised = TRUE
+    ENDTRY
+    RETURN raised
+ENDFUNC
+
+FUNC HistoryInside(h AS DOUBLE, act AS STRING) AS BOOLEAN
+    DIM b AS BOOLEAN = FORM.HISTORY(h, act)
+    RETURN b
+ENDFUNC
+
+FUNC SavePath(name AS STRING) AS STRING
+    DIM p AS STRING = PATH.JOIN$(tdir, name)
+    saved_files = APPEND(saved_files, p)
+    RETURN p
+ENDFUNC
+
+FUNC SaveInside(h AS DOUBLE, p AS STRING) AS BOOLEAN
+    DIM b AS BOOLEAN = FORM.SAVEIMAGE(h, p)
+    RETURN b
+ENDFUNC
+
+' the specification's pixelate example, blocks of 12 pixels
+SUB Pixelate(h AS DOUBLE, x AS INTEGER, y AS INTEGER, w AS INTEGER, hh AS INTEGER)
+    DIM px AS ARRAY = FORM.PIXELS(h, x, y, w, hh)
+    DIM r AS INTEGER
+    DIM c AS INTEGER
+    DIM rr AS INTEGER
+    DIM cc AS INTEGER
+    FOR r = 0 TO NRows(px) - 1 STEP 12
+        FOR c = 0 TO NCols(px) - 1 STEP 12
+            FOR rr = r TO MIN([r + 11, NRows(px) - 1])
+                FOR cc = c TO MIN([c + 11, NCols(px) - 1])
+                    px[rr, cc] = px[r, c]
+                NEXT cc
+            NEXT rr
+        NEXT c
+    NEXT r
+    FORM.SETPIXELS(h, x, y, px)
+ENDSUB
+
+' ==========================================================================
+' PIXELS on a loaded file, independent of NEWIMAGE and DRAW
+
+SUB TestFixture()
+    TRY
+        TESTKIT.EQ(FORM.GET(pic, "IMAGEWIDTH"), 8, "the fixture PNG loads as 8 pixels wide")
+        TESTKIT.EQ(FORM.GET(pic, "IMAGEHEIGHT"), 6, "the fixture PNG loads as 6 pixels high")
+        TESTKIT.EQ(Px(pic, 0, 0), $DC2828, "PIXELS of a loaded file: the top-left pixel is $DC2828")
+        TESTKIT.EQ(Px(pic, 3, 2), $DC2828, "PIXELS of a loaded file: the last pixel of the top-left quadrant is $DC2828")
+        TESTKIT.EQ(Px(pic, 7, 0), $28C828, "PIXELS of a loaded file: the top-right pixel is $28C828")
+        TESTKIT.EQ(Px(pic, 0, 5), $2828DC, "PIXELS of a loaded file: the bottom-left pixel is $2828DC")
+        TESTKIT.EQ(Px(pic, 4, 3), $E6DC1E, "PIXELS of a loaded file: the first pixel of the bottom-right quadrant is $E6DC1E")
+        TESTKIT.EQ(Px(pic, 7, 5), $E6DC1E, "PIXELS of a loaded file: the last pixel is $E6DC1E")
+        DIM m AS ARRAY = FORM.PIXELS(pic, 0, 0, 8, 6)
+        TESTKIT.EQ(NRows(m), 6, "PIXELS of the whole 8 x 6 file has 6 rows")
+        TESTKIT.EQ(NCols(m), 8, "PIXELS of the whole 8 x 6 file has 8 columns")
+        TESTKIT.EQ(m[0, 4], $28C828, "px[row, column]: row 0, column 4 is in the top-right quadrant")
+        TESTKIT.EQ(m[3, 0], $2828DC, "px[row, column]: row 3, column 0 is in the bottom-left quadrant")
+    CATCH
+        SectionStopped("fixture", ERRMSG$)
+    ENDTRY
+ENDSUB
+
+' ==========================================================================
+
+SUB TestNewImage()
+    DIM raised AS BOOLEAN
+    TRY
+        FORM.NEWIMAGE(pic, 100, 80)
+        TESTKIT.EQ(FORM.GET(pic, "IMAGEWIDTH"), 100, "NEWIMAGE 100 x 80: IMAGEWIDTH is 100")
+        TESTKIT.EQ(FORM.GET(pic, "IMAGEHEIGHT"), 80, "NEWIMAGE 100 x 80: IMAGEHEIGHT is 80")
+        TESTKIT.ISTRUE(AllIs(pic, 0, 0, 100, 80, C_WHITE), "NEWIMAGE without a colour is white ($FFFFFF) in every pixel")
+        TESTKIT.EQ(Px(pic, 99, 79), C_WHITE, "NEWIMAGE without a colour: the last pixel is white")
+
+        FORM.NEWIMAGE(pic, 30, 20, $123456)
+        TESTKIT.EQ(ImgW(pic), 30, "NEWIMAGE 30 x 20 in $123456: IMAGEWIDTH is 30")
+        TESTKIT.EQ(ImgH(pic), 20, "NEWIMAGE 30 x 20 in $123456: IMAGEHEIGHT is 20")
+        TESTKIT.ISTRUE(AllIs(pic, 0, 0, 30, 20, $123456), "NEWIMAGE with a colour fills every pixel with it")
+
+        DIM nw AS INTEGER = 41
+        DIM nh AS INTEGER = 17
+        DIM col_var AS INTEGER = $204060
+        FORM.NEWIMAGE(pic, nw, nh, col_var)
+        TESTKIT.ISTRUE(ImgW(pic) = 41 ANDALSO ImgH(pic) = 17, "NEWIMAGE with the size in variables")
+        TESTKIT.EQ(Px(pic, 40, 16), $204060, "NEWIMAGE with the colour in a variable")
+        FORM.NEWIMAGE(pic, nw * 2, nh + 3, $100000 + $000020)
+        TESTKIT.ISTRUE(ImgW(pic) = 82 ANDALSO ImgH(pic) = 20, "NEWIMAGE with the size from expressions")
+        TESTKIT.EQ(Px(pic, 0, 0), $100020, "NEWIMAGE with the colour from an expression")
+        FORM.NEWIMAGE(pic, SizeW(), SizeW() - 2, TealColor())
+        TESTKIT.ISTRUE(ImgW(pic) = 12 ANDALSO ImgH(pic) = 10, "NEWIMAGE with the size from a FUNC answer")
+        TESTKIT.EQ(Px(pic, 11, 9), $008080, "NEWIMAGE with the colour from a FUNC answer")
+        DIM size_list AS ARRAY = [13, 7]
+        DIM col_list AS ARRAY = [$111111, $222222]
+        FORM.NEWIMAGE(pic, size_list[0], size_list[1], col_list[1])
+        TESTKIT.ISTRUE(ImgW(pic) = 13 ANDALSO ImgH(pic) = 7, "NEWIMAGE with the size from array cells")
+        TESTKIT.EQ(Px(pic, 12, 6), $222222, "NEWIMAGE with the colour from an array cell")
+        DIM dims AS MAP = {"w": 14, "h": 6, "rgb": $333333}
+        FORM.NEWIMAGE(pic, dims{"w"}, dims{"h"}, dims{"rgb"})
+        TESTKIT.ISTRUE(ImgW(pic) = 14 ANDALSO ImgH(pic) = 6, "NEWIMAGE with the size from map fields")
+        TESTKIT.EQ(Px(pic, 13, 5), $333333, "NEWIMAGE with the colour from a map field")
+        NewImageInside(pic, 9, 7, $445566)
+        TESTKIT.ISTRUE(ImgW(pic) = 9 ANDALSO ImgH(pic) = 7, "NEWIMAGE called inside a SUB")
+        TESTKIT.EQ(Px(pic, 8, 6), $445566, "NEWIMAGE inside a SUB fills with its colour")
+        FORM.NEWIMAGE(pic, 20, 10, $000000)
+        TESTKIT.ISTRUE(AllIs(pic, 0, 0, 20, 10, C_BLACK), "NEWIMAGE in $000000 is black, not the white default")
+
+        ' the smallest sizes
+        FORM.NEWIMAGE(pic, 1, 1, C_GREEN)
+        TESTKIT.ISTRUE(ImgW(pic) = 1 ANDALSO ImgH(pic) = 1, "NEWIMAGE 1 x 1 is accepted")
+        TESTKIT.EQ(Px(pic, 0, 0), C_GREEN, "NEWIMAGE 1 x 1: its one pixel has the colour")
+        TESTKIT.ISFALSE(NewImageRaises(1, 10), "NEWIMAGE 1 x 10 does not throw")
+        TESTKIT.ISFALSE(NewImageRaises(10, 1), "NEWIMAGE 10 x 1 does not throw")
+
+        ' invalid sizes
+        raised = FALSE
+        TRY
+            FORM.NEWIMAGE(pic, 0, 10)
+        CATCH
+            raised = TRUE
+        ENDTRY
+        TESTKIT.ISTRUE(raised, "NEWIMAGE with width 0 throws (w at least 1)")
+        TESTKIT.ISTRUE(NewImageRaises(10, 0), "NEWIMAGE with height 0 throws (h at least 1)")
+        TESTKIT.ISTRUE(NewImageRaises(-5, 10), "NEWIMAGE with a negative width throws")
+        TESTKIT.ISTRUE(NewImageRaises(10, -1), "NEWIMAGE with a negative height throws")
+        TESTKIT.ISTRUE(NewImageRaises(0, 0), "NEWIMAGE 0 x 0 throws")
+        TESTKIT.ISTRUE(NewImageRaises(10001, 10000), "NEWIMAGE of 10001 x 10000 (over 100 million pixels) throws")
+        DIM big_w AS INTEGER = 100000001
+        TESTKIT.ISTRUE(NewImageRaises(big_w, 1), "NEWIMAGE of 100000001 x 1 (over 100 million pixels) throws")
+        TESTKIT.ISFALSE(NewImageRaises(10000, 10000), "NEWIMAGE of 10000 x 10000 (exactly 100 million pixels) is accepted")
+        IF ImgW(pic) = 10000 THEN
+            TESTKIT.EQ(ImgH(pic), 10000, "NEWIMAGE of 10000 x 10000: IMAGEHEIGHT is 10000")
+        ENDIF
+        FORM.NEWIMAGE(pic, 10, 10)
+    CATCH
+        SectionStopped("NEWIMAGE", ERRMSG$)
+    ENDTRY
+ENDSUB
+
+' ==========================================================================
+
+SUB TestRect()
+    TRY
+        Fresh(100, 80)
+        FORM.DRAW(pic, "rect", [20, 10, 60, 40], {"width": 0, "fill": C_RED})
+        TESTKIT.ISTRUE(AllIs(pic, 21, 11, 38, 28, C_RED), "rect with fill and width 0: every pixel strictly inside is the fill colour")
+        TESTKIT.EQ(ChangedOutside(pic, 19, 9, 61, 41, C_WHITE), 0, "rect with fill and width 0: no pixel 2 or more outside it changes")
+        DIM n_changed AS INTEGER = ChangedAll(pic, C_WHITE)
+        TESTKIT.ISTRUE(n_changed >= 1200 ANDALSO n_changed <= 1271, "rect 20,10 to 60,40 with width 0 changes between 40 x 30 and 41 x 31 pixels (got " + STR$(n_changed) + ")")
+        DIM first_rect AS ARRAY = Whole(pic)
+
+        Fresh(100, 80)
+        FORM.DRAW(pic, "rect", [60, 40, 20, 10], {"width": 0, "fill": C_RED})
+        TESTKIT.EQARRAY(Whole(pic), first_rect, "rect: the corners in the other order draw the same pixels")
+        Fresh(100, 80)
+        FORM.DRAW(pic, "rect", [20, 40, 60, 10], {"width": 0, "fill": C_RED})
+        TESTKIT.EQARRAY(Whole(pic), first_rect, "rect: the other two opposite corners draw the same pixels")
+
+        ' outline only, default width 2 and colour black
+        Fresh(100, 80)
+        FORM.DRAW(pic, "rect", [20, 10, 60, 40], {})
+        TESTKIT.EQ(Px(pic, 40, 25), C_WHITE, "rect without fill: the inside stays as it is")
+        TESTKIT.ISTRUE(NearRgb(Px(pic, 20, 25), C_BLACK, 40), "rect without a style: the left edge is drawn black")
+        TESTKIT.ISTRUE(NearRgb(Px(pic, 40, 10), C_BLACK, 40), "rect without a style: the top edge is drawn black")
+        TESTKIT.EQ(ChangedOutside(pic, 17, 7, 63, 43, C_WHITE), 0, "rect with a 2 pixel outline: nothing 3 or more outside it changes")
+
+        FORM.NEWIMAGE(pic, 100, 80, $808080)
+        FORM.DRAW(pic, "rect", [20, 10, 60, 40], {"color": C_BLUE})
+        TESTKIT.EQ(Px(pic, 40, 25), $808080, "rect without fill on grey: the inside stays grey")
+        TESTKIT.ISTRUE(NearRgb(Px(pic, 20, 25), C_BLUE, 60), "rect with color $0000FF: the outline is blue")
+
+        Fresh(100, 80)
+        FORM.DRAW(pic, "rect", [20, 10, 60, 40], {"fill": C_GREEN, "color": C_BLUE, "width": 2})
+        TESTKIT.EQ(Px(pic, 40, 25), C_GREEN, "rect with fill and outline: the middle is the fill colour")
+        TESTKIT.ISTRUE(NearRgb(Px(pic, 20, 25), C_BLUE, 60), "rect with fill and outline: the edge is the outline colour")
+
+        ' value forms of points and style
+        DIM pts AS ARRAY = [20, 10, 60, 40]
+        DIM st AS MAP = {"width": 0, "fill": C_RED}
+        Fresh(100, 80)
+        FORM.DRAW(pic, "rect", pts, st)
+        TESTKIT.EQARRAY(Whole(pic), first_rect, "rect with points and style in variables")
+        Fresh(100, 80)
+        FORM.DRAW(pic, "rect", [10 + 10, 5 * 2, 30 * 2, 80 / 2], {"width": 1 - 1, "fill": $FF0000 + 0})
+        TESTKIT.EQARRAY(Whole(pic), first_rect, "rect with points and style from expressions")
+        Fresh(100, 80)
+        FORM.DRAW(pic, "rect", RectPoints(), {"width": 0, "fill": RedFill()})
+        TESTKIT.EQARRAY(Whole(pic), first_rect, "rect with points and fill from FUNC answers")
+        Fresh(100, 80)
+        FORM.DRAW(pic, "rect", RectPoints(), RedStyle())
+        TESTKIT.EQARRAY(Whole(pic), first_rect, "rect with the style map from a FUNC answer")
+        DIM shapes AS ARRAY = [[0, 0, 1, 1], [20, 10, 60, 40]]
+        DIM fills AS ARRAY = [C_BLUE, C_RED]
+        Fresh(100, 80)
+        FORM.DRAW(pic, "rect", shapes[1], {"width": 0, "fill": fills[1]})
+        TESTKIT.EQARRAY(Whole(pic), first_rect, "rect with points and fill from array cells")
+        DIM rect_spec AS MAP = {"pts": [20, 10, 60, 40], "fill": C_RED, "style": {"width": 0, "fill": C_RED}}
+        Fresh(100, 80)
+        FORM.DRAW(pic, "rect", rect_spec{"pts"}, {"width": 0, "fill": rect_spec{"fill"}})
+        TESTKIT.EQARRAY(Whole(pic), first_rect, "rect with points and fill from map fields")
+        Fresh(100, 80)
+        FORM.DRAW(pic, "rect", rect_spec{"pts"}, rect_spec{"style"})
+        TESTKIT.EQARRAY(Whole(pic), first_rect, "rect with the style map from a map field")
+        DIM shape_name AS STRING = "rect"
+        Fresh(100, 80)
+        FORM.DRAW(pic, shape_name, pts, st)
+        TESTKIT.EQARRAY(Whole(pic), first_rect, "DRAW with the shape name in a variable")
+        Fresh(100, 80)
+        DrawInside(pic, "re" + "ct", pts, st)
+        TESTKIT.EQARRAY(Whole(pic), first_rect, "DRAW called inside a SUB, the shape from an expression")
+    CATCH
+        SectionStopped("DRAW rect", ERRMSG$)
+    ENDTRY
+ENDSUB
+
+' ==========================================================================
+
+SUB TestLine()
+    DIM raised AS BOOLEAN
+    TRY
+        Fresh(100, 80)
+        FORM.DRAW(pic, "line", [10, 40, 90, 40], {"color": C_BLUE, "width": 6})
+        TESTKIT.EQ(Px(pic, 50, 39), C_BLUE, "a 6 pixel line at y 40: the pixel at 50,39 in its middle is its colour")
+        TESTKIT.EQ(Px(pic, 50, 40), C_BLUE, "a 6 pixel line at y 40: the pixel at 50,40 in its middle is its colour")
+        TESTKIT.EQ(ChangedIn(pic, 12, 40, 77, 1, C_WHITE), 77, "a line changes every pixel on its path from x 12 to 88")
+        TESTKIT.EQ(ChangedOutside(pic, 4, 34, 96, 46, C_WHITE), 0, "a 6 pixel line changes nothing 6 or more pixels away from it")
+
+        ' a line through three points, round joint
+        Fresh(100, 80)
+        FORM.DRAW(pic, "line", [10, 10, 50, 10, 50, 70], {"width": 4})
+        TESTKIT.ISTRUE(NearRgb(Px(pic, 30, 10), C_BLACK, 60), "a line through three points: the first segment is drawn (30,10)")
+        TESTKIT.ISTRUE(NearRgb(Px(pic, 50, 40), C_BLACK, 60), "a line through three points: the second segment is drawn (50,40)")
+        TESTKIT.ISTRUE(NearRgb(Px(pic, 50, 10), C_BLACK, 60), "a line through three points: the joint is drawn (50,10)")
+        TESTKIT.EQ(Px(pic, 30, 40), C_WHITE, "a line through three points: 20 pixels off both segments nothing changes (30,40)")
+        TESTKIT.EQ(Px(pic, 80, 40), C_WHITE, "a line through three points: nothing changes at 80,40")
+        TESTKIT.EQ(ChangedIn(pic, 60, 20, 40, 60, C_WHITE), 0, "a line through three points: the area right of the second segment stays white")
+
+        ' default style: black, width 2
+        Fresh(100, 80)
+        FORM.DRAW(pic, "line", [10, 60, 90, 60])
+        TESTKIT.ISTRUE(NearRgb(Px(pic, 50, 60), C_BLACK, 40), "a line without a style is black")
+        TESTKIT.EQ(ChangedOutside(pic, 6, 56, 94, 64, C_WHITE), 0, "a line without a style (width 2) changes nothing 4 or more pixels away")
+
+        ' a pen stroke from a FUNC answer
+        Fresh(100, 80)
+        FORM.DRAW(pic, "line", PenStroke(), {"color": $D02020, "width": 4})
+        TESTKIT.EQ(ChangedIn(pic, 12, 70, 77, 1, C_WHITE), 77, "a pen stroke of nine points from a FUNC answer is one unbroken line")
+        TESTKIT.ISTRUE(NearRgb(Px(pic, 45, 70), $D02020, 40), "the pen stroke has its colour")
+        TESTKIT.EQ(ChangedIn(pic, 0, 0, 100, 64, C_WHITE), 0, "the pen stroke at y 70 changes nothing above y 64")
+
+        ' width in other forms
+        DIM wide AS MAP = {"width": 10}
+        Fresh(100, 80)
+        FORM.DRAW(pic, "line", [10, 40, 90, 40], {"width": wide{"width"}})
+        TESTKIT.ISTRUE(NearRgb(Px(pic, 50, 36), C_BLACK, 40), "a 10 pixel line from a map field reaches 4 pixels above its centre")
+        TESTKIT.EQ(ChangedIn(pic, 0, 0, 100, 30, C_WHITE), 0, "a 10 pixel line changes nothing 10 or more above its centre")
+
+        ' points outside the picture
+        Fresh(100, 80)
+        raised = FALSE
+        TRY
+            FORM.DRAW(pic, "line", [-50, -50, 500, 500])
+        CATCH
+            raised = TRUE
+        ENDTRY
+        TESTKIT.ISFALSE(raised, "a line from -50,-50 to 500,500 does not throw")
+        TESTKIT.NE(Px(pic, 40, 40), C_WHITE, "a line from -50,-50 to 500,500 is drawn where it crosses the picture (40,40)")
+        TESTKIT.EQ(Px(pic, 80, 10), C_WHITE, "a diagonal line leaves 80,10 white")
+
+        Fresh(100, 80)
+        TESTKIT.ISFALSE(DrawRaises(pic, "line", [-100, -100, -50, -60], {}), "a line wholly left of and above the picture does not throw")
+        TESTKIT.ISFALSE(DrawRaises(pic, "line", [150, 10, 300, 70], {}), "a line wholly right of the picture does not throw")
+        TESTKIT.ISFALSE(DrawRaises(pic, "rect", [-40, -40, -10, -10], {"fill": C_RED}), "a rect wholly outside the picture does not throw")
+        TESTKIT.EQ(ChangedAll(pic, C_WHITE), 0, "shapes wholly outside the picture change no pixel")
+
+        ' fractions
+        Fresh(100, 80)
+        TESTKIT.ISFALSE(DrawRaises(pic, "line", [10.5, 20.25, 80.75, 20.25], {}), "a line with fractional coordinates does not throw")
+        TESTKIT.ISTRUE(ChangedIn(pic, 10, 16, 80, 9, C_WHITE) > 0, "a line at y 20.25 is drawn near y 20")
+        TESTKIT.EQ(ChangedIn(pic, 0, 0, 100, 15, C_WHITE), 0, "a line at y 20.25 changes nothing above y 15")
+
+        ' dashed
+        Fresh(100, 80)
+        FORM.DRAW(pic, "line", [10, 40, 90, 40], {"dash": TRUE, "width": 2})
+        DIM dashed AS INTEGER = ChangedIn(pic, 12, 40, 77, 1, C_WHITE)
+        TESTKIT.ISTRUE(dashed > 0, "a dashed line draws something along its path")
+        TESTKIT.ISTRUE(dashed < 77, "a dashed line leaves gaps along its path (" + STR$(dashed) + " of 77 drawn)")
+    CATCH
+        SectionStopped("DRAW line", ERRMSG$)
+    ENDTRY
+ENDSUB
+
+' ==========================================================================
+
+SUB TestAlpha()
+    TRY
+        Fresh(100, 80)
+        FORM.DRAW(pic, "rect", [10, 10, 50, 50], {"width": 0, "fill": C_BLACK, "alpha": 128})
+        DIM v AS INTEGER = Px(pic, 30, 30)
+        TESTKIT.ISTRUE(NearRgb(v, $7F7F7F, 4), "black at alpha 128 on white gives mid grey (127 per channel, +-4), got " + HEX$(v))
+        TESTKIT.EQ(Px(pic, 80, 70), C_WHITE, "alpha 128: outside the shape the picture stays white")
+
+        DIM full_alpha AS INTEGER = 255
+        Fresh(100, 80)
+        FORM.DRAW(pic, "rect", [10, 10, 50, 50], {"width": 0, "fill": C_BLACK, "alpha": full_alpha})
+        TESTKIT.EQ(Px(pic, 30, 30), C_BLACK, "alpha 255 from a variable is fully opaque")
+
+        Fresh(100, 80)
+        FORM.DRAW(pic, "rect", [10, 10, 50, 50], {"width": 4, "fill": C_BLACK, "alpha": 0})
+        TESTKIT.EQ(ChangedAll(pic, C_WHITE), 0, "alpha 0 changes no pixel")
+
+        ' a highlighter: yellow at alpha 90 on white keeps red and green, blue 255 - 90 = 165
+        DIM marker AS MAP = {"color": $FFFF00, "width": 12, "alpha": 90}
+        Fresh(100, 80)
+        FORM.DRAW(pic, "line", [10, 40, 90, 40], marker)
+        v = Px(pic, 50, 40)
+        TESTKIT.ISTRUE(NearRgb(v, $FFFFA5, 4), "a highlighter, $FFFF00 at alpha 90 on white, is $FFFFA5 (+-4), got " + HEX$(v))
+
+        ' alpha is for the whole shape: where the outline lies on the fill, it is not blended twice
+        Fresh(100, 80)
+        FORM.DRAW(pic, "rect", [10, 10, 50, 50], {"width": 4, "color": C_BLUE, "fill": C_RED, "alpha": 128})
+        v = Px(pic, 30, 30)
+        TESTKIT.ISTRUE(NearRgb(v, $FF7F7F, 4), "alpha 128 fill $FF0000 on white is $FF7F7F (+-4), got " + HEX$(v))
+        v = Px(pic, 10, 30)
+        TESTKIT.ISTRUE(NearRgb(v, $7F7FFF, 6), "alpha 128 applies to the whole shape: the outline over the fill is $0000FF at 128 on white, $7F7FFF (+-6), got " + HEX$(v))
+
+        ' over a coloured picture
+        FORM.NEWIMAGE(pic, 100, 80, C_BLUE)
+        FORM.DRAW(pic, "rect", [10, 10, 50, 50], {"width": 0, "fill": C_RED, "alpha": 128})
+        v = Px(pic, 30, 30)
+        TESTKIT.ISTRUE(NearRgb(v, $80007F, 4), "red at alpha 128 on blue is $80007F (+-4), got " + HEX$(v))
+    CATCH
+        SectionStopped("DRAW alpha", ERRMSG$)
+    ENDTRY
+ENDSUB
+
+' ==========================================================================
+
+SUB TestEllipse()
+    TRY
+        Fresh(100, 80)
+        FORM.DRAW(pic, "ellipse", [20, 20, 80, 60], {"width": 0, "fill": C_GREEN})
+        TESTKIT.EQ(Px(pic, 50, 40), C_GREEN, "a filled ellipse: its centre is the fill colour")
+        TESTKIT.NE(Px(pic, 50, 23), C_WHITE, "a filled ellipse reaches near the top of its box (50,23)")
+        TESTKIT.NE(Px(pic, 23, 40), C_WHITE, "a filled ellipse reaches near the left of its box (23,40)")
+        TESTKIT.EQ(Px(pic, 21, 21), C_WHITE, "a filled ellipse leaves the corner of its box white (21,21)")
+        TESTKIT.EQ(Px(pic, 78, 58), C_WHITE, "a filled ellipse leaves the opposite corner of its box white (78,58)")
+        TESTKIT.ISTRUE(ChangedAll(pic, C_WHITE) > 0, "an ellipse changes some pixels")
+        TESTKIT.EQ(ChangedOutside(pic, 18, 18, 82, 62, C_WHITE), 0, "an ellipse changes nothing 2 or more pixels outside its box")
+        DIM first_ellipse AS ARRAY = Whole(pic)
+        Fresh(100, 80)
+        FORM.DRAW(pic, "ellipse", [80, 60, 20, 20], {"width": 0, "fill": C_GREEN})
+        TESTKIT.EQARRAY(Whole(pic), first_ellipse, "an ellipse with the corners in the other order draws the same pixels")
+
+        Fresh(100, 80)
+        FORM.DRAW(pic, "ellipse", [20, 20, 80, 60])
+        TESTKIT.EQ(Px(pic, 50, 40), C_WHITE, "an ellipse without fill: the inside stays as it is")
+        TESTKIT.ISTRUE(NearRgb(Px(pic, 20, 40), C_BLACK, 80), "an ellipse without a style: the outline at its left end is black")
+        TESTKIT.EQ(ChangedOutside(pic, 17, 17, 83, 63, C_WHITE), 0, "an ellipse outline changes nothing 3 or more pixels outside its box")
+    CATCH
+        SectionStopped("DRAW ellipse", ERRMSG$)
+    ENDTRY
+ENDSUB
+
+' ==========================================================================
+
+FUNC MaxColumnInk(h AS DOUBLE, x1 AS INTEGER, x2 AS INTEGER) AS INTEGER
+    DIM best AS INTEGER = 0
+    DIM x AS INTEGER
+    DIM n AS INTEGER
+    FOR x = x1 TO x2
+        n = ChangedIn(h, x, 0, 1, ImgH(h), C_WHITE)
+        IF n > best THEN best = n
+    NEXT x
+    RETURN best
+ENDFUNC
+
+SUB TestArrow()
+    TRY
+        FORM.NEWIMAGE(pic, 160, 100)
+        FORM.DRAW(pic, "arrow", [20, 50, 120, 50], {"width": 2})
+        TESTKIT.ISTRUE(ChangedAll(pic, C_WHITE) > 0, "an arrow changes some pixels")
+        TESTKIT.NE(Px(pic, 60, 50), C_WHITE, "an arrow draws its shaft (60,50)")
+        TESTKIT.NE(Px(pic, 117, 50), C_WHITE, "an arrow draws up to its second point (117,50)")
+        TESTKIT.EQ(ChangedOutside(pic, 15, 20, 140, 80, C_WHITE), 0, "an arrow changes nothing far outside the box of its two points")
+        DIM shaft AS INTEGER = ChangedIn(pic, 60, 0, 1, 100, C_WHITE)
+        TESTKIT.ISTRUE(MaxColumnInk(pic, 95, 119) > shaft + 1, "an arrow's filled head at the second point is wider than its shaft")
+        TESTKIT.ISTRUE(MaxColumnInk(pic, 21, 45) <= shaft + 1, "an arrow has no head at its first point")
+
+        FORM.NEWIMAGE(pic, 160, 100)
+        FORM.DRAW(pic, "arrow", [120, 50, 20, 50], {"width": 2, "color": C_RED})
+        TESTKIT.ISTRUE(MaxColumnInk(pic, 21, 45) > shaft + 1, "an arrow from 120,50 to 20,50 has its head at 20,50")
+        TESTKIT.ISTRUE(CountNear(Whole(pic), C_RED, 40) > 0, "an arrow in $FF0000 is drawn red")
+    CATCH
+        SectionStopped("DRAW arrow", ERRMSG$)
+    ENDTRY
+ENDSUB
+
+' ==========================================================================
+
+SUB TestText()
+    TRY
+        FORM.NEWIMAGE(pic, 200, 120)
+        FORM.DRAW(pic, "text", [10, 10], {"text": "Hi", "size": 24})
+        DIM n_hi AS INTEGER = ChangedAll(pic, C_WHITE)
+        TESTKIT.ISTRUE(n_hi > 0, "text Hi changes some pixels")
+        TESTKIT.EQ(ChangedOutside(pic, 5, 5, 150, 44, C_WHITE), 0, "text Hi at 10,10 in size 24 changes nothing far outside its box")
+        DIM dark AS INTEGER = CountNear(Whole(pic), C_BLACK, 80)
+        TESTKIT.ISTRUE(dark > 0, "text without a colour is black")
+
+        DIM t AS STRING = "Hi"
+        FORM.NEWIMAGE(pic, 200, 120)
+        FORM.DRAW(pic, "text", [10, 10], {"text": t, "color": C_RED})
+        TESTKIT.ISTRUE(CountNear(Whole(pic), C_RED, 60) > 0, "text with color $FF0000, the text in a variable, is red")
+        TESTKIT.EQ(CountNear(Whole(pic), C_BLACK, 80), 0, "text in red has no black pixels")
+        TESTKIT.EQ(ChangedOutside(pic, 5, 5, 150, 44, C_WHITE), 0, "text in the default size 24 at 10,10 stays inside its box")
+
+        ' a line break starts a new line
+        FORM.NEWIMAGE(pic, 200, 120)
+        FORM.DRAW(pic, "text", [10, 10], {"text": "A", "size": 24})
+        TESTKIT.EQ(ChangedIn(pic, 0, 36, 200, 84, C_WHITE), 0, "one line of text A in size 24 at y 10 leaves y 36 and below white")
+        FORM.NEWIMAGE(pic, 200, 120)
+        FORM.DRAW(pic, "text", [10, 10], {"text": "A" + CHR$(10) + "B", "size": 24})
+        TESTKIT.ISTRUE(ChangedIn(pic, 0, 36, 200, 40, C_WHITE) > 0, "text A line break B: the B is drawn on a second line below y 34")
+        TESTKIT.EQ(ChangedIn(pic, 0, 80, 200, 40, C_WHITE), 0, "text of two lines in size 24 at y 10 leaves y 80 and below white")
+
+        ' size, bold and font
+        FORM.NEWIMAGE(pic, 200, 120)
+        FORM.DRAW(pic, "text", [10, 10], {"text": "H", "size": 24})
+        DIM rows24 AS INTEGER = InkRows(Whole(pic), C_WHITE)
+        DIM small_text AS ARRAY = Whole(pic)
+        DIM big_size AS INTEGER = 24
+        FORM.NEWIMAGE(pic, 200, 120)
+        FORM.DRAW(pic, "text", [10, 10], {"text": "H", "size": big_size * 2})
+        DIM rows48 AS INTEGER = InkRows(Whole(pic), C_WHITE)
+        TESTKIT.ISTRUE(rows48 > rows24 + 5, "text in size 48 is taller than in size 24 (" + STR$(rows48) + " against " + STR$(rows24) + " rows)")
+        FORM.NEWIMAGE(pic, 200, 120)
+        FORM.DRAW(pic, "text", [10, 10], {"text": "H"})
+        TESTKIT.EQARRAY(Whole(pic), small_text, "text without a size is drawn as size 24")
+
+        DIM word AS STRING = "Hello"
+        FORM.NEWIMAGE(pic, 200, 120)
+        FORM.DRAW(pic, "text", [10, 10], {"text": word})
+        DIM n_plain AS INTEGER = CountNear(Whole(pic), C_BLACK, 80)
+        DIM plain_text AS ARRAY = Whole(pic)
+        FORM.NEWIMAGE(pic, 200, 120)
+        FORM.DRAW(pic, "text", [10, 10], {"text": word, "bold": TRUE})
+        DIM n_bold AS INTEGER = CountNear(Whole(pic), C_BLACK, 80)
+        TESTKIT.ISTRUE(n_bold > n_plain, "bold text has more dark pixels than plain text")
+        FORM.NEWIMAGE(pic, 200, 120)
+        FORM.DRAW(pic, "text", [10, 10], {"text": word, "font": "Segoe UI"})
+        TESTKIT.EQARRAY(Whole(pic), plain_text, "text without a font is drawn in Segoe UI")
+        FORM.NEWIMAGE(pic, 200, 120)
+        FORM.DRAW(pic, "text", [10, 10], {"text": word, "font": "Courier New"})
+        TESTKIT.NEARRAY(Whole(pic), plain_text, "text in Courier New differs from the default font")
+
+        ' where it starts
+        FORM.NEWIMAGE(pic, 200, 120)
+        DIM text_at AS MAP = {"pos": [100, 60]}
+        FORM.DRAW(pic, "text", text_at{"pos"}, {"text": "H"})
+        TESTKIT.EQ(ChangedIn(pic, 0, 0, 200, 55, C_WHITE), 0, "text at 100,60 (from a map field) leaves everything above y 55 white")
+        TESTKIT.EQ(ChangedIn(pic, 0, 0, 95, 120, C_WHITE), 0, "text at 100,60 leaves everything left of x 95 white")
+        TESTKIT.ISTRUE(ChangedIn(pic, 100, 60, 40, 30, C_WHITE) > 0, "text at 100,60 is drawn right of and below its top-left corner")
+    CATCH
+        SectionStopped("DRAW text", ERRMSG$)
+    ENDTRY
+ENDSUB
+
+' ==========================================================================
+
+SUB TestEmptyPicture()
+    DIM raised AS BOOLEAN
+    TRY
+        TESTKIT.EQ(FORM.GET(pic_empty, "IMAGEWIDTH"), 0, "an empty PICTURE has IMAGEWIDTH 0")
+        TESTKIT.ISTRUE(DrawRaises(pic_empty, "line", [0, 0, 10, 10], {}), "DRAW on an empty PICTURE throws")
+        TESTKIT.ISTRUE(DrawRaises(pic_empty, "rect", [0, 0, 10, 10], {"fill": C_RED}), "DRAW rect on an empty PICTURE throws")
+        raised = FALSE
+        TRY
+            FORM.PREVIEW(pic_empty, "line", [0, 0, 10, 10])
+        CATCH
+            raised = TRUE
+        ENDTRY
+        TESTKIT.ISTRUE(raised, "PREVIEW on an empty PICTURE throws")
+        raised = FALSE
+        TRY
+            DIM m AS ARRAY = FORM.PIXELS(pic_empty, 0, 0, 5, 5)
+        CATCH
+            raised = TRUE
+        ENDTRY
+        TESTKIT.ISTRUE(raised, "PIXELS on an empty PICTURE throws")
+        raised = FALSE
+        TRY
+            FORM.SETPIXELS(pic_empty, 0, 0, RESHAPE([1, 2, 3, 4], [2, 2]))
+        CATCH
+            raised = TRUE
+        ENDTRY
+        TESTKIT.ISTRUE(raised, "SETPIXELS on an empty PICTURE throws")
+        raised = FALSE
+        TRY
+            DIM b AS BOOLEAN = FORM.HISTORY(pic_empty, "checkpoint")
+        CATCH
+            raised = TRUE
+        ENDTRY
+        TESTKIT.ISTRUE(raised, "HISTORY checkpoint on an empty PICTURE throws")
+        raised = FALSE
+        DIM b2 AS BOOLEAN = TRUE
+        TRY
+            b2 = FORM.HISTORY(pic_empty, "canundo")
+        CATCH
+            raised = TRUE
+        ENDTRY
+        TESTKIT.ISFALSE(raised, "HISTORY canundo on an empty PICTURE reads nothing and does not throw")
+        TESTKIT.ISFALSE(b2, "HISTORY canundo on an empty PICTURE answers FALSE")
+        DIM empty_png AS STRING = SavePath("empty.png")
+        raised = FALSE
+        TRY
+            DIM b3 AS BOOLEAN = FORM.SAVEIMAGE(pic_empty, empty_png)
+        CATCH
+            raised = TRUE
+        ENDTRY
+        TESTKIT.ISTRUE(raised, "SAVEIMAGE of an empty PICTURE throws")
+
+        ' a PICTURE emptied again
+        TESTKIT.ISFALSE(DrawRaises(pic2, "line", [0, 0, 5, 5], {}), "DRAW on a PICTURE that holds a picture does not throw")
+        FORM.SET(pic2, "PICTURE", "")
+        TESTKIT.ISTRUE(DrawRaises(pic2, "line", [0, 0, 5, 5], {}), "DRAW on a PICTURE emptied with FORM.SET PICTURE throws")
+        raised = FALSE
+        TRY
+            DIM m2 AS ARRAY = FORM.PIXELS(pic2, 0, 0, 2, 2)
+        CATCH
+            raised = TRUE
+        ENDTRY
+        TESTKIT.ISTRUE(raised, "PIXELS on a PICTURE emptied with FORM.SET PICTURE throws")
+        FORM.SET(pic2, "PICTURE", fixture_png)
+    CATCH
+        SectionStopped("empty PICTURE", ERRMSG$)
+    ENDTRY
+ENDSUB
+
+' ==========================================================================
+
+SUB TestPreview()
+    DIM raised AS BOOLEAN
+    TRY
+        Fresh(100, 80)
+        FORM.DRAW(pic, "rect", [30, 30, 60, 50], {"width": 0, "fill": C_RED})
+        DIM before AS ARRAY = Whole(pic)
+        FORM.PREVIEW(pic, "rect", [10, 10, 90, 70], {"color": C_BLUE, "dash": TRUE})
+        Pump()
+        TESTKIT.EQARRAY(Whole(pic), before, "PREVIEW of a dashed rect does not change the picture's pixels")
+        DIM diag AS ARRAY = [5, 5, 95, 75]
+        FORM.PREVIEW(pic, "line", diag,{"width": 8, "color": C_GREEN})
+        Pump()
+        TESTKIT.EQARRAY(Whole(pic), before, "a second PREVIEW, a line from a variable, does not change the picture's pixels")
+        FORM.PREVIEW(pic, "ellipse", [0, 0, 99, 79], {"fill": C_BLUE, "alpha": 90})
+        FORM.PREVIEW(pic, "arrow", [10, 70, 90, 10])
+        FORM.PREVIEW(pic, "text", [5, 5], {"text": "preview"})
+        Pump()
+        TESTKIT.EQARRAY(Whole(pic), before, "PREVIEW of an ellipse, an arrow and a text does not change the pixels")
+        FORM.PREVIEW(pic, "line", PenStroke())
+        Pump()
+        TESTKIT.EQARRAY(Whole(pic), before, "PREVIEW with points from a FUNC answer does not change the pixels")
+
+        FORM.SET(pic, "ZOOM", 2)
+        FORM.PREVIEW(pic, "rect", [10, 10, 90, 70], {"color": C_BLUE, "dash": TRUE})
+        Pump()
+        TESTKIT.EQARRAY(Whole(pic), before, "PREVIEW in zoom does not change the pixels")
+        FORM.SET(pic, "SCALEMODE", "fit")
+        Pump()
+
+        raised = FALSE
+        TRY
+            FORM.PREVIEW(pic, "", [])
+        CATCH
+            raised = TRUE
+        ENDTRY
+        TESTKIT.ISFALSE(raised, "PREVIEW with an empty shape and [] does not throw")
+        Pump()
+        TESTKIT.EQARRAY(Whole(pic), before, "removing the PREVIEW leaves the pixels as they were")
+        raised = FALSE
+        TRY
+            FORM.PREVIEW(pic, "", [])
+        CATCH
+            raised = TRUE
+        ENDTRY
+        TESTKIT.ISFALSE(raised, "removing the PREVIEW when none is shown does not throw")
+
+        ' a DRAW after a PREVIEW draws only its own shape
+        FORM.PREVIEW(pic, "rect", [10, 10, 90, 70], {"color": C_BLUE, "width": 4})
+        FORM.DRAW(pic, "line", [0, 77, 99, 77], {"width": 2})
+        FORM.PREVIEW(pic, "", [])
+        Pump()
+        TESTKIT.EQ(Px(pic, 50, 10), C_WHITE, "a DRAW after a PREVIEW does not draw the previewed shape")
+        DIM top_now AS ARRAY = FORM.PIXELS(pic, 0, 0, 100, 70)
+        DIM top_before AS ARRAY = Top70(before)
+        TESTKIT.EQARRAY(top_now, top_before, "a DRAW after a PREVIEW leaves the rest of the picture as it was")
+    CATCH
+        SectionStopped("PREVIEW", ERRMSG$)
+    ENDTRY
+ENDSUB
+
+' the first 70 rows of a 100-column matrix
+FUNC Top70(m AS ARRAY) AS ARRAY
+    DIM top AS ARRAY = RESHAPE([0], [70, 100])
+    DIM r AS INTEGER
+    DIM c AS INTEGER
+    FOR r = 0 TO 69
+        FOR c = 0 TO 99
+            top[r, c] = m[r, c]
+        NEXT c
+    NEXT r
+    RETURN top
+ENDFUNC
+
+' ==========================================================================
+
+SUB TestPixels()
+    TRY
+        Fresh(100, 80)
+        FORM.SETPIXELS(pic, 0, 0, RESHAPE([$010203], [1, 1]))
+        FORM.SETPIXELS(pic, 99, 79, RESHAPE([$0A0B0C], [1, 1]))
+        FORM.SETPIXELS(pic, 95, 75, RESHAPE([$ABCDEF], [1, 1]))
+        FORM.SETPIXELS(pic, 10, 20, RESHAPE([$112233], [1, 1]))
+        FORM.SETPIXELS(pic, 12, 20, RESHAPE([$445566], [1, 1]))
+        FORM.SETPIXELS(pic, 10, 22, RESHAPE([$778899], [1, 1]))
+
+        DIM m AS ARRAY = FORM.PIXELS(pic, 10, 20, 7, 3)
+        TESTKIT.EQ(LEN(m), 3, "PIXELS of 7 x 3 has h = 3 rows (LEN)")
+        TESTKIT.EQ(LEN(m[0]), 7, "PIXELS of 7 x 3 has w = 7 columns (LEN of a row)")
+        TESTKIT.EQ(m[0, 0], $112233, "PIXELS: px[0, 0] is the pixel at x, y")
+        TESTKIT.EQ(m[0, 2], $445566, "PIXELS: px[0, 2] is two columns right of x")
+        TESTKIT.EQ(m[2, 0], $778899, "PIXELS: px[2, 0] is two rows below y")
+        TESTKIT.EQ(m[1, 1], C_WHITE, "PIXELS: an untouched pixel of a new picture is white")
+
+        DIM all_px AS ARRAY = FORM.PIXELS(pic, 0, 0, 100, 80)
+        TESTKIT.EQ(LEN(all_px), 80, "PIXELS of the whole 100 x 80 picture has 80 rows")
+        TESTKIT.EQ(LEN(all_px[0]), 100, "PIXELS of the whole 100 x 80 picture has 100 columns")
+        TESTKIT.EQ(all_px[79, 99], $0A0B0C, "PIXELS of the whole picture: the last cell is the last pixel")
+
+        DIM last_one AS ARRAY = FORM.PIXELS(pic, 99, 79, 1, 1)
+        TESTKIT.ISTRUE(LEN(last_one) = 1 ANDALSO LEN(last_one[0]) = 1, "PIXELS of the last pixel alone is 1 x 1")
+        TESTKIT.EQ(last_one[0, 0], $0A0B0C, "PIXELS of the last pixel alone reads it")
+
+        ' cut to the picture
+        DIM cut AS ARRAY = FORM.PIXELS(pic, 95, 75, 10, 10)
+        TESTKIT.EQ(LEN(cut), 5, "PIXELS of 10 x 10 at 95,75 is cut to 5 rows")
+        TESTKIT.EQ(NCols(cut), 5, "PIXELS of 10 x 10 at 95,75 is cut to 5 columns")
+        TESTKIT.EQ(cut[0, 0], $ABCDEF, "PIXELS cut at the right and bottom starts at x, y")
+        TESTKIT.EQ(cut[4, 4], $0A0B0C, "PIXELS cut at the right and bottom ends at the last pixel")
+        DIM cut2 AS ARRAY = FORM.PIXELS(pic, -5, -5, 10, 10)
+        TESTKIT.EQ(LEN(cut2), 5, "PIXELS of 10 x 10 at -5,-5 is cut to 5 rows")
+        TESTKIT.EQ(NCols(cut2), 5, "PIXELS of 10 x 10 at -5,-5 is cut to 5 columns")
+        TESTKIT.EQ(cut2[0, 0], $010203, "PIXELS cut at the left and top starts at pixel 0,0")
+        DIM cut3 AS ARRAY = FORM.PIXELS(pic, -3, -2, 10, 10)
+        TESTKIT.ISTRUE(LEN(cut3) = 8 ANDALSO NCols(cut3) = 7, "PIXELS of 10 x 10 at -3,-2 is cut to 8 rows of 7")
+        DIM cut4 AS ARRAY = FORM.PIXELS(pic, -10, -10, 200, 200)
+        TESTKIT.ISTRUE(LEN(cut4) = 80 ANDALSO NCols(cut4) = 100, "PIXELS of a region larger than the picture on every side is the whole picture")
+
+        ' nothing left
+        TESTKIT.EQ(LEN(FORM.PIXELS(pic, 100, 0, 5, 5)), 0, "PIXELS starting just right of the picture is []")
+        TESTKIT.EQ(LEN(FORM.PIXELS(pic, 0, 80, 5, 5)), 0, "PIXELS starting just below the picture is []")
+        TESTKIT.EQ(LEN(FORM.PIXELS(pic, 200, 200, 5, 5)), 0, "PIXELS far outside the picture is []")
+        TESTKIT.EQ(LEN(FORM.PIXELS(pic, -20, 0, 10, 5)), 0, "PIXELS wholly left of the picture (-20 to -10) is []")
+        TESTKIT.EQ(LEN(FORM.PIXELS(pic, 0, -10, 5, 10)), 0, "PIXELS wholly above the picture (-10 to 0) is []")
+        TESTKIT.EQ(LEN(FORM.PIXELS(pic, 10, 10, 0, 5)), 0, "PIXELS with w 0 is []")
+        TESTKIT.EQ(LEN(FORM.PIXELS(pic, 10, 10, 5, 0)), 0, "PIXELS with h 0 is []")
+        TESTKIT.EQARRAY(FORM.PIXELS(pic, 200, 200, 5, 5), [], "PIXELS outside the picture equals the empty array []")
+
+        ' rounded to whole pixels
+        DIM rounded AS ARRAY = FORM.PIXELS(pic, 10.4, 20.4, 6.6, 2.6)
+        TESTKIT.ISTRUE(LEN(rounded) = 3 ANDALSO NCols(rounded) = 7, "PIXELS at 10.4, 20.4 of 6.6 x 2.6 rounds to 7 x 3")
+        TESTKIT.EQ(rounded[0, 0], $112233, "PIXELS at 10.4, 20.4 rounds to the pixel at 10, 20")
+        DIM rnd2 AS ARRAY = FORM.PIXELS(pic, 9.6, 19.6, 2.4, 1.4)
+        TESTKIT.ISTRUE(LEN(rnd2) = 1 ANDALSO NCols(rnd2) = 2, "PIXELS at 9.6, 19.6 of 2.4 x 1.4 rounds to 2 x 1")
+        TESTKIT.EQ(rnd2[0, 0], $112233, "PIXELS at 9.6, 19.6 rounds to the pixel at 10, 20")
+
+        ' value forms of the region
+        DIM rx AS INTEGER = 10
+        DIM ry AS INTEGER = 20
+        TESTKIT.EQ(FORM.PIXELS(pic, rx, ry, 1, 1)[0, 0], $112233, "PIXELS with x, y in variables, read straight off the call")
+        TESTKIT.EQ(FORM.PIXELS(pic, rx + 2, ry * 1, 1, 1)[0, 0], $445566, "PIXELS with x, y from expressions")
+        DIM region AS ARRAY = [10, 22, 1, 1]
+        TESTKIT.EQ(FORM.PIXELS(pic, region[0], region[1], region[2], region[3])[0, 0], $778899, "PIXELS with the region from array cells")
+        DIM rm AS MAP = {"x": 95, "y": 75}
+        TESTKIT.EQ(FORM.PIXELS(pic, rm{"x"}, rm{"y"}, 1, 1)[0, 0], $ABCDEF, "PIXELS with x, y from map fields")
+        TESTKIT.EQ(Px(pic, SizeW() - 2, 20), $112233, "PIXELS inside a FUNC with x from a FUNC answer")
+
+        ' a 1 x 1 picture
+        FORM.NEWIMAGE(pic, 1, 1, C_RED)
+        DIM p1 AS ARRAY = FORM.PIXELS(pic, 0, 0, 1, 1)
+        TESTKIT.ISTRUE(LEN(p1) = 1 ANDALSO NCols(p1) = 1 ANDALSO p1[0, 0] = C_RED, "PIXELS of a 1 x 1 picture is its one pixel")
+        DIM p5 AS ARRAY = FORM.PIXELS(pic, 0, 0, 5, 5)
+        TESTKIT.ISTRUE(LEN(p5) = 1 ANDALSO NCols(p5) = 1, "PIXELS of 5 x 5 on a 1 x 1 picture is cut to 1 x 1")
+        TESTKIT.EQ(LEN(FORM.PIXELS(pic, 1, 0, 1, 1)), 0, "PIXELS at 1,0 of a 1 x 1 picture is []")
+    CATCH
+        SectionStopped("PIXELS", ERRMSG$)
+    ENDTRY
+ENDSUB
+
+' ==========================================================================
+
+FUNC Tile3() AS ARRAY
+    RETURN RESHAPE([$100001, $100002, $100003, $100004, $100005, $100006, $100007, $100008, $100009], [3, 3])
+ENDFUNC
+
+SUB TestSetPixels()
+    DIM raised AS BOOLEAN
+    TRY
+        Fresh(100, 80)
+        DIM m AS ARRAY = RESHAPE([$FF0000, $00FF00, $0000FF, $FFFF00, $00FFFF, $FF00FF], [2, 3])
+        FORM.SETPIXELS(pic, 10, 10, m)
+        TESTKIT.EQARRAY(FORM.PIXELS(pic, 10, 10, 3, 2), m, "SETPIXELS of a 2 x 3 matrix reads back the same with PIXELS")
+        TESTKIT.EQ(Px(pic, 13, 10), C_WHITE, "SETPIXELS leaves the pixel right of the matrix as it was")
+        TESTKIT.EQ(Px(pic, 10, 12), C_WHITE, "SETPIXELS leaves the pixel below the matrix as it was")
+        TESTKIT.EQ(Px(pic, 9, 10), C_WHITE, "SETPIXELS leaves the pixel left of the matrix as it was")
+        TESTKIT.EQ(Px(pic, 10, 9), C_WHITE, "SETPIXELS leaves the pixel above the matrix as it was")
+
+        DIM row_list AS ARRAY = [[$000001, $000002, $000003], [$000004, $000005, $000006]]
+        FORM.SETPIXELS(pic, 20, 20, row_list)
+        TESTKIT.EQARRAY(FORM.PIXELS(pic, 20, 20, 3, 2), RESHAPE([1, 2, 3, 4, 5, 6], [2, 3]), "SETPIXELS of an array of equally long rows writes them row by row")
+
+        ' the whole picture round trip
+        Fresh(100, 80)
+        FORM.DRAW(pic, "ellipse", [10, 10, 90, 70], {"fill": C_GREEN, "color": C_BLUE, "width": 3})
+        FORM.DRAW(pic, "line", [0, 0, 99, 79], {"color": C_RED, "alpha": 128})
+        DIM whole_before AS ARRAY = Whole(pic)
+        FORM.NEWIMAGE(pic, 100, 80, C_BLACK)
+        FORM.SETPIXELS(pic, 0, 0, whole_before)
+        TESTKIT.EQARRAY(Whole(pic), whole_before, "PIXELS of the whole picture written back with SETPIXELS over black gives the same picture")
+
+        ' partly outside
+        Fresh(100, 80)
+        DIM t3 AS ARRAY = Tile3()
+        raised = FALSE
+        TRY
+            FORM.SETPIXELS(pic, 98, 78, t3)
+        CATCH
+            raised = TRUE
+        ENDTRY
+        TESTKIT.ISFALSE(raised, "SETPIXELS of 3 x 3 at 98,78, partly outside, does not throw")
+        TESTKIT.EQ(Px(pic, 98, 78), $100001, "SETPIXELS partly outside right and bottom writes its top-left value at x, y")
+        TESTKIT.EQ(Px(pic, 99, 78), $100002, "SETPIXELS partly outside writes the inside part (99,78)")
+        TESTKIT.EQ(Px(pic, 99, 79), $100005, "SETPIXELS partly outside writes the inside part (99,79)")
+        TESTKIT.EQ(Px(pic, 97, 78), C_WHITE, "SETPIXELS partly outside leaves the pixel left of it as it was")
+        raised = FALSE
+        TRY
+            FORM.SETPIXELS(pic, -1, -1, t3)
+        CATCH
+            raised = TRUE
+        ENDTRY
+        TESTKIT.ISFALSE(raised, "SETPIXELS of 3 x 3 at -1,-1, partly outside, does not throw")
+        TESTKIT.EQ(Px(pic, 0, 0), $100005, "SETPIXELS at -1,-1: cell [1, 1] lands on 0,0")
+        TESTKIT.EQ(Px(pic, 1, 0), $100006, "SETPIXELS at -1,-1: cell [1, 2] lands on 1,0")
+        TESTKIT.EQ(Px(pic, 0, 1), $100008, "SETPIXELS at -1,-1: cell [2, 1] lands on 0,1")
+        TESTKIT.EQ(Px(pic, 1, 1), $100009, "SETPIXELS at -1,-1: cell [2, 2] lands on 1,1")
+        TESTKIT.EQ(Px(pic, 2, 2), C_WHITE, "SETPIXELS at -1,-1 leaves 2,2 as it was")
+        DIM after_partial AS ARRAY = Whole(pic)
+        raised = FALSE
+        TRY
+            FORM.SETPIXELS(pic, 200, 200, t3)
+            FORM.SETPIXELS(pic, -10, -10, t3)
+            FORM.SETPIXELS(pic, 100, 0, t3)
+        CATCH
+            raised = TRUE
+        ENDTRY
+        TESTKIT.ISFALSE(raised, "SETPIXELS wholly outside the picture does not throw")
+        TESTKIT.EQARRAY(Whole(pic), after_partial, "SETPIXELS wholly outside the picture changes no pixel")
+
+        ' value forms
+        Fresh(100, 80)
+        DIM sx AS INTEGER = 40
+        DIM sy AS INTEGER = 30
+        FORM.SETPIXELS(pic, sx, sy, Tile3())
+        TESTKIT.EQARRAY(FORM.PIXELS(pic, 40, 30, 3, 3), Tile3(), "SETPIXELS with x, y in variables and the matrix from a FUNC answer")
+        DIM tiles AS ARRAY = [t3, m]
+        FORM.SETPIXELS(pic, sx + 10, sy - 10, tiles[1])
+        TESTKIT.EQARRAY(FORM.PIXELS(pic, 50, 20, 3, 2), m, "SETPIXELS with x, y from expressions and the matrix from an array cell")
+        DIM tm AS MAP = {"x": 60, "y": 60, "px": t3}
+        FORM.SETPIXELS(pic, tm{"x"}, tm{"y"}, tm{"px"})
+        TESTKIT.EQARRAY(FORM.PIXELS(pic, 60, 60, 3, 3), t3, "SETPIXELS with x, y and the matrix from map fields")
+        FORM.SETPIXELS(pic, 5, 5, RESHAPE([$123456], [1, 1]))
+        TESTKIT.EQ(Px(pic, 5, 5), $123456, "SETPIXELS of a 1 x 1 matrix writes one pixel")
+
+        ' the specification's pixelate example
+        FORM.NEWIMAGE(pic, 40, 30)
+        FORM.SETPIXELS(pic, 4, 3, RESHAPE(IOTA(576), [24, 24]))
+        Pixelate(pic, 4, 3, 24, 24)
+        TESTKIT.EQ(Px(pic, 15, 14), 1, "pixelate: the first 12 x 12 block takes its top-left value")
+        TESTKIT.EQ(Px(pic, 16, 3), 13, "pixelate: the second block of the first row takes its top-left value")
+        TESTKIT.EQ(Px(pic, 4, 26), 289, "pixelate: the first block of the second row takes its top-left value")
+        TESTKIT.EQ(Px(pic, 27, 26), 301, "pixelate: the last block takes its top-left value")
+        TESTKIT.EQ(Px(pic, 28, 26), C_WHITE, "pixelate leaves the pixel right of the region as it was")
+    CATCH
+        SectionStopped("SETPIXELS", ERRMSG$)
+    ENDTRY
+ENDSUB
+
+' ==========================================================================
+
+SUB Mark(rgb AS INTEGER)
+    FORM.SETPIXELS(pic, 5, 5, RESHAPE([rgb], [1, 1]))
+ENDSUB
+
+SUB TestHistory()
+    DIM b AS BOOLEAN
+    TRY
+        FORM.NEWIMAGE(pic, 20, 10)
+        TESTKIT.ISTRUE(FORM.HISTORY(pic, "clear"), "HISTORY clear answers TRUE")
+        TESTKIT.ISFALSE(FORM.HISTORY(pic, "canundo"), "after clear canundo is FALSE")
+        TESTKIT.ISFALSE(FORM.HISTORY(pic, "canredo"), "after clear canredo is FALSE")
+        TESTKIT.ISFALSE(FORM.HISTORY(pic, "undo"), "undo with nothing to undo answers FALSE")
+        TESTKIT.ISFALSE(FORM.HISTORY(pic, "redo"), "redo with nothing to redo answers FALSE")
+        TESTKIT.ISTRUE(AllIs(pic, 0, 0, 20, 10, C_WHITE), "an undo that answers FALSE leaves the picture as it is")
+
+        DIM state_a AS ARRAY = Whole(pic)
+        TESTKIT.ISTRUE(FORM.HISTORY(pic, "checkpoint"), "HISTORY checkpoint answers TRUE")
+        TESTKIT.ISTRUE(FORM.HISTORY(pic, "canundo"), "after a checkpoint canundo is TRUE")
+        TESTKIT.ISFALSE(FORM.HISTORY(pic, "canredo"), "after a checkpoint canredo is FALSE")
+        Mark(C_RED)
+        DIM state_b AS ARRAY = Whole(pic)
+        TESTKIT.ISTRUE(FORM.HISTORY(pic, "undo"), "undo after a checkpoint answers TRUE")
+        TESTKIT.EQARRAY(Whole(pic), state_a, "undo goes back to the picture of the last checkpoint")
+        TESTKIT.ISTRUE(FORM.HISTORY(pic, "canredo"), "after an undo canredo is TRUE")
+        TESTKIT.ISFALSE(FORM.HISTORY(pic, "canundo"), "after undoing the only checkpoint canundo is FALSE")
+        TESTKIT.ISTRUE(FORM.HISTORY(pic, "redo"), "redo after an undo answers TRUE")
+        TESTKIT.EQARRAY(Whole(pic), state_b, "redo goes forward to the picture the undo left")
+        TESTKIT.ISFALSE(FORM.HISTORY(pic, "canredo"), "after redoing the only step canredo is FALSE")
+        TESTKIT.ISFALSE(FORM.HISTORY(pic, "redo"), "a second redo answers FALSE")
+        TESTKIT.EQARRAY(Whole(pic), state_b, "a redo that answers FALSE leaves the picture as it is")
+        TESTKIT.ISTRUE(FORM.HISTORY(pic, "canundo"), "after a redo canundo is TRUE again")
+
+        ' two checkpoints walk back in two steps
+        b = FORM.HISTORY(pic, "clear")
+        FORM.NEWIMAGE(pic, 20, 10)
+        state_a = Whole(pic)
+        b = FORM.HISTORY(pic, "checkpoint")
+        Mark(C_RED)
+        state_b = Whole(pic)
+        b = FORM.HISTORY(pic, "checkpoint")
+        Mark(C_BLUE)
+        DIM state_c AS ARRAY = Whole(pic)
+        TESTKIT.ISTRUE(FORM.HISTORY(pic, "undo"), "the first of two undos answers TRUE")
+        TESTKIT.EQARRAY(Whole(pic), state_b, "the first undo goes back to the second checkpoint")
+        TESTKIT.ISTRUE(FORM.HISTORY(pic, "undo"), "the second of two undos answers TRUE")
+        TESTKIT.EQARRAY(Whole(pic), state_a, "the second undo goes back to the first checkpoint")
+        TESTKIT.ISFALSE(FORM.HISTORY(pic, "undo"), "a third undo answers FALSE")
+        TESTKIT.EQARRAY(Whole(pic), state_a, "the third undo leaves the first checkpoint's picture")
+        TESTKIT.ISTRUE(FORM.HISTORY(pic, "redo"), "the first redo answers TRUE")
+        TESTKIT.EQARRAY(Whole(pic), state_b, "the first redo goes forward to the second picture")
+        TESTKIT.ISTRUE(FORM.HISTORY(pic, "redo"), "the second redo answers TRUE")
+        TESTKIT.EQARRAY(Whole(pic), state_c, "the second redo goes forward to the last picture")
+        TESTKIT.ISFALSE(FORM.HISTORY(pic, "redo"), "a third redo answers FALSE")
+
+        ' a checkpoint forgets what could be redone
+        b = FORM.HISTORY(pic, "undo")
+        TESTKIT.ISTRUE(FORM.HISTORY(pic, "canredo"), "before the checkpoint there is a redo")
+        TESTKIT.ISTRUE(FORM.HISTORY(pic, "checkpoint"), "a checkpoint after an undo answers TRUE")
+        TESTKIT.ISFALSE(FORM.HISTORY(pic, "canredo"), "a checkpoint forgets what could be redone: canredo is FALSE")
+        TESTKIT.ISFALSE(FORM.HISTORY(pic, "redo"), "a checkpoint forgets what could be redone: redo answers FALSE")
+        TESTKIT.EQARRAY(Whole(pic), state_b, "the refused redo leaves the picture as it is")
+
+        ' clear forgets every step and leaves the picture alone
+        TESTKIT.ISTRUE(FORM.HISTORY(pic, "clear"), "clear with steps kept answers TRUE")
+        TESTKIT.ISFALSE(FORM.HISTORY(pic, "canundo"), "after clear there is nothing to undo")
+        TESTKIT.ISFALSE(FORM.HISTORY(pic, "undo"), "after clear undo answers FALSE")
+        TESTKIT.EQARRAY(Whole(pic), state_b, "clear does not change the picture")
+        b = FORM.HISTORY(pic, "checkpoint")
+        b = FORM.HISTORY(pic, "undo")
+        TESTKIT.ISTRUE(FORM.HISTORY(pic, "canredo"), "a redo is there before clear")
+        b = FORM.HISTORY(pic, "clear")
+        TESTKIT.ISFALSE(FORM.HISTORY(pic, "canredo"), "after clear there is nothing to redo")
+
+        ' a size change
+        b = FORM.HISTORY(pic, "clear")
+        FORM.NEWIMAGE(pic, 20, 10)
+        b = FORM.HISTORY(pic, "checkpoint")
+        FORM.NEWIMAGE(pic, 40, 30, C_BLUE)
+        TESTKIT.ISTRUE(FORM.HISTORY(pic, "canundo"), "NEWIMAGE keeps the steps: canundo stays TRUE")
+        TESTKIT.ISTRUE(FORM.HISTORY(pic, "undo"), "undo across a size change answers TRUE")
+        TESTKIT.EQ(ImgW(pic), 20, "undo across a size change brings back IMAGEWIDTH 20")
+        TESTKIT.EQ(ImgH(pic), 10, "undo across a size change brings back IMAGEHEIGHT 10")
+        TESTKIT.ISTRUE(AllIs(pic, 0, 0, 20, 10, C_WHITE), "undo across a size change brings back the white picture")
+        TESTKIT.ISTRUE(FORM.HISTORY(pic, "redo"), "redo across a size change answers TRUE")
+        TESTKIT.ISTRUE(ImgW(pic) = 40 ANDALSO ImgH(pic) = 30, "redo across a size change brings back 40 x 30")
+        TESTKIT.ISTRUE(AllIs(pic, 0, 0, 40, 30, C_BLUE), "redo across a size change brings back the blue picture")
+
+        ' a crop undone
+        b = FORM.HISTORY(pic, "clear")
+        FORM.NEWIMAGE(pic, 20, 10)
+        Mark(C_RED)
+        DIM uncropped AS ARRAY = Whole(pic)
+        b = FORM.HISTORY(pic, "checkpoint")
+        DIM crop AS ARRAY = FORM.PIXELS(pic, 4, 4, 8, 4)
+        FORM.NEWIMAGE(pic, 8, 4)
+        FORM.SETPIXELS(pic, 0, 0, crop)
+        TESTKIT.EQ(Px(pic, 1, 1), C_RED, "fixture: the crop holds the marked pixel at 1,1")
+        TESTKIT.ISTRUE(FORM.HISTORY(pic, "undo"), "a crop can be undone")
+        TESTKIT.ISTRUE(ImgW(pic) = 20 ANDALSO ImgH(pic) = 10, "undoing a crop brings back the size 20 x 10")
+        TESTKIT.EQARRAY(Whole(pic), uncropped, "undoing a crop brings back every pixel")
+
+        ' loading another picture keeps the steps
+        b = FORM.HISTORY(pic, "clear")
+        FORM.NEWIMAGE(pic, 20, 10)
+        b = FORM.HISTORY(pic, "checkpoint")
+        FORM.SET(pic, "PICTURE", fixture_png)
+        TESTKIT.EQ(ImgW(pic), 8, "fixture: the loaded picture is 8 wide")
+        TESTKIT.ISTRUE(FORM.HISTORY(pic, "canundo"), "loading another picture keeps the steps")
+        TESTKIT.ISTRUE(FORM.HISTORY(pic, "undo"), "undo after loading another picture answers TRUE")
+        TESTKIT.ISTRUE(ImgW(pic) = 20 ANDALSO ImgH(pic) = 10, "undo after loading another picture brings back 20 x 10")
+
+        ' kept in the control
+        b = FORM.HISTORY(pic, "clear")
+        TESTKIT.ISTRUE(FORM.HISTORY(pic2, "clear"), "clear on a second PICTURE answers TRUE")
+        b = FORM.HISTORY(pic, "checkpoint")
+        TESTKIT.ISTRUE(FORM.HISTORY(pic, "canundo"), "the first PICTURE has a step")
+        TESTKIT.ISFALSE(FORM.HISTORY(pic2, "canundo"), "a checkpoint on one PICTURE gives no step to another")
+
+        ' value forms of the action
+        b = FORM.HISTORY(pic, "clear")
+        DIM act AS STRING = "checkpoint"
+        TESTKIT.ISTRUE(FORM.HISTORY(pic, act), "HISTORY with the action in a variable")
+        TESTKIT.ISTRUE(FORM.HISTORY(pic, "can" + "undo"), "HISTORY with the action from an expression")
+        DIM acts AS ARRAY = ["undo", "redo"]
+        TESTKIT.ISTRUE(FORM.HISTORY(pic, acts[0]), "HISTORY with the action from an array cell")
+        DIM menu_map AS MAP = {"redo": "redo"}
+        TESTKIT.ISTRUE(FORM.HISTORY(pic, menu_map{"redo"}), "HISTORY with the action from a map field")
+        TESTKIT.ISTRUE(HistoryInside(pic, "canundo"), "HISTORY called inside a FUNC")
+
+        ' at most 50 steps, the oldest go first
+        FORM.NEWIMAGE(pic, 2, 2)
+        b = FORM.HISTORY(pic, "clear")
+        DIM i AS INTEGER
+        FOR i = 1 TO 55
+            FORM.SETPIXELS(pic, 0, 0, RESHAPE([i], [1, 1]))
+            b = FORM.HISTORY(pic, "checkpoint")
+        NEXT i
+        FORM.SETPIXELS(pic, 0, 0, RESHAPE([999], [1, 1]))
+        DIM n_undo AS INTEGER = 0
+        DIM first_val AS INTEGER = -2
+        DIM last_val AS INTEGER = -2
+        FOR i = 1 TO 60
+            IF FORM.HISTORY(pic, "undo") THEN
+                n_undo = n_undo + 1
+                IF n_undo = 1 THEN first_val = Px(pic, 0, 0)
+                last_val = Px(pic, 0, 0)
+            ENDIF
+        NEXT i
+        TESTKIT.EQ(n_undo, 50, "after 55 checkpoints exactly 50 undos are possible")
+        TESTKIT.EQ(first_val, 55, "the first undo goes back to the 55th checkpoint")
+        TESTKIT.EQ(last_val, 6, "the oldest step kept is the 6th checkpoint; the first five went first")
+        b = FORM.HISTORY(pic, "clear")
+    CATCH
+        SectionStopped("HISTORY", ERRMSG$)
+    ENDTRY
+ENDSUB
+
+' ==========================================================================
+
+FUNC HasNoMetadata(m AS MAP) AS BOOLEAN
+    DIM meta_keys AS ARRAY = ["orientation", "make", "model", "software", "datetime", "datetime_original", "artist", "copyright", "description", "owner", "serial", "lens_serial", "user_comment", "xp_title", "xp_subject", "xp_author", "xp_comment", "xp_keywords", "gps_latitude", "gps_longitude", "gps_altitude", "xmp", "iptc", "comment", "text"]
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(meta_keys) - 1
+        IF MAP.EXISTS(m, meta_keys[i]) THEN RETURN FALSE
+    NEXT i
+    RETURN TRUE
+ENDFUNC
+
+SUB TestSaveImage()
+    DIM b AS BOOLEAN
+    DIM wh AS ARRAY
+    DIM meta AS MAP
+    TRY
+        Fresh(100, 80)
+        FORM.DRAW(pic, "rect", [20, 20, 60, 50], {"width": 0, "fill": C_RED})
+        FORM.DRAW(pic, "line", [0, 70, 99, 70], {"color": C_BLUE, "width": 4})
+        DIM drawn AS ARRAY = Whole(pic)
+        FORM.PREVIEW(pic, "rect", [5, 5, 95, 75], {"color": C_GREEN, "width": 6})
+        Pump()
+
+        ' PNG
+        DIM png AS STRING = SavePath("draw.png")
+        TESTKIT.ISTRUE(FORM.SAVEIMAGE(pic, png), "SAVEIMAGE to .png answers TRUE")
+        TESTKIT.ISTRUE(FILE.EXISTS(png), "SAVEIMAGE to .png writes the file")
+        wh = IMAGE.SIZE(png)
+        TESTKIT.EQARRAY(wh, [100, 80], "IMAGE.SIZE of the saved .png is 100 x 80")
+        meta = IMAGE.META(png)
+        TESTKIT.EQ(meta{"format"}, "png", "IMAGE.META of the saved .png says format png")
+        TESTKIT.ISFALSE(MAP.EXISTS(meta, "gps_latitude") ORELSE MAP.EXISTS(meta, "gps_longitude") ORELSE MAP.EXISTS(meta, "gps_altitude"), "the saved .png has no GPS position")
+        TESTKIT.ISTRUE(HasNoMetadata(meta), "the saved .png has no EXIF fields, XMP or text chunks")
+        TESTKIT.EQ(LEN(MAP.KEYS(meta)), 1, "IMAGE.META of the saved .png holds format alone")
+        FORM.SET(pic_load, "PICTURE", png)
+        TESTKIT.ISTRUE(ImgW(pic_load) = 100 ANDALSO ImgH(pic_load) = 80, "the saved .png loads as 100 x 80")
+        TESTKIT.EQARRAY(Whole(pic_load), drawn, "the saved .png holds the picture's pixels, without the PREVIEW shown over it")
+        FORM.PREVIEW(pic, "", [])
+
+        ' JPEG
+        DIM jpg AS STRING = SavePath("draw.jpg")
+        TESTKIT.ISTRUE(FORM.SAVEIMAGE(pic, jpg), "SAVEIMAGE to .jpg answers TRUE")
+        wh = IMAGE.SIZE(jpg)
+        TESTKIT.EQARRAY(wh, [100, 80], "IMAGE.SIZE of the saved .jpg is 100 x 80")
+        meta = IMAGE.META(jpg)
+        TESTKIT.EQ(meta{"format"}, "jpeg", "IMAGE.META of the saved .jpg says format jpeg")
+        TESTKIT.ISFALSE(MAP.EXISTS(meta, "gps_latitude") ORELSE MAP.EXISTS(meta, "gps_longitude") ORELSE MAP.EXISTS(meta, "gps_altitude"), "the saved .jpg has no GPS position")
+        TESTKIT.ISTRUE(HasNoMetadata(meta), "the saved .jpg has no EXIF fields, XMP, IPTC or comment")
+        TESTKIT.EQ(LEN(MAP.KEYS(meta)), 1, "IMAGE.META of the saved .jpg holds format alone")
+        FORM.SET(pic_load, "PICTURE", jpg)
+        TESTKIT.ISTRUE(ImgW(pic_load) = 100 ANDALSO ImgH(pic_load) = 80, "the saved .jpg loads as 100 x 80")
+        TESTKIT.ISTRUE(NearRgb(Px(pic_load, 40, 35), C_RED, 24), "the saved .jpg keeps the red rect (+-24)")
+        TESTKIT.ISTRUE(NearRgb(Px(pic_load, 85, 10), C_WHITE, 8), "the saved .jpg keeps the white ground (+-8)")
+
+        DIM jpeg AS STRING = SavePath("draw.jpeg")
+        TESTKIT.ISTRUE(FORM.SAVEIMAGE(pic, jpeg), "SAVEIMAGE to .jpeg answers TRUE")
+        TESTKIT.EQARRAY(IMAGE.SIZE(jpeg), [100, 80], "IMAGE.SIZE of the saved .jpeg is 100 x 80")
+        TESTKIT.EQ(IMAGE.META(jpeg){"format"}, "jpeg", "the saved .jpeg is a JPEG")
+
+        ' BMP
+        DIM bmp AS STRING = SavePath("draw.bmp")
+        TESTKIT.ISTRUE(FORM.SAVEIMAGE(pic, bmp), "SAVEIMAGE to .bmp answers TRUE")
+        TESTKIT.EQARRAY(IMAGE.SIZE(bmp), [100, 80], "IMAGE.SIZE of the saved .bmp is 100 x 80")
+        FORM.SET(pic_load, "PICTURE", bmp)
+        TESTKIT.EQARRAY(Whole(pic_load), drawn, "the saved .bmp holds the picture's pixels")
+
+        ' refused
+        DIM xyz AS STRING = SavePath("draw.xyz")
+        TESTKIT.ISFALSE(FORM.SAVEIMAGE(pic, xyz), "SAVEIMAGE to an unknown extension .xyz answers FALSE")
+        TESTKIT.ISFALSE(FORM.SAVEIMAGE(pic, SavePath("draw.gif")), "SAVEIMAGE to .gif, none of png jpg jpeg bmp, answers FALSE")
+        TESTKIT.ISFALSE(FORM.SAVEIMAGE(pic, SavePath("draw")), "SAVEIMAGE to a path without an extension answers FALSE")
+        DIM nodir AS STRING = PATH.JOIN$(tdir, "no_such_dir", "draw.png")
+        TESTKIT.ISFALSE(FORM.SAVEIMAGE(pic, nodir), "SAVEIMAGE into a directory that does not exist answers FALSE")
+        TESTKIT.ISFALSE(FILE.EXISTS(nodir), "SAVEIMAGE into a missing directory writes nothing")
+
+        ' value forms of the path, other sizes
+        FORM.NEWIMAGE(pic, 33, 21, C_GREEN)
+        DIM p_var AS STRING = SavePath("v.png")
+        TESTKIT.ISTRUE(FORM.SAVEIMAGE(pic, p_var), "SAVEIMAGE with the path in a variable")
+        TESTKIT.EQARRAY(IMAGE.SIZE(p_var), [33, 21], "after NEWIMAGE 33 x 21 the saved file is 33 x 21")
+        DIM p_expr AS STRING = PATH.JOIN$(tdir, "e" + ".png")
+        saved_files = APPEND(saved_files, p_expr)
+        TESTKIT.ISTRUE(FORM.SAVEIMAGE(pic, PATH.JOIN$(tdir, "e" + ".png")), "SAVEIMAGE with the path from an expression")
+        TESTKIT.EQARRAY(IMAGE.SIZE(p_expr), [33, 21], "the file saved through an expression is 33 x 21")
+        TESTKIT.ISTRUE(FORM.SAVEIMAGE(pic, SavePath("f.bmp")), "SAVEIMAGE with the path from a FUNC answer")
+        DIM paths AS ARRAY = [SavePath("c0.png"), SavePath("c1.jpg")]
+        TESTKIT.ISTRUE(FORM.SAVEIMAGE(pic, paths[1]), "SAVEIMAGE with the path from an array cell")
+        TESTKIT.EQARRAY(IMAGE.SIZE(paths[1]), [33, 21], "the .jpg saved from an array cell is 33 x 21")
+        DIM pm AS MAP = {"out": SavePath("m.png")}
+        TESTKIT.ISTRUE(FORM.SAVEIMAGE(pic, pm{"out"}), "SAVEIMAGE with the path from a map field")
+        TESTKIT.ISTRUE(SaveInside(pic, SavePath("in.png")), "SAVEIMAGE called inside a FUNC")
+        FORM.SET(pic_load, "PICTURE", pm{"out"})
+        TESTKIT.ISTRUE(AllIs(pic_load, 0, 0, 33, 21, C_GREEN), "the .png saved from a map field holds the green picture")
+
+        FORM.NEWIMAGE(pic, 1, 1, C_RED)
+        DIM p_one AS STRING = SavePath("one.png")
+        TESTKIT.ISTRUE(FORM.SAVEIMAGE(pic, p_one), "SAVEIMAGE of a 1 x 1 picture answers TRUE")
+        TESTKIT.EQARRAY(IMAGE.SIZE(p_one), [1, 1], "the saved 1 x 1 picture is 1 x 1")
+        FORM.SET(pic_load, "PICTURE", "")
+    CATCH
+        SectionStopped("SAVEIMAGE", ERRMSG$)
+    ENDTRY
+ENDSUB
+
+' ==========================================================================
+
+DIM setup_ok AS BOOLEAN = FALSE
+TRY
+    MKDIR tdir
+    WritePng(fixture_png, 8, 6)
+    frm = FORM.CREATE("Picture draw test", 520, 380, "PDT")
+    FORM.SET(frm, "X", 0)
+    FORM.SET(frm, "Y", 0)
+    pic = FORM.PICTURE(frm, "picDraw", fixture_png, 10, 10, 240, 160)
+    FORM.SET(pic, "SCALEMODE", "fit")
+    pic2 = FORM.PICTURE(frm, "picTwo", fixture_png, 260, 10, 120, 80)
+    pic_empty = FORM.PICTURE(frm, "picEmpty", "", 260, 100, 60, 40)
+    pic_load = FORM.PICTURE(frm, "picLoad", "", 10, 180, 240, 160)
+    FORM.SHOW(frm)
+    Pump()
+    setup_ok = TRUE
+CATCH
+    TESTKIT.ISTRUE(FALSE, "setup: the form and its PICTURE controls are created (" + ERRMSG$ + ")")
+ENDTRY
+
+IF setup_ok THEN
+    TestFixture()
+    TestNewImage()
+    TestRect()
+    TestLine()
+    TestAlpha()
+    TestEllipse()
+    TestArrow()
+    TestText()
+    TestEmptyPicture()
+    TestPreview()
+    TestPixels()
+    TestSetPixels()
+    TestHistory()
+    TestSaveImage()
+ENDIF
+
+TRY
+    IF frm <> 0 THEN
+        FORM.CLOSE(frm)
+        Pump()
+    ENDIF
+CATCH
+    PRINT "cleanup: "; ERRMSG$
+ENDTRY
+DIM k AS INTEGER
+FOR k = 0 TO LEN(saved_files) - 1
+    TRY
+        IF FILE.EXISTS(saved_files[k]) THEN KILL saved_files[k]
+    CATCH
+        PRINT "cleanup: "; ERRMSG$
+    ENDTRY
+NEXT k
+TRY
+    IF FILE.EXISTS(fixture_png) THEN KILL fixture_png
+    RMDIR tdir
+CATCH
+    PRINT "cleanup: "; ERRMSG$
+ENDTRY
+IF FILE.EXISTS(tdir) THEN PRINT "cleanup: the directory "; tdir; " was left behind"
+
+TESTKIT.REPORT()

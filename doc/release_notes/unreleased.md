@@ -41,6 +41,14 @@ Range: `v1.3.0..HEAD`.
 - **jdPix** (#1120): `jdb/demos/forms/jdpix`, a picture viewer on native
   forms: steps through a folder, fits, zooms at the pointer and pans, turns
   a photo, shows what it gives away and saves a copy without it.
+- **Drawing on a PICTURE** (#1123): `FORM.NEWIMAGE` starts an empty
+  picture, `FORM.DRAW` draws lines through many points, arrows,
+  rectangles, ellipses and text into it, smoothed, with a colour, width,
+  fill, dash and an opacity for the whole shape. `FORM.PREVIEW` shows a
+  shape over the picture without changing it, the rubber band of a drag.
+  `FORM.PIXELS` and `FORM.SETPIXELS` read and write a region as a matrix of
+  `$RRGGBB`, `FORM.HISTORY` keeps undo and redo steps in the control, and
+  `FORM.SAVEIMAGE` writes PNG, JPEG or BMP without metadata.
 - **`APPREG`** (`lib/appreg.jdb`): a program registers itself with Windows
   for some file types, so it shows under Open with and in Default apps,
   and removes itself again, under `HKEY_CURRENT_USER` without
