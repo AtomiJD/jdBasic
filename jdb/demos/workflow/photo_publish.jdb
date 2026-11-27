@@ -1,0 +1,160 @@
+' photo_publish.jdb - photos made ready for a public upload, without a window.
+'
+'   jdbasic photo_publish.jdb [input-dir] [output-dir] [width]
+'
+' For every JPEG and PNG in input-dir the demo shows what the file gives
+' away (a GPS position, names, the camera, the date), cuts it from the
+' middle to 4:3 (landscape) or 3:4 (portrait) as the photo is displayed,
+' scales it to `width` pixels across, and writes it with a copyright line
+' and no other metadata. A last pass reads every result back and checks
+' that no position and no name is left.
+'
+' Without input-dir two sample pictures are drawn into a temporary folder,
+' a landscape and a portrait one, each with an invented artist name in its
+' metadata. Cutting and scaling need Windows; elsewhere the demo writes
+' copies without metadata in the original size.
+
+OPTION "EXPLICIT"
+
+CONST COPYRIGHT$ = "CC BY 4.0"
+
+' A PNG of w x h pixels with a colour gradient, built byte by byte.
+SUB WriteSamplePng(path$, w AS INTEGER, h AS INTEGER)
+    DIM rows$ = ""
+    DIM x AS INTEGER
+    DIM y AS INTEGER
+    FOR y = 0 TO h - 1
+        DIM row$ = CHR$(0)
+        FOR x = 0 TO w - 1
+            row$ = row$ + CHR$(INT(255 * x / w)) + CHR$(INT(255 * y / h)) + CHR$(160)
+        NEXT x
+        rows$ = rows$ + row$
+    NEXT y
+    DIM png$ = CHR$(137) + "PNG" + CHR$(13) + CHR$(10) + CHR$(26) + CHR$(10)
+    png$ = png$ + Chunk$("IHDR", PACK$(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+    png$ = png$ + Chunk$("IDAT", CODEC.DEFLATE$(rows$, 6, "zlib"))
+    png$ = png$ + Chunk$("IEND", "")
+    BINWRITER path$, png$
+ENDSUB
+
+FUNC Chunk$(kind$, body$)
+    RETURN PACK$(">I", LEN(body$)) + kind$ + body$ + PACK$(">I", CODEC.CRC32(kind$ + body$))
+ENDFUNC
+
+' The sample pictures, as JPEG where the pixel functions are there.
+FUNC MakeSamples$(onWindows AS BOOLEAN)
+    DIM samples$ = MKTEMP$("photo_publish")
+    MKDIR samples$
+    DIM shapes = [["landscape", 480, 320], ["portrait", 300, 450]]
+    DIM shape = []
+    FOR EACH shape IN shapes
+        DIM png$ = PATH.JOIN$(samples$, shape[0] + ".png")
+        WriteSamplePng(png$, shape[1], shape[2])
+        DIM pic$ = png$
+        IF onWindows THEN
+            pic$ = PATH.JOIN$(samples$, shape[0] + ".jpg")
+            IF IMAGE.CONVERT(png$, pic$) = 0 THEN KILL png$ ELSE pic$ = png$
+        ENDIF
+        DIM rc = IMAGE.SETMETA(pic$, pic$, {"artist": "Sample Artist", "description": "a " + shape[0] + " sample", "software": "photo_publish demo"})
+    NEXT
+    RETURN samples$
+ENDFUNC
+
+' What a picture gives away, as one line; the position itself is not shown.
+FUNC Exposure$(m)
+    DIM parts = []
+    IF MAP.EXISTS(m, "gps_latitude") THEN parts = APPEND(parts, "GPS position")
+    DIM k$ = ""
+    FOR EACH k$ IN ["artist", "owner", "xp_author", "serial", "lens_serial", "copyright"]
+        IF MAP.EXISTS(m, k$) THEN parts = APPEND(parts, k$)
+    NEXT
+    IF MAP.EXISTS(m, "make") ORELSE MAP.EXISTS(m, "model") THEN parts = APPEND(parts, "camera")
+    IF MAP.EXISTS(m, "datetime_original") ORELSE MAP.EXISTS(m, "datetime") THEN parts = APPEND(parts, "date")
+    IF MAP.EXISTS(m, "text") THEN parts = APPEND(parts, "PNG text")
+    IF MAP.EXISTS(m, "xmp") THEN parts = APPEND(parts, "XMP")
+    IF LEN(parts) = 0 THEN RETURN "nothing"
+    RETURN JOIN(parts, ", ")
+ENDFUNC
+
+' The largest 4:3 or 3:4 rectangle in the middle of a w x h picture, as
+' [x, y, width, height].
+FUNC CenterCut(w AS INTEGER, h AS INTEGER)
+    DIM across AS INTEGER = 4
+    DIM down AS INTEGER = 3
+    IF h > w THEN
+        across = 3
+        down = 4
+    ENDIF
+    DIM cw AS INTEGER = w
+    DIM ch AS INTEGER = INT(w * down / across)
+    IF ch > h THEN
+        ch = h
+        cw = INT(h * across / down)
+    ENDIF
+    RETURN [INT((w - cw) / 2), INT((h - ch) / 2), cw, ch]
+ENDFUNC
+
+DIM argv = OS.ARGS()
+DIM onWindows AS BOOLEAN = OS.GETOS$() = "WINDOWS"
+DIM inDir$ = ""
+DIM outDir$ = ""
+DIM outWidth AS INTEGER = 1200
+IF LEN(argv) > 1 THEN inDir$ = argv[1]
+IF LEN(argv) > 2 THEN outDir$ = argv[2]
+IF LEN(argv) > 3 THEN outWidth = CINT(TONUM(argv[3]))
+IF inDir$ = "" THEN
+    inDir$ = MakeSamples$(onWindows)
+    outWidth = 400
+    PRINT "No input folder given; sample pictures in " + inDir$
+ENDIF
+IF outDir$ = "" THEN outDir$ = PATH.JOIN$(inDir$, "public")
+IF NOT FILE.ISDIR(outDir$) THEN MKDIR outDir$
+
+DIM names = FILTER(LAMBDA f$ -> LCASE$(PATH.EXT$(f$)) = ".jpg" ORELSE LCASE$(PATH.EXT$(f$)) = ".jpeg" ORELSE LCASE$(PATH.EXT$(f$)) = ".png", FILE.LIST(PATH.JOIN$(inDir$, "*")))
+IF LEN(names) = 0 THEN
+    PRINT "No JPEG or PNG in " + inDir$
+    END 1
+ENDIF
+
+PRINT ""
+PRINT RPAD$("picture", 22); RPAD$("size", 12); "gives away"
+DIM name$ = ""
+DIM written = []
+FOR EACH name$ IN names
+    DIM src$ = PATH.JOIN$(inDir$, name$)
+    DIM wh = IMAGE.SIZE(src$)
+    PRINT RPAD$(name$, 22); RPAD$(STR$(wh[0]) + "x" + STR$(wh[1]), 12); Exposure$(IMAGE.META(src$))
+
+    DIM base$ = LEFT$(name$, LEN(name$) - LEN(PATH.EXT$(name$)))
+    DIM rc AS INTEGER = 0
+    DIM dst$ = ""
+    IF onWindows THEN
+        DIM cut = CenterCut(wh[0], wh[1])
+        DIM ratio$ = IIF(cut[2] >= cut[3], "4x3", "3x4")
+        dst$ = PATH.JOIN$(outDir$, base$ + "-" + ratio$ + ".jpg")
+        rc = IMAGE.CROP(src$, dst$, cut[0], cut[1], cut[2], cut[3])
+        IF rc = 0 THEN rc = IMAGE.RESIZE(dst$, dst$, outWidth, 0)
+    ELSE
+        dst$ = PATH.JOIN$(outDir$, name$)
+        rc = IMAGE.STRIP(src$, dst$)
+    ENDIF
+    IF rc = 0 THEN rc = IMAGE.SETMETA(dst$, dst$, {"copyright": COPYRIGHT$})
+    IF rc <> 0 THEN
+        PRINT "  failed with "; rc
+    ELSE
+        written = APPEND(written, dst$)
+    ENDIF
+NEXT
+
+PRINT ""
+PRINT "Written to " + outDir$ + ":"
+DIM clean AS BOOLEAN = TRUE
+DIM out$ = ""
+FOR EACH out$ IN written
+    DIM m = IMAGE.META(out$)
+    DIM leaks = FILTER(LAMBDA k$ -> MAP.EXISTS(m, k$), ["gps_latitude", "artist", "owner", "xp_author", "serial", "lens_serial", "xmp"])
+    DIM owh = IMAGE.SIZE(out$)
+    PRINT "  "; RPAD$(PATH.BASENAME$(out$), 26); RPAD$(STR$(owh[0]) + "x" + STR$(owh[1]), 12); "gives away "; Exposure$(m)
+    IF LEN(leaks) > 0 THEN clean = FALSE
+NEXT
+PRINT IIF(clean, "No position and no name left in any of them.", "Some files still carry personal metadata.")

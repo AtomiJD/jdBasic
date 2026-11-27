@@ -1,0 +1,41 @@
+' The width and height IMAGE.SIZE answers reach a FUNC parameter declared
+' AS INTEGER as the numbers they are, compiled as well as interpreted.
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Check(ok AS BOOLEAN, label$)
+    IF ok THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: "; label$
+    ENDIF
+ENDSUB
+
+FUNC Chunk$(kind$, body$)
+    RETURN PACK$(">I", LEN(body$)) + kind$ + body$ + PACK$(">I", CODEC.CRC32(kind$ + body$))
+ENDFUNC
+
+FUNC Area(w AS INTEGER, h AS INTEGER) AS INTEGER
+    RETURN w * h
+ENDFUNC
+
+DIM dir$ = MKTEMP$("imgsize")
+MKDIR dir$
+DIM png$ = PATH.JOIN$(dir$, "p.png")
+DIM sig$ = CHR$(137) + "PNG" + CHR$(13) + CHR$(10) + CHR$(26) + CHR$(10)
+BINWRITER png$, sig$ + Chunk$("IHDR", PACK$(">IIBBBBB", 3024, 4032, 8, 2, 0, 0, 0)) + Chunk$("IEND", "")
+
+DIM wh = IMAGE.SIZE(png$)
+Check(wh[0] = 3024 ANDALSO wh[1] = 4032, "IMAGE.SIZE reads 3024 x 4032 from the header")
+Check(Area(wh[0], wh[1]) = 12192768, "the cells reach an AS INTEGER parameter as numbers")
+DIM w AS INTEGER = wh[0]
+Check(w * 4 / 3 = 4032, "a cell held in an INTEGER computes the 3:4 height")
+
+KILL png$
+RMDIR dir$
+PRINT "RESULTS: "; passed; " passed, "; failed; " failed"
+IF failed > 0 THEN END 1

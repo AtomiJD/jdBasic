@@ -485,7 +485,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"IMAGE.META", BuiltinRet::Handle, BF_NO_VEC},
     {"IMAGE.RESIZE", BuiltinRet::I64, BF_NO_VEC},
     {"IMAGE.SETMETA", BuiltinRet::I64, BF_NO_VEC},
-    {"IMAGE.SIZE", BuiltinRet::Handle, BF_NO_VEC},
+    {"IMAGE.SIZE", BuiltinRet::Arr, BF_NO_VEC},
     {"IMAGE.STRIP", BuiltinRet::I64, BF_NO_VEC},
     {"INDEXOF", BuiltinRet::I64, BF_NO_VEC | BF_READS_ARRS},
     {"INKEY$", BuiltinRet::Str, BF_NO_VEC},

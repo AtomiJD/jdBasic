@@ -24,7 +24,9 @@ Range: `v1.3.0..HEAD`.
   EXIF, GPS position, XMP and PNG text of a JPEG or PNG on every platform,
   `IMAGE.STRIP` removes all of it or only the position without touching the
   image, and `IMAGE.SETMETA` sets or removes the artist, copyright,
-  description, software and date.
+  description, software and date. `jdb/demos/workflow/photo_publish.jdb`
+  shows what a folder of photos gives away and writes them cut to 4:3 or
+  3:4, scaled and without personal metadata.
 - **`tools/hooks/check_images.ps1`** (#1115): an agent commit that takes an
   image with a GPS position, a photographer or owner name, a camera serial
   or a private term in its metadata is blocked; an untracked image goes into
