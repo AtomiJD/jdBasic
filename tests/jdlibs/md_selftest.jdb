@@ -62,6 +62,9 @@ DIM want$ = "<table>" + NL$ + "<thead>" + NL$ + "<tr>" + NL$ + "<th>a</th>" + NL
 TESTKIT.EQ(MD.RENDER$(t$), want$, "a table with a right aligned column")
 TESTKIT.EQ(MD.RENDER$("a | b" + NL$ + ":-:|-"), "<table>" + NL$ + "<thead>" + NL$ + "<tr>" + NL$ + "<th style=" + Q$ + "text-align:center" + Q$ + ">a</th>" + NL$ + "<th>b</th>" + NL$ + "</tr>" + NL$ + "</thead>" + NL$ + "</table>", "a header only table without outer pipes")
 TESTKIT.EQ(MD.RENDER$("| a |" + NL$ + "|---|" + NL$ + "| x " + CHR$(92) + "| y |"), "<table>" + NL$ + "<thead>" + NL$ + "<tr>" + NL$ + "<th>a</th>" + NL$ + "</tr>" + NL$ + "</thead>" + NL$ + "<tbody>" + NL$ + "<tr>" + NL$ + "<td>x | y</td>" + NL$ + "</tr>" + NL$ + "</tbody>" + NL$ + "</table>", "an escaped pipe inside a cell")
+DIM item_table$ = "<table>" + NL$ + "<thead>" + NL$ + "<tr>" + NL$ + "<th>x</th>" + NL$ + "</tr>" + NL$ + "</thead>" + NL$ + "<tbody>" + NL$ + "<tr>" + NL$ + "<td>1</td>" + NL$ + "</tr>" + NL$ + "</tbody>" + NL$ + "</table>"
+TESTKIT.EQ(MD.RENDER$("1. one:" + NL$ + NL$ + "   | x |" + NL$ + "   |---|" + NL$ + "   | 1 |" + NL$ + NL$ + "2. two"), "<ol>" + NL$ + "<li>one:" + NL$ + item_table$ + "</li>" + NL$ + "<li>two</li>" + NL$ + "</ol>", "a table indented under a list item belongs to the item")
+TESTKIT.EQ(MD.RENDER$("- one" + NL$ + "  | x |" + NL$ + "  |---|" + NL$ + "  | 1 |"), "<ul>" + NL$ + "<li>one" + NL$ + item_table$ + "</li>" + NL$ + "</ul>", "a table right under an item's text")
 TESTKIT.EQ(MD.RENDER$("| a | b"), "<p>| a | b</p>", "a pipe line without a delimiter row is text")
 
 TESTKIT.SUITE("raw")

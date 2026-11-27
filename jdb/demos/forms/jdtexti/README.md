@@ -89,11 +89,10 @@ document on the right. Both panes are editable and kept in step:
   the source pane the source prints as plain text.
 - Copy and Cut in the rendered view put the selection on the clipboard as
   it prints, formatted and drawn light, tables fitted to the page width, so
-  it pastes into Word or Outlook as it is shown. The plain text that goes
-  with it is the Markdown of every block the selection touches (inside one
-  block, the text as shown): a program that reads pasted Markdown, as Word
-  does, rebuilds the headings, lists and tables from it, and a plain editor
-  gets the source.
+  it pastes into Word or Outlook as it is shown. Next to it go the
+  Markdown of every block the selection touches as HTML, with ruled
+  tables, which Word takes on a plain Ctrl+V, and the text as shown for a
+  plain editor. A selection inside one paragraph goes without HTML.
 - A right-click in either pane opens Undo, Redo, Cut, Copy, Paste, Delete
   and Select All for that pane.
 - The bar between the panes can be dragged; the panes follow when the

@@ -1,5 +1,5 @@
-' CLIPBOARD.SET text$, [rtf$]: the text reads back with CLIPBOARD.GET$
-' whether or not RTF goes with it. The clipboard text found at the start
+' CLIPBOARD.SET text$, [rtf$], [html$]: the text reads back with CLIPBOARD.GET$
+' whether or not RTF and HTML go with it. The clipboard text found at the start
 ' is put back at the end.
 DIM N_PASS = 0
 DIM N_FAIL = 0
@@ -27,6 +27,9 @@ Check(CLIPBOARD.GET$() = "plain ä", "text alone reads back")
 DIM rtf$ = "{\rtf1\ansi{\fonttbl{\f0 Segoe UI;}}\f0 \b bold\b0  text\par}"
 CLIPBOARD.SET "# Heading" + CHR$(13) + CHR$(10) + "**bold** text", rtf$
 Check(CLIPBOARD.GET$() = "# Heading" + CHR$(13) + CHR$(10) + "**bold** text", "the text reads back when RTF goes with it")
+
+CLIPBOARD.SET "with html", rtf$, "<p><b>bold</b> text</p>"
+Check(CLIPBOARD.GET$() = "with html", "the text reads back when RTF and HTML go with it")
 
 CLIPBOARD.SET "after", ""
 Check(CLIPBOARD.GET$() = "after", "an empty RTF leaves the text")

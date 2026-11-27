@@ -11,9 +11,11 @@ Range: `v1.3.0..HEAD`.
   narrowed to fit, its wide columns wrapping inside the cell. jdTexti
   prints and copies the rendered view that way, drawn light also in dark
   mode, and has a right-click menu in both panes. `CLIPBOARD.SET text$,
-  [rtf$]` puts formatted text on the clipboard next to the plain text;
-  jdTexti gives the Markdown as the plain text, so Word, which reads pasted
-  Markdown, no longer turns a copied document into one numbered list.
+  [rtf$], [html$]` puts formatted versions next to the plain text, the
+  richest first; jdTexti copies the view as HTML, RTF and text, so a plain
+  Ctrl+V in Word keeps headings, lists and ruled tables where Word took the
+  text before. `MD.RENDER$` renders a table indented under a list item
+  inside that item.
 - **Images without a window** (#1109, #1114): `IMAGE.SIZE` reads the width
   and height of a JPEG, PNG, GIF or BMP from its header, `IMAGE.CROP` and
   `IMAGE.RESIZE` (Windows) cut and scale a photo. All of them, and

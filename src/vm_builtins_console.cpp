@@ -314,33 +314,49 @@ void VM::register_console_builtins() {
     });
 
 #ifndef JDB_LEAN
-    // CLIPBOARD.SET text$, [rtf$]: with rtf$ the clipboard holds both, and a
-    // program that reads formatted text takes the RTF
-    register_native("CLIPBOARD.SET", 1, 2, [](const std::vector<Value>& args) -> Value {
+    // CLIPBOARD.SET text$, [rtf$], [html$]: the richer formats go first, as a
+    // program reading the clipboard takes the first one it understands.
+    // html$ is a fragment; the CF_HTML header with its byte offsets is built here.
+    register_native("CLIPBOARD.SET", 1, 3, [](const std::vector<Value>& args) -> Value {
 #if defined(_WIN32)
+        auto put_bytes = [](UINT fmt, const void* data, size_t n) {
+            if (!fmt) return;
+            HGLOBAL h = GlobalAlloc(GMEM_MOVEABLE, n);
+            if (!h) return;
+            void* p = GlobalLock(h);
+            if (!p) { GlobalFree(h); return; }
+            memcpy(p, data, n);
+            GlobalUnlock(h);
+            if (!SetClipboardData(fmt, h)) GlobalFree(h);
+        };
         std::string text = args[0].to_string();
-        int wn = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), (int)text.size(), nullptr, 0);
+        std::string rtf = args.size() > 1 ? args[1].to_string() : "";
+        std::string html = args.size() > 2 ? args[2].to_string() : "";
         if (OpenClipboard(NULL)) {
             EmptyClipboard();
-            HGLOBAL hg = GlobalAlloc(GMEM_MOVEABLE, (wn + 1) * sizeof(wchar_t));
-            if (hg) {
-                wchar_t* w = static_cast<wchar_t*>(GlobalLock(hg));
-                MultiByteToWideChar(CP_UTF8, 0, text.c_str(), (int)text.size(), w, wn);
-                w[wn] = 0;
-                GlobalUnlock(hg);
-                if (!SetClipboardData(CF_UNICODETEXT, hg)) GlobalFree(hg);
+            if (!html.empty()) {
+                const std::string pre = "<html><body>\r\n<!--StartFragment-->";
+                const std::string post = "<!--EndFragment-->\r\n</body></html>";
+                auto header = [](size_t sh, size_t eh, size_t sf, size_t ef) {
+                    char buf[160];
+                    snprintf(buf, sizeof(buf),
+                             "Version:0.9\r\nStartHTML:%010zu\r\nEndHTML:%010zu\r\n"
+                             "StartFragment:%010zu\r\nEndFragment:%010zu\r\n", sh, eh, sf, ef);
+                    return std::string(buf);
+                };
+                size_t sh = header(0, 0, 0, 0).size();
+                size_t sf = sh + pre.size();
+                size_t ef = sf + html.size();
+                size_t eh = ef + post.size();
+                std::string doc = header(sh, eh, sf, ef) + pre + html + post;
+                put_bytes(RegisterClipboardFormatA("HTML Format"), doc.c_str(), doc.size() + 1);
             }
-            if (args.size() > 1) {
-                std::string rtf = args[1].to_string();
-                UINT cf_rtf = RegisterClipboardFormatA("Rich Text Format");
-                HGLOBAL hr = cf_rtf ? GlobalAlloc(GMEM_MOVEABLE, rtf.size() + 1) : nullptr;
-                if (hr) {
-                    char* r = static_cast<char*>(GlobalLock(hr));
-                    memcpy(r, rtf.c_str(), rtf.size() + 1);
-                    GlobalUnlock(hr);
-                    if (!SetClipboardData(cf_rtf, hr)) GlobalFree(hr);
-                }
-            }
+            if (!rtf.empty())
+                put_bytes(RegisterClipboardFormatA("Rich Text Format"), rtf.c_str(), rtf.size() + 1);
+            int wn = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), (int)text.size(), nullptr, 0);
+            std::wstring w(wn + 1, L'\0');
+            MultiByteToWideChar(CP_UTF8, 0, text.c_str(), (int)text.size(), &w[0], wn);
+            put_bytes(CF_UNICODETEXT, w.c_str(), (wn + 1) * sizeof(wchar_t));
             CloseClipboard();
         }
 #endif

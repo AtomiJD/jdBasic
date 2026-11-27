@@ -12,7 +12,7 @@
 ' spans, links, images, autolinks, backslash escapes. Text is HTML
 ' escaped; a raw HTML block or an inline tag is escaped too unless the
 ' "raw" option is set.
-' version: 1.0.0
+' version: 1.1.0
 
 EXPORT MODULE MD
 
@@ -93,6 +93,12 @@ FUNC StartsBlock(row$)
     IF STARTSWITH(LTRIM$(row$), ">") THEN RETURN TRUE
     IF TYPEOF(ListItem(row$)) <> "NONE" THEN RETURN TRUE
     RETURN FALSE
+ENDFUNC
+
+' A table header row at lines[i]: a row with a delimiter row under it.
+FUNC TableAt(lines, i)
+    IF i + 1 >= LEN(lines) THEN RETURN FALSE
+    RETURN IsTableRow(lines[i]) ANDALSO IsDelimiterRow(lines[i + 1])
 ENDFUNC
 
 ' Renders a run of lines; the recursion point for blockquotes and items.
@@ -302,7 +308,7 @@ FUNC List$(block, raw)
             tail = TAKE(LEN(tail) - 1, tail)
         LOOP
         IF LEN(tail) > 0 THEN
-            IF TYPEOF(ListItem(tail[0])) <> "NONE" ORELSE StartsBlock(tail[0]) THEN
+            IF TYPEOF(ListItem(tail[0])) <> "NONE" ORELSE StartsBlock(tail[0]) ORELSE TableAt(tail, 0) THEN
                 inner$ = inner$ + NL$ + Blocks$(tail, raw)
             ELSE
                 ' continuation lines stay in the item's own text
@@ -312,7 +318,7 @@ FUNC List$(block, raw)
                 DIM more = []
                 DIM q = 0
                 FOR q = 0 TO LEN(head_lines) - 1
-                    IF LEN(more) > 0 ORELSE IsBlank(head_lines[q]) ORELSE (q > 0 ANDALSO StartsBlock(head_lines[q])) THEN
+                    IF LEN(more) > 0 ORELSE IsBlank(head_lines[q]) ORELSE (q > 0 ANDALSO (StartsBlock(head_lines[q]) ORELSE TableAt(head_lines, q))) THEN
                         PUSH(more, head_lines[q])
                     ELSE
                         PUSH(own, head_lines[q])

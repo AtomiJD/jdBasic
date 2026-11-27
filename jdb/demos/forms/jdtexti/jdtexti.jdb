@@ -14,6 +14,7 @@ OPTION "EXPLICIT"
 IMPORT MDSYNC
 IMPORT MDRICH
 IMPORT TEXTX
+IMPORT MD
 
 DIM APP_NAME AS STRING = "jdTexti"
 DIM CR AS STRING = CHR$(13)
@@ -1492,26 +1493,44 @@ SUB MNUREDO_CLICK(e)
     ENDIF
 ENDSUB
 
-' The plain text that goes with a selection in the view: inside one block
-' the text as shown, across blocks the Markdown of every block it touches,
-' so a program that reads Markdown from the clipboard rebuilds the blocks.
-FUNC VIEW_PLAIN$(sel_from AS INTEGER, sel_len AS INTEGER)
-    DIM k_first AS INTEGER = CINT(MDSYNC.BLOCKAT(md_doc, sel_from))
-    DIM k_last AS INTEGER = CINT(MDSYNC.BLOCKAT(md_doc, sel_from + sel_len - 1))
-    IF k_first = k_last THEN RETURN FORM.GET(mdv, "SELTEXT")
-    DIM src_from AS INTEGER = CINT(MDSYNC.SOURCEPOS(md_doc, k_first))
-    DIM src_to AS INTEGER = CINT(MDSYNC.SOURCEPOS(md_doc, k_last + 1))
-    DIM piece AS STRING = MID$(MDSYNC.SOURCE$(md_doc), src_from, src_to - src_from)
-    DO WHILE RIGHT$(piece, 1) = LF ORELSE RIGHT$(piece, 1) = CR
-        piece = LEFT$(piece, LEN(piece) - 1)
-    LOOP
-    RETURN piece
+' The selection in the view as plain text: table cells apart by a tab, a
+' line per paragraph and row, without RichEdit's row and cell marks.
+FUNC VIEW_PLAIN$()
+    DIM s AS STRING = REPLACE$(FORM.GET(mdv, "SELTEXT"), CRLF, CR)
+    s = REPLACE$(REPLACE$(s, CHR$(65529) + CR, ""), CHR$(65531), "")
+    s = REPLACE$(REPLACE$(s, CHR$(65529), ""), CHR$(7), CHR$(9))
+    RETURN REPLACE$(REPLACE$(s, CHR$(11), CR), CR, CRLF)
 ENDFUNC
 
-' A selection in the rendered view goes to the clipboard as it would print,
-' drawn light with tables inside the page width, and as plain text from
-' VIEW_PLAIN$. The paper copy holds the same text as the view, so the
-' selection carries over by offset.
+' The Markdown of every block a view selection touches as an HTML fragment,
+' tables ruled and pictures addressed by their full path; "" when the
+' selection lies inside one block, whose Markdown would be more than it.
+FUNC VIEW_HTML$(sel_from AS INTEGER, sel_len AS INTEGER)
+    DIM k_first AS INTEGER = CINT(MDSYNC.BLOCKAT(md_doc, sel_from))
+    DIM k_last AS INTEGER = CINT(MDSYNC.BLOCKAT(md_doc, sel_from + sel_len - 1))
+    IF k_first = k_last ANDALSO sel_len < LEN(FORM.GET(mdv, "TEXT")) THEN
+        DIM blk_from AS INTEGER = CINT(MDSYNC.VIEWPOS(md_doc, k_first))
+        DIM blk_to AS INTEGER = CINT(MDSYNC.VIEWPOS(md_doc, k_first + 1))
+        IF sel_from > blk_from ORELSE sel_from + sel_len < blk_to - 1 THEN RETURN ""
+    ENDIF
+    DIM src_from AS INTEGER = CINT(MDSYNC.SOURCEPOS(md_doc, k_first))
+    DIM src_to AS INTEGER = CINT(MDSYNC.SOURCEPOS(md_doc, k_last + 1))
+    DIM h AS STRING = MD.RENDER$(MID$(MDSYNC.SOURCE$(md_doc), src_from, src_to - src_from))
+    DIM cell_css AS STRING = "border:1px solid #888;padding:3px 6px;"
+    h = REPLACE$(h, "<table>", "<table style=" + CHR$(34) + "border-collapse:collapse" + CHR$(34) + ">")
+    h = REPLACE$(REPLACE$(h, "<th style=" + CHR$(34), "<th style=" + CHR$(34) + cell_css), "<td style=" + CHR$(34), "<td style=" + CHR$(34) + cell_css)
+    h = REPLACE$(REPLACE$(h, "<th>", "<th style=" + CHR$(34) + cell_css + CHR$(34) + ">"), "<td>", "<td style=" + CHR$(34) + cell_css + CHR$(34) + ">")
+    h = REPLACE$(h, "<code>", "<code style=" + CHR$(34) + "background:#F0F0F0" + CHR$(34) + ">")
+    DIM base_url AS STRING = "file:///" + REPLACE$(REPLACE$(PATH.ABS$(MD_BASE$()), "\", "/"), " ", "%20") + "/"
+    h = REGEX.REPLACE$("src=" + CHR$(34) + "(?![a-zA-Z][a-zA-Z0-9+.-]*:|/)", h, "src=" + CHR$(34) + base_url)
+    RETURN "<div style=" + CHR$(34) + "font-family:'Segoe UI',sans-serif;font-size:11pt" + CHR$(34) + ">" + h + "</div>"
+ENDFUNC
+
+' A selection in the rendered view goes to the clipboard three ways: as
+' HTML, which Word takes before the plain text, as the RTF it would print
+' (drawn light, tables inside the page width) and as plain text. The paper
+' copy holds the same text as the view, so the selection carries over by
+' offset.
 SUB COPY_SELECTION()
     DIM ed_now AS DOUBLE = ED()
     IF ed_now <> mdv THEN
@@ -1528,7 +1547,7 @@ SUB COPY_SELECTION()
     ENDIF
     FORM.SET(mdprint, "SELSTART", sel_from)
     FORM.SET(mdprint, "SELLENGTH", sel_len)
-    CLIPBOARD.SET VIEW_PLAIN$(sel_from, sel_len), FORM.GET(mdprint, "SELRTF")
+    CLIPBOARD.SET VIEW_PLAIN$(), FORM.GET(mdprint, "SELRTF"), VIEW_HTML$(sel_from, sel_len)
 ENDSUB
 
 SUB MNUCUT_CLICK(e)
