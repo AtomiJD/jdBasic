@@ -33,7 +33,7 @@ CORE="src/lexer.cpp src/parser.cpp src/compiler.cpp src/vm.cpp src/vm_builtins_m
       src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp \
       src/audio_fx.cpp src/audio_io.cpp src/midi.cpp \
       src/gui.cpp src/ai.cpp src/llm.cpp src/channels.cpp src/file_streams.cpp \
-      src/numerics.cpp src/screencap.cpp src/pybridge.cpp src/wasm_net.cpp"
+      src/numerics.cpp src/screencap.cpp src/image_meta.cpp src/pybridge.cpp src/wasm_net.cpp"
 GFX="src/graphics.cpp src/sprites.cpp src/tiledmap.cpp"
 IMGUI="libs/imgui/imgui.cpp libs/imgui/imgui_draw.cpp \
        libs/imgui/imgui_tables.cpp libs/imgui/imgui_widgets.cpp \

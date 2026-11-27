@@ -1,0 +1,951 @@
+' IMAGE.META, IMAGE.SIZE, IMAGE.STRIP and IMAGE.SETMETA on JPEG and PNG
+' files built byte for byte at run time, and on Windows IMAGE.CONVERT,
+' IMAGE.CROP and IMAGE.RESIZE on a decodable PNG built the same way.
+' Every name and coordinate in the fixtures is invented.
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+DIM made AS ARRAY = []
+DIM base$ = MKTEMP$("img")
+DIM MAKER$ = "MKNOTE-SECRET-77-PADDING"
+DIM ICCSEG$ = ""
+DIM IDAT$ = ""
+DIM PNGSIG$ = CHR$(137) + "PNG" + CHR$(13) + CHR$(10) + CHR$(26) + CHR$(10)
+DIM LAT_LE$ = PACK$("<iiiiii", 47, 1, 30, 1, 0, 1)
+DIM LAT_BE$ = PACK$(">iiiiii", 47, 1, 30, 1, 0, 1)
+
+SUB Check(label$, ok)
+    IF ok THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: " + label$
+    ENDIF
+ENDSUB
+
+FUNC Near(a, b)
+    RETURN ABS(a - b) < 0.000001
+ENDFUNC
+
+FUNC Has(m AS MAP, key$)
+    RETURN MAP.EXISTS(m, key$)
+ENDFUNC
+
+FUNC Txt$(m AS MAP, key$)
+    IF MAP.EXISTS(m, key$) THEN RETURN m{key$}
+    RETURN "<absent>"
+ENDFUNC
+
+FUNC Num(m AS MAP, key$)
+    IF MAP.EXISTS(m, key$) THEN RETURN m{key$}
+    RETURN -99999
+ENDFUNC
+
+FUNC TextMap(m AS MAP)
+    DIM emptyMap AS MAP
+    IF MAP.EXISTS(m, "text") THEN RETURN m{"text"}
+    RETURN emptyMap
+ENDFUNC
+
+FUNC HasGps(m AS MAP)
+    RETURN MAP.EXISTS(m, "gps_latitude") ORELSE MAP.EXISTS(m, "gps_longitude") ORELSE MAP.EXISTS(m, "gps_altitude")
+ENDFUNC
+
+FUNC P$(suffix$)
+    DIM path$ = base$ + suffix$
+    made = APPEND(made, path$)
+    RETURN path$
+ENDFUNC
+
+SUB CopyFile(src$, dst$)
+    BINWRITER dst$, BINREADER$(src$)
+ENDSUB
+
+FUNC SameSize(wh, w AS INTEGER, h AS INTEGER)
+    IF LEN(wh) <> 2 THEN RETURN FALSE
+    RETURN wh[0] = w ANDALSO wh[1] = h
+ENDFUNC
+
+' ---------------------------------------------------------------- TIFF / EXIF
+
+' An IFD entry is kept as its 8-byte head (tag, type, count) followed by the
+' raw value bytes; Ifd$ decides whether the value sits inline or after the IFD.
+FUNC Tag$(tag AS INTEGER, kind AS INTEGER, cnt AS INTEGER, v$)
+    RETURN PACK$("<ssi", tag, kind, cnt) + v$
+ENDFUNC
+
+FUNC TagAscii$(tag AS INTEGER, s$)
+    RETURN Tag$(tag, 2, LEN(s$) + 1, s$ + CHR$(0))
+ENDFUNC
+
+FUNC TagShort$(tag AS INTEGER, v AS INTEGER)
+    RETURN Tag$(tag, 3, 1, PACK$("<s", v))
+ENDFUNC
+
+FUNC TagLong$(tag AS INTEGER, v AS INTEGER)
+    RETURN Tag$(tag, 4, 1, PACK$("<i", v))
+ENDFUNC
+
+FUNC TagRats$(tag AS INTEGER, nums AS ARRAY)
+    DIM data$ = ""
+    DIM k AS INTEGER
+    FOR k = 0 TO LEN(nums) \ 2 - 1
+        data$ = data$ + PACK$("<ii", nums[2 * k], nums[2 * k + 1])
+    NEXT
+    RETURN Tag$(tag, 5, LEN(nums) \ 2, data$)
+ENDFUNC
+
+FUNC Ifd$(entries AS ARRAY, start AS INTEGER)
+    DIM n AS INTEGER = LEN(entries)
+    DIM dataOff AS INTEGER = start + 2 + 12 * n + 4
+    DIM head$ = PACK$("<s", n)
+    DIM extra$ = ""
+    DIM ent$ = ""
+    DIM v$ = ""
+    DIM k AS INTEGER
+    FOR k = 0 TO n - 1
+        ent$ = entries[k]
+        v$ = MID$(ent$, 8, LEN(ent$) - 8)
+        IF LEN(v$) <= 4 THEN
+            head$ = head$ + LEFT$(ent$, 8) + LEFT$(v$ + REPEAT$(CHR$(0), 4), 4)
+        ELSE
+            head$ = head$ + LEFT$(ent$, 8) + PACK$("<i", dataOff + LEN(extra$))
+            extra$ = extra$ + v$
+            IF LEN(extra$) MOD 2 = 1 THEN extra$ = extra$ + CHR$(0)
+        ENDIF
+    NEXT
+    RETURN head$ + PACK$("<i", 0) + extra$
+ENDFUNC
+
+FUNC Ifd0List(own AS ARRAY, exifAt AS INTEGER, gpsAt AS INTEGER)
+    DIM merged AS ARRAY = []
+    DIM k AS INTEGER
+    FOR k = 0 TO LEN(own) - 1
+        merged = APPEND(merged, own[k])
+    NEXT
+    IF exifAt >= 0 THEN merged = APPEND(merged, TagLong$(34665, exifAt))
+    IF gpsAt >= 0 THEN merged = APPEND(merged, TagLong$(34853, gpsAt))
+    RETURN merged
+ENDFUNC
+
+FUNC GpsEntries(kind AS INTEGER)
+    DIM g AS ARRAY = []
+    g = APPEND(g, Tag$(0, 1, 4, CHR$(2) + CHR$(3) + CHR$(0) + CHR$(0)))
+    IF kind = 1 THEN
+        g = APPEND(g, TagAscii$(1, "N"))
+        g = APPEND(g, TagRats$(2, [47, 1, 30, 1, 0, 1]))
+        g = APPEND(g, TagAscii$(3, "W"))
+        g = APPEND(g, TagRats$(4, [122, 1, 15, 1, 0, 1]))
+        g = APPEND(g, Tag$(5, 1, 1, CHR$(0)))
+        g = APPEND(g, TagRats$(6, [247, 2]))
+    ELSE
+        g = APPEND(g, TagAscii$(1, "S"))
+        g = APPEND(g, TagRats$(2, [33, 1, 4500, 100, 0, 1]))
+        g = APPEND(g, TagAscii$(3, "E"))
+        g = APPEND(g, TagRats$(4, [151, 1, 7, 1, 30, 1]))
+        g = APPEND(g, Tag$(5, 1, 1, CHR$(0)))
+        g = APPEND(g, TagRats$(6, [10, 1]))
+    ENDIF
+    RETURN g
+ENDFUNC
+
+' TIFF body (little endian) for the options map of MakeJpeg$; "" when the
+' options name nothing that lives in the EXIF.
+FUNC Tiff$(o AS MAP)
+    DIM own AS ARRAY = []
+    DIM ex AS ARRAY = []
+    DIM orient AS INTEGER = o{"orient"}
+    DIM artist$ = o{"artist"}
+    DIM copyright$ = o{"copyright"}
+    DIM serial$ = o{"serial"}
+    DIM gpsKind AS INTEGER = o{"gps"}
+    DIM maker AS INTEGER = o{"maker"}
+    DIM badGps AS INTEGER = o{"badgps"}
+    IF orient > 0 THEN own = APPEND(own, TagShort$(274, orient))
+    IF artist$ <> "" THEN own = APPEND(own, TagAscii$(315, artist$))
+    IF copyright$ <> "" THEN own = APPEND(own, TagAscii$(33432, copyright$))
+    IF maker = 1 THEN ex = APPEND(ex, Tag$(37500, 7, LEN(MAKER$), MAKER$))
+    IF serial$ <> "" THEN ex = APPEND(ex, TagAscii$(42033, serial$))
+    DIM wantExif AS INTEGER = IIF(LEN(ex) > 0, 0, -1)
+    DIM wantGps AS INTEGER = IIF(gpsKind > 0 ORELSE badGps = 1, 0, -1)
+    IF LEN(own) = 0 ANDALSO wantExif < 0 ANDALSO wantGps < 0 THEN RETURN ""
+    DIM len0 AS INTEGER = LEN(Ifd$(Ifd0List(own, wantExif, wantGps), 8))
+    DIM exifAt AS INTEGER = 8 + len0
+    DIM exif$ = ""
+    IF wantExif = 0 THEN exif$ = Ifd$(ex, exifAt)
+    DIM gpsAt AS INTEGER = exifAt + LEN(exif$)
+    DIM gps$ = ""
+    IF gpsKind > 0 THEN gps$ = Ifd$(GpsEntries(gpsKind), gpsAt)
+    IF badGps = 1 THEN gpsAt = 60000
+    IF wantExif < 0 THEN exifAt = -1
+    IF wantGps < 0 THEN gpsAt = -1
+    DIM ifd0$ = Ifd$(Ifd0List(own, exifAt, gpsAt), 8)
+    RETURN "II" + PACK$("<si", 42, 8) + ifd0$ + exif$ + gps$
+ENDFUNC
+
+' ---------------------------------------------------------------- JPEG
+
+FUNC Seg$(marker AS INTEGER, payload$)
+    RETURN CHR$(255) + CHR$(marker) + PACK$(">s", LEN(payload$) + 2) + payload$
+ENDFUNC
+
+' SOF0 onward: the bytes every metadata function must copy unchanged.
+FUNC JpegTail$(w AS INTEGER, h AS INTEGER)
+    DIM sof$ = CHR$(8) + PACK$(">ss", h, w) + CHR$(3) + CHR$(1) + CHR$(17) + CHR$(0) + CHR$(2) + CHR$(17) + CHR$(1) + CHR$(3) + CHR$(17) + CHR$(1)
+    DIM sos$ = CHR$(3) + CHR$(1) + CHR$(0) + CHR$(2) + CHR$(17) + CHR$(3) + CHR$(17) + CHR$(0) + CHR$(63) + CHR$(0)
+    RETURN Seg$(192, sof$) + Seg$(218, sos$) + "SCANDATA-0123456789" + CHR$(255) + CHR$(217)
+ENDFUNC
+
+FUNC App1Exif$(tiff$)
+    RETURN Seg$(225, "Exif" + CHR$(0) + CHR$(0) + tiff$)
+ENDFUNC
+
+FUNC XmpSeg$(withGps AS INTEGER)
+    DIM attr$ = "dc:creator=" + CHR$(34) + "Test Artist" + CHR$(34)
+    IF withGps = 1 THEN attr$ = attr$ + " exif:GPSLatitude=" + CHR$(34) + "47,30.0N" + CHR$(34)
+    DIM pkt$ = "<x:xmpmeta xmlns:x=" + CHR$(34) + "adobe:ns:meta/" + CHR$(34) + "><rdf:RDF><rdf:Description " + attr$ + "/></rdf:RDF></x:xmpmeta>"
+    RETURN Seg$(225, "http://ns.adobe.com/xap/1.0/" + CHR$(0) + pkt$)
+ENDFUNC
+
+FUNC IptcSeg$()
+    DIM who$ = "Test Byline"
+    DIM iptc$ = CHR$(28) + CHR$(2) + CHR$(80) + PACK$(">s", LEN(who$)) + who$
+    IF LEN(iptc$) MOD 2 = 1 THEN iptc$ = iptc$ + CHR$(0)
+    RETURN Seg$(237, "Photoshop 3.0" + CHR$(0) + "8BIM" + PACK$(">s", 1028) + CHR$(0) + CHR$(0) + PACK$(">i", LEN(iptc$)) + iptc$)
+ENDFUNC
+
+FUNC JOpts()
+    RETURN {"orient": 0, "artist": "", "copyright": "", "gps": 0, "serial": "", "maker": 0, "comment": "", "xmp": 0, "iptc": 0, "w": 64, "h": 32, "badgps": 0}
+ENDFUNC
+
+FUNC MakeJpeg$(o AS MAP)
+    DIM tiff$ = Tiff$(o)
+    DIM xmp AS INTEGER = o{"xmp"}
+    DIM iptc AS INTEGER = o{"iptc"}
+    DIM comment$ = o{"comment"}
+    DIM w AS INTEGER = o{"w"}
+    DIM h AS INTEGER = o{"h"}
+    DIM j$ = CHR$(255) + CHR$(216)
+    IF tiff$ <> "" THEN j$ = j$ + App1Exif$(tiff$)
+    IF xmp > 0 THEN j$ = j$ + XmpSeg$(IIF(xmp = 2, 1, 0))
+    j$ = j$ + ICCSEG$
+    IF iptc = 1 THEN j$ = j$ + IptcSeg$()
+    IF comment$ <> "" THEN j$ = j$ + Seg$(254, comment$)
+    RETURN j$ + JpegTail$(w, h)
+ENDFUNC
+
+' TRUE when a segment with this marker whose payload starts with prefix$
+' sits before the scan.
+FUNC HasSeg(b$, marker AS INTEGER, prefix$)
+    DIM p AS INTEGER = 2
+    DIM found AS BOOLEAN = FALSE
+    DIM going AS BOOLEAN = TRUE
+    DIM u AS ARRAY
+    DO WHILE going ANDALSO p + 4 <= LEN(b$)
+        IF BYTEAT(b$, p) <> 255 ORELSE BYTEAT(b$, p + 1) = 218 THEN
+            going = FALSE
+        ELSE
+            u = UNPACK(">s", b$, p + 2)
+            IF BYTEAT(b$, p + 1) = marker ANDALSO MID$(b$, p + 4, LEN(prefix$)) = prefix$ THEN found = TRUE
+            p = p + 2 + u[0]
+        ENDIF
+    LOOP
+    RETURN found
+ENDFUNC
+
+FUNC TailIs(b$, tail$)
+    IF LEN(b$) < LEN(tail$) THEN RETURN FALSE
+    RETURN RIGHT$(b$, LEN(tail$)) = tail$
+ENDFUNC
+
+' ---------------------------------------------------------------- PNG / GIF / BMP
+
+FUNC Chunk$(kind$, data$)
+    RETURN PACK$(">i", LEN(data$)) + kind$ + data$ + PACK$(">i", CODEC.CRC32(kind$ + data$))
+ENDFUNC
+
+' 40 x 20 RGB: top-left red, top-right blue, bottom-left green, bottom-right white.
+FUNC Pixels$()
+    DIM red$ = CHR$(255) + CHR$(0) + CHR$(0)
+    DIM blue$ = CHR$(0) + CHR$(0) + CHR$(255)
+    DIM green$ = CHR$(0) + CHR$(255) + CHR$(0)
+    DIM white$ = CHR$(255) + CHR$(255) + CHR$(255)
+    DIM raw$ = ""
+    DIM y AS INTEGER
+    FOR y = 0 TO 19
+        IF y < 10 THEN
+            raw$ = raw$ + CHR$(0) + REPEAT$(red$, 20) + REPEAT$(blue$, 20)
+        ELSE
+            raw$ = raw$ + CHR$(0) + REPEAT$(green$, 20) + REPEAT$(white$, 20)
+        ENDIF
+    NEXT
+    RETURN raw$
+ENDFUNC
+
+FUNC MakePng$(withMeta AS INTEGER)
+    DIM b$ = PNGSIG$ + Chunk$("IHDR", PACK$(">iibbbbb", 40, 20, 8, 2, 0, 0, 0))
+    IF withMeta = 1 THEN
+        b$ = b$ + Chunk$("tEXt", "Author" + CHR$(0) + "Test Artist")
+        b$ = b$ + Chunk$("tEXt", "Title" + CHR$(0) + "Invented Title")
+        b$ = b$ + Chunk$("iTXt", "Description" + CHR$(0) + CHR$(0) + CHR$(0) + CHR$(0) + CHR$(0) + "Invented description")
+        b$ = b$ + Chunk$("zTXt", "Comment" + CHR$(0) + CHR$(0) + CODEC.DEFLATE$("Invented zipped comment", 6, "zlib"))
+        b$ = b$ + Chunk$("tIME", PACK$(">sbbbbb", 2026, 1, 2, 3, 4, 5))
+        b$ = b$ + Chunk$("eXIf", Tiff$({"orient": 0, "artist": "Test Artist", "copyright": "", "gps": 1, "serial": "", "maker": 0, "comment": "", "xmp": 0, "iptc": 0, "w": 40, "h": 20, "badgps": 0}))
+    ENDIF
+    RETURN b$ + IDAT$ + Chunk$("IEND", "")
+ENDFUNC
+
+' The chunk types of a PNG joined by "," and "!" for a chunk whose CRC is wrong.
+FUNC PngWalk$(b$)
+    DIM p AS INTEGER = 8
+    DIM out$ = ""
+    DIM u AS ARRAY
+    DIM c AS ARRAY
+    DIM n AS INTEGER
+    DO WHILE p + 12 <= LEN(b$)
+        u = UNPACK(">i", b$, p)
+        n = u[0]
+        c = UNPACK(">i", b$, p + 8 + n)
+        out$ = out$ + MID$(b$, p + 4, 4)
+        IF c[0] <> CODEC.CRC32(MID$(b$, p + 4, 4 + n)) THEN out$ = out$ + "!"
+        out$ = out$ + ","
+        p = p + 12 + n
+    LOOP
+    RETURN out$
+ENDFUNC
+
+FUNC MakeGif$()
+    RETURN "GIF89a" + PACK$("<ss", 33, 17) + CHR$(0) + CHR$(0) + CHR$(0) + ";"
+ENDFUNC
+
+FUNC MakeBmp$()
+    DIM rowBytes AS INTEGER = 64
+    DIM b$ = "BM" + PACK$("<iii", 54 + rowBytes * 13, 0, 54)
+    b$ = b$ + PACK$("<iiissiiiiii", 40, 21, 13, 1, 24, 0, rowBytes * 13, 2835, 2835, 0, 0)
+    RETURN b$ + REPEAT$(CHR$(128), rowBytes * 13)
+ENDFUNC
+
+' [r, g, b] of pixel idx in the first stored row of a BMP.
+FUNC BmpPixel(b$, idx AS INTEGER)
+    DIM off AS ARRAY = UNPACK("<i", b$, 10)
+    DIM bpp AS ARRAY = UNPACK("<s", b$, 28)
+    DIM pxBytes AS INTEGER = bpp[0] \ 8
+    DIM p AS INTEGER = off[0] + idx * pxBytes
+    RETURN [BYTEAT(b$, p + 2), BYTEAT(b$, p + 1), BYTEAT(b$, p)]
+ENDFUNC
+
+FUNC IsColor(px, r AS INTEGER, g AS INTEGER, b AS INTEGER, slack AS INTEGER)
+    RETURN ABS(px[0] - r) <= slack ANDALSO ABS(px[1] - g) <= slack ANDALSO ABS(px[2] - b) <= slack
+ENDFUNC
+
+' ---------------------------------------------------------------- fixtures
+
+ICCSEG$ = Seg$(226, "ICC_PROFILE" + CHR$(0) + CHR$(1) + CHR$(1) + "FAKE-ICC-PROFILE-" + REPEAT$("p", 40))
+IDAT$ = Chunk$("IDAT", CODEC.DEFLATE$(Pixels$(), 6, "zlib"))
+
+DIM o AS MAP = JOpts()
+o{"orient"} = 6
+o{"artist"} = "Test Artist"
+o{"copyright"} = "Invented Copyright 2026"
+o{"gps"} = 1
+o{"serial"} = "SN-0000-TEST"
+o{"maker"} = 1
+o{"comment"} = "Invented comment"
+o{"xmp"} = 2
+o{"iptc"} = 1
+o{"w"} = 640
+o{"h"} = 480
+DIM fullJpg$ = MakeJpeg$(o)
+DIM fullTail$ = JpegTail$(640, 480)
+
+DIM oSouth AS MAP = JOpts()
+oSouth{"orient"} = 8
+oSouth{"artist"} = "Second Artist"
+oSouth{"gps"} = 2
+oSouth{"xmp"} = 1
+oSouth{"w"} = 300
+oSouth{"h"} = 200
+DIM southJpg$ = MakeJpeg$(oSouth)
+
+DIM bareJpg$ = MakeJpeg$(JOpts())
+DIM bareTail$ = JpegTail$(64, 32)
+
+DIM o3 AS MAP = JOpts()
+o3{"orient"} = 3
+o3{"w"} = 100
+o3{"h"} = 50
+DIM o1 AS MAP = JOpts()
+o1{"orient"} = 1
+o1{"artist"} = "Test Artist"
+DIM ob AS MAP = JOpts()
+ob{"artist"} = "Test Artist"
+ob{"badgps"} = 1
+
+DIM files AS MAP
+files{"full"} = P$("_full.jpg")
+files{"south"} = P$("_south.jpg")
+files{"bare"} = P$("_bare.jpg")
+files{"orient3"} = P$("_o3.jpg")
+files{"orient1"} = P$("_o1.jpg")
+files{"badgps"} = P$("_badgps.jpg")
+files{"png"} = P$("_meta.png")
+files{"plainpng"} = P$("_plain.png")
+files{"gif"} = P$("_pic.gif")
+files{"bmp"} = P$("_pic.bmp")
+files{"text"} = P$("_notes.txt")
+DIM missing$ = base$ + "_never_written.jpg"
+DIM nodir$ = base$ + "_nodir/out.jpg"
+
+BINWRITER files{"full"}, fullJpg$
+BINWRITER files{"south"}, southJpg$
+BINWRITER files{"bare"}, bareJpg$
+BINWRITER files{"orient3"}, MakeJpeg$(o3)
+BINWRITER files{"orient1"}, MakeJpeg$(o1)
+BINWRITER files{"badgps"}, MakeJpeg$(ob)
+BINWRITER files{"png"}, MakePng$(1)
+BINWRITER files{"plainpng"}, MakePng$(0)
+BINWRITER files{"gif"}, MakeGif$()
+BINWRITER files{"bmp"}, MakeBmp$()
+BINWRITER files{"text"}, "plain text, not an image" + CHR$(10)
+
+' Fixture sanity: a broken fixture is a bug of this file, not of the feature.
+DIM sane AS BOOLEAN = TRUE
+DIM rb$ = BINREADER$(files{"full"})
+IF rb$ <> fullJpg$ THEN sane = FALSE
+IF NOT TailIs(rb$, fullTail$) THEN sane = FALSE
+IF NOT (HasSeg(rb$, 225, "Exif") ANDALSO HasSeg(rb$, 225, "http://ns.adobe.com/xap/1.0/") ANDALSO HasSeg(rb$, 226, "ICC_PROFILE") ANDALSO HasSeg(rb$, 237, "Photoshop") ANDALSO HasSeg(rb$, 254, "Invented") ANDALSO HasSeg(rb$, 192, "")) THEN sane = FALSE
+IF INSTR(rb$, MAKER$) < 0 THEN sane = FALSE
+IF INSTR(rb$, LAT_LE$) < 0 THEN sane = FALSE
+IF INSTR(MakePng$(1), LAT_LE$) < 0 THEN sane = FALSE
+IF HasSeg(bareJpg$, 225, "Exif") THEN sane = FALSE
+IF PngWalk$(MakePng$(1)) <> "IHDR,tEXt,tEXt,iTXt,zTXt,tIME,eXIf,IDAT,IEND," THEN sane = FALSE
+IF LEN(CODEC.INFLATE$(MID$(IDAT$, 8, LEN(IDAT$) - 12), "zlib")) <> 20 * 121 THEN sane = FALSE
+DIM tiffChk$ = Tiff$(o)
+DIM tu AS ARRAY = UNPACK("<s", tiffChk$, 8)
+IF tu[0] <> 5 THEN sane = FALSE
+IF NOT sane THEN
+    PRINT "FIXTURE BROKEN"
+    END 2
+ENDIF
+
+' ---------------------------------------------------------------- IMAGE.META
+
+FUNC MetaInFunc(path$)
+    DIM m AS MAP = IMAGE.META(path$)
+    RETURN Txt$(m, "artist")
+ENDFUNC
+
+FUNC FullPath$()
+    RETURN files{"full"}
+ENDFUNC
+
+SUB TestMeta()
+    DIM p$ = files{"full"}
+    DIM m AS MAP = IMAGE.META(p$)
+    Check("META format of a JPEG is jpeg", Txt$(m, "format") = "jpeg")
+    Check("META orientation is the EXIF orientation 6", Num(m, "orientation") = 6)
+    Check("META artist is the EXIF Artist", Txt$(m, "artist") = "Test Artist")
+    Check("META copyright is the EXIF Copyright", Txt$(m, "copyright") = "Invented Copyright 2026")
+    Check("META serial is the camera's serial number", Txt$(m, "serial") = "SN-0000-TEST")
+    Check("META gps_latitude in decimal degrees, north positive", Near(Num(m, "gps_latitude"), 47.5))
+    Check("META gps_longitude in decimal degrees, west negative", Near(Num(m, "gps_longitude"), -122.25))
+    Check("META gps_altitude in metres", Near(Num(m, "gps_altitude"), 123.5))
+    Check("META comment is the JPEG comment", Txt$(m, "comment") = "Invented comment")
+    Check("META xmp is the XMP packet as text", INSTR(Txt$(m, "xmp"), "exif:GPSLatitude") >= 0)
+    Check("META iptc is TRUE when the file holds an IPTC block", Has(m, "iptc") ANDALSO m{"iptc"} = TRUE)
+    Check("META has no make when the file holds none", NOT Has(m, "make"))
+    Check("META has no model when the file holds none", NOT Has(m, "model"))
+    Check("META has no software when the file holds none", NOT Has(m, "software"))
+    Check("META has no datetime when the file holds none", NOT Has(m, "datetime"))
+    Check("META has no description when the file holds none", NOT Has(m, "description"))
+    Check("META has no owner when the file holds none", NOT Has(m, "owner"))
+    Check("META has no lens_serial when the file holds none", NOT Has(m, "lens_serial"))
+    Check("META has no user_comment when the file holds none", NOT Has(m, "user_comment"))
+    Check("META of a JPEG has no text map", NOT Has(m, "text"))
+
+    Check("META artist read through an expression path", Txt$(IMAGE.META(base$ + "_full.jpg"), "artist") = "Test Artist")
+    Check("META artist read through a FUNC answer path", Txt$(IMAGE.META(FullPath$()), "artist") = "Test Artist")
+    Check("META artist read through an array cell path", Txt$(IMAGE.META(made[0]), "artist") = "Test Artist")
+    Check("META artist read through a map field path", Txt$(IMAGE.META(files{"full"}), "artist") = "Test Artist")
+    Check("META artist read from inside a FUNC", MetaInFunc(p$) = "Test Artist")
+    Check("META indexed directly by key", IMAGE.META(p$){"artist"} = "Test Artist")
+    IF NOT FILE.ISDIR("tmp") THEN MKDIR "tmp"
+    CopyFile(p$, "tmp/image_meta_test_lit.jpg")
+    Check("META artist read through a literal path", Txt$(IMAGE.META("tmp/image_meta_test_lit.jpg"), "artist") = "Test Artist")
+    KILL "tmp/image_meta_test_lit.jpg"
+
+    DIM s AS MAP = IMAGE.META(files{"south"})
+    Check("META gps_latitude south is negative", Near(Num(s, "gps_latitude"), -33.75))
+    Check("META gps_longitude east is positive", Near(Num(s, "gps_longitude"), 151.125))
+    Check("META gps_altitude 10 metres", Near(Num(s, "gps_altitude"), 10))
+    Check("META orientation 8", Num(s, "orientation") = 8)
+    Check("META artist of the second file", Txt$(s, "artist") = "Second Artist")
+    Check("META has no comment when the file holds none", NOT Has(s, "comment"))
+    Check("META has no iptc when the file holds no IPTC block", NOT Has(s, "iptc"))
+    Check("META has no serial when the file holds none", NOT Has(s, "serial"))
+
+    DIM b AS MAP = IMAGE.META(files{"bare"})
+    Check("META of a JPEG without metadata holds only format", LEN(b) = 1 ANDALSO Txt$(b, "format") = "jpeg")
+    Check("META of a JPEG without EXIF has no orientation", NOT Has(b, "orientation"))
+
+    DIM bg AS MAP = IMAGE.META(files{"badgps"})
+    Check("META with a GPS pointer past the end still returns the artist", Txt$(bg, "artist") = "Test Artist")
+    Check("META with a GPS pointer past the end has no gps keys", NOT HasGps(bg))
+
+    DIM pm AS MAP = IMAGE.META(files{"png"})
+    DIM tm AS MAP = TextMap(pm)
+    Check("META format of a PNG is png", Txt$(pm, "format") = "png")
+    Check("META text of a PNG holds the tEXt Author", Txt$(tm, "Author") = "Test Artist")
+    Check("META text of a PNG holds the tEXt Title", Txt$(tm, "Title") = "Invented Title")
+    Check("META text of a PNG holds the iTXt Description", Txt$(tm, "Description") = "Invented description")
+    Check("META text of a PNG holds the zTXt Comment", Txt$(tm, "Comment") = "Invented zipped comment")
+    Check("META text of a PNG has four keywords", LEN(tm) = 4)
+    DIM pp AS MAP = IMAGE.META(files{"plainpng"})
+    Check("META of a PNG without text chunks has no text", NOT Has(pp, "text"))
+    Check("META of a PNG without text chunks holds only format", LEN(pp) = 1)
+
+    Check("META of a missing file is an empty map", LEN(IMAGE.META(missing$)) = 0)
+    Check("META of a GIF is an empty map", LEN(IMAGE.META(files{"gif"})) = 0)
+    Check("META of a BMP is an empty map", LEN(IMAGE.META(files{"bmp"})) = 0)
+    Check("META of a text file is an empty map", LEN(IMAGE.META(files{"text"})) = 0)
+    Check("META of an empty path is an empty map", LEN(IMAGE.META("")) = 0)
+ENDSUB
+
+' ---------------------------------------------------------------- IMAGE.SIZE
+
+FUNC OrientFile$(n AS INTEGER)
+    DIM oo AS MAP = JOpts()
+    oo{"orient"} = n
+    oo{"w"} = 100
+    oo{"h"} = 50
+    DIM path$ = P$("_orient" + STR$(n) + ".jpg")
+    BINWRITER path$, MakeJpeg$(oo)
+    RETURN path$
+ENDFUNC
+
+FUNC SizeInFunc(path$)
+    RETURN IMAGE.SIZE(path$)
+ENDFUNC
+
+SUB TestSize()
+    DIM p$ = files{"full"}
+    Check("SIZE swaps width and height for orientation 6", SameSize(IMAGE.SIZE(p$), 480, 640))
+    Check("SIZE swaps width and height for orientation 8", SameSize(IMAGE.SIZE(files{"south"}), 200, 300))
+    Check("SIZE keeps width and height for orientation 3", SameSize(IMAGE.SIZE(files{"orient3"}), 100, 50))
+    Check("SIZE of a JPEG without EXIF is its SOF size", SameSize(IMAGE.SIZE(files{"bare"}), 64, 32))
+    Check("SIZE of a PNG is its IHDR size", SameSize(IMAGE.SIZE(files{"png"}), 40, 20))
+    Check("SIZE of a GIF is its screen size", SameSize(IMAGE.SIZE(files{"gif"}), 33, 17))
+    Check("SIZE of a BMP is its header size", SameSize(IMAGE.SIZE(files{"bmp"}), 21, 13))
+    Check("SIZE of a missing file is [0, 0]", SameSize(IMAGE.SIZE(missing$), 0, 0))
+    Check("SIZE of a text file is [0, 0]", SameSize(IMAGE.SIZE(files{"text"}), 0, 0))
+    Check("SIZE width indexed directly", IMAGE.SIZE(p$)[0] = 480)
+    Check("SIZE height indexed directly", IMAGE.SIZE(p$)[1] = 640)
+    Check("SIZE through an expression path", SameSize(IMAGE.SIZE(base$ + "_bare.jpg"), 64, 32))
+    Check("SIZE through an array cell path", SameSize(IMAGE.SIZE(made[2]), 64, 32))
+    Check("SIZE from inside a FUNC", SameSize(SizeInFunc(files{"png"}), 40, 20))
+    Check("SIZE keeps width and height for orientation 2 (mirrored)", SameSize(IMAGE.SIZE(OrientFile$(2)), 100, 50))
+    Check("SIZE keeps width and height for orientation 4 (mirrored)", SameSize(IMAGE.SIZE(OrientFile$(4)), 100, 50))
+    Check("SIZE swaps width and height for orientation 5 (quarter turn)", SameSize(IMAGE.SIZE(OrientFile$(5)), 50, 100))
+    Check("SIZE swaps width and height for orientation 7 (quarter turn)", SameSize(IMAGE.SIZE(OrientFile$(7)), 50, 100))
+    Check("SIZE keeps width and height for orientation 1", SameSize(IMAGE.SIZE(OrientFile$(1)), 100, 50))
+ENDSUB
+
+' ---------------------------------------------------------------- IMAGE.STRIP
+
+SUB TestStrip()
+    DIM outA$ = P$("_strip_all.jpg")
+    DIM rc AS INTEGER = IMAGE.STRIP(files{"full"}, outA$, "all")
+    Check("STRIP all returns 0", rc = 0)
+    DIM a$ = BINREADER$(outA$)
+    DIM ma AS MAP = IMAGE.META(outA$)
+    Check("STRIP all: the image bytes from SOF on are identical", TailIs(a$, fullTail$))
+    Check("STRIP all: the colour profile stays", INSTR(a$, ICCSEG$) >= 0)
+    Check("STRIP all: orientation 6 is kept", Num(ma, "orientation") = 6)
+    Check("STRIP all: SIZE still swaps for the kept orientation", SameSize(IMAGE.SIZE(outA$), 480, 640))
+    Check("STRIP all: META shows no gps keys", NOT HasGps(ma))
+    Check("STRIP all: no artist", NOT Has(ma, "artist"))
+    Check("STRIP all: no copyright", NOT Has(ma, "copyright"))
+    Check("STRIP all: no serial", NOT Has(ma, "serial"))
+    Check("STRIP all: no comment", NOT Has(ma, "comment"))
+    Check("STRIP all: no xmp", NOT Has(ma, "xmp"))
+    Check("STRIP all: no iptc", NOT Has(ma, "iptc"))
+    Check("STRIP all: no COM segment", NOT HasSeg(a$, 254, ""))
+    Check("STRIP all: no IPTC segment", NOT HasSeg(a$, 237, ""))
+    Check("STRIP all: no XMP segment", NOT HasSeg(a$, 225, "http://ns.adobe.com/xap/1.0/"))
+    Check("STRIP all: the MakerNote is gone", INSTR(a$, MAKER$) < 0)
+    Check("STRIP all: the artist text is gone from the bytes", INSTR(a$, "Test Artist") < 0)
+    Check("STRIP all: the IPTC byline is gone from the bytes", INSTR(a$, "Test Byline") < 0)
+    Check("STRIP all: the comment is gone from the bytes", INSTR(a$, "Invented comment") < 0)
+    Check("STRIP all: the latitude rationals are gone from the bytes", INSTR(a$, LAT_LE$) < 0 ANDALSO INSTR(a$, LAT_BE$) < 0)
+
+    DIM outD$ = P$("_strip_default.jpg")
+    Check("STRIP without what$ returns 0", IMAGE.STRIP(files{"full"}, outD$) = 0)
+    DIM md AS MAP = IMAGE.META(outD$)
+    Check("STRIP without what$ is all: no artist", NOT Has(md, "artist"))
+    Check("STRIP without what$ is all: no gps", NOT HasGps(md))
+    Check("STRIP without what$ is all: orientation kept", Num(md, "orientation") = 6)
+
+    DIM out1$ = P$("_strip_o1.jpg")
+    Check("STRIP all of orientation 1 returns 0", IMAGE.STRIP(files{"orient1"}, out1$, "all") = 0)
+    DIM m1 AS MAP = IMAGE.META(out1$)
+    Check("STRIP all: orientation 1 is not kept", NOT Has(m1, "orientation"))
+    Check("STRIP all: orientation 1 leaves no artist", NOT Has(m1, "artist"))
+    Check("STRIP all of orientation 1 still writes the JPEG", Txt$(m1, "format") = "jpeg" ANDALSO TailIs(BINREADER$(out1$), bareTail$))
+    Check("STRIP all of orientation 1 keeps the colour profile", INSTR(BINREADER$(out1$), ICCSEG$) >= 0)
+
+    DIM outG$ = P$("_strip_gps.jpg")
+    DIM what$ = "gps"
+    Check("STRIP gps returns 0", IMAGE.STRIP(files{"full"}, outG$, what$) = 0)
+    DIM g$ = BINREADER$(outG$)
+    DIM mg AS MAP = IMAGE.META(outG$)
+    Check("STRIP gps: META shows no gps keys", NOT HasGps(mg))
+    Check("STRIP gps: artist stays", Txt$(mg, "artist") = "Test Artist")
+    Check("STRIP gps: copyright stays", Txt$(mg, "copyright") = "Invented Copyright 2026")
+    Check("STRIP gps: serial stays", Txt$(mg, "serial") = "SN-0000-TEST")
+    Check("STRIP gps: orientation stays", Num(mg, "orientation") = 6)
+    Check("STRIP gps: comment stays", Txt$(mg, "comment") = "Invented comment")
+    Check("STRIP gps: iptc stays", Has(mg, "iptc"))
+    Check("STRIP gps: an XMP packet naming a GPS field is removed whole", NOT Has(mg, "xmp"))
+    Check("STRIP gps: the colour profile stays", INSTR(g$, ICCSEG$) >= 0)
+    Check("STRIP gps: the image bytes from SOF on are identical", TailIs(g$, fullTail$))
+    Check("STRIP gps: a rewritten EXIF loses the MakerNote", INSTR(g$, MAKER$) < 0)
+    Check("STRIP gps: the latitude rationals are gone from the bytes", INSTR(g$, LAT_LE$) < 0 ANDALSO INSTR(g$, LAT_BE$) < 0)
+    Check("STRIP gps: the XMP position text is gone from the bytes", INSTR(g$, "47,30.0N") < 0)
+    Check("STRIP gps: the artist text stays in the bytes", INSTR(g$, "Test Artist") >= 0)
+
+    DIM modes AS ARRAY = ["all", "gps"]
+    DIM cfg AS MAP
+    cfg{"what"} = "g" + "ps"
+    DIM outC$ = P$("_strip_cell.jpg")
+    Check("STRIP with what$ from an array cell returns 0", IMAGE.STRIP(files{"full"}, outC$, modes[1]) = 0)
+    Check("STRIP with what$ from an array cell is gps", NOT HasGps(IMAGE.META(outC$)) ANDALSO Txt$(IMAGE.META(outC$), "artist") = "Test Artist")
+    DIM outF$ = P$("_strip_field.jpg")
+    Check("STRIP with what$ from a map field returns 0", IMAGE.STRIP(files{"full"}, outF$, cfg{"what"}) = 0)
+    Check("STRIP with what$ from a map field is gps", NOT HasGps(IMAGE.META(outF$)) ANDALSO Txt$(IMAGE.META(outF$), "artist") = "Test Artist")
+    DIM outE$ = P$("_strip_expr.jpg")
+    Check("STRIP with what$ from an expression returns 0", IMAGE.STRIP(files{"full"}, outE$, LEFT$("allx", 3)) = 0)
+    Check("STRIP with what$ from an expression is all", NOT Has(IMAGE.META(outE$), "artist") ANDALSO Num(IMAGE.META(outE$), "orientation") = 6)
+
+    DIM outS$ = P$("_strip_gps_south.jpg")
+    Check("STRIP gps of the second file returns 0", IMAGE.STRIP(files{"south"}, outS$, "gps") = 0)
+    DIM ms AS MAP = IMAGE.META(outS$)
+    Check("STRIP gps: south file has no gps keys", NOT HasGps(ms))
+    Check("STRIP gps: an XMP packet without a GPS field stays", Has(ms, "xmp"))
+    Check("STRIP gps: orientation 8 stays", Num(ms, "orientation") = 8)
+
+    Check("STRIP returns -3 for a bad what$", IMAGE.STRIP(files{"full"}, P$("_strip_bad.jpg"), "bogus") = -3)
+    Check("STRIP returns -6 for a missing source", IMAGE.STRIP(missing$, P$("_strip_missing.jpg")) = -6)
+    Check("STRIP returns -6 for a GIF source", IMAGE.STRIP(files{"gif"}, P$("_strip_gif.jpg")) = -6)
+    Check("STRIP returns -6 for a text source", IMAGE.STRIP(files{"text"}, P$("_strip_txt.jpg")) = -6)
+    Check("STRIP returns -1 when dst$ cannot be written", IMAGE.STRIP(files{"full"}, nodir$) = -1)
+
+    DIM work$ = P$("_strip_same.jpg")
+    CopyFile(files{"full"}, work$)
+    Check("STRIP with src = dst returns 0", IMAGE.STRIP(work$, work$) = 0)
+    DIM mw AS MAP = IMAGE.META(work$)
+    Check("STRIP with src = dst: no artist", NOT Has(mw, "artist"))
+    Check("STRIP with src = dst: no gps", NOT HasGps(mw))
+    Check("STRIP with src = dst: image bytes identical", TailIs(BINREADER$(work$), fullTail$))
+
+    DIM outP$ = P$("_strip_all.png")
+    Check("STRIP all of a PNG returns 0", IMAGE.STRIP(files{"png"}, outP$, "all") = 0)
+    DIM pb$ = BINREADER$(outP$)
+    DIM walk$ = PngWalk$(pb$)
+    Check("STRIP all of a PNG: starts with signature and IHDR", LEFT$(pb$, 33) = LEFT$(MakePng$(0), 33))
+    Check("STRIP all of a PNG: no tEXt chunk", INSTR(walk$, "tEXt") < 0)
+    Check("STRIP all of a PNG: no iTXt chunk", INSTR(walk$, "iTXt") < 0)
+    Check("STRIP all of a PNG: no zTXt chunk", INSTR(walk$, "zTXt") < 0)
+    Check("STRIP all of a PNG: no tIME chunk", INSTR(walk$, "tIME") < 0)
+    Check("STRIP all of a PNG: no eXIf chunk", INSTR(walk$, "eXIf") < 0)
+    Check("STRIP all of a PNG: every chunk CRC is valid", INSTR(walk$, "!") < 0)
+    Check("STRIP all of a PNG: the IDAT is copied byte for byte", INSTR(pb$, IDAT$) >= 0)
+    DIM mp AS MAP = IMAGE.META(outP$)
+    Check("STRIP all of a PNG: META has no text keywords", LEN(TextMap(mp)) = 0)
+    Check("STRIP all of a PNG: META still says png", Txt$(mp, "format") = "png")
+    Check("STRIP all of a PNG: the latitude rationals are gone from the bytes", INSTR(pb$, LAT_LE$) < 0)
+    Check("STRIP all of a PNG: SIZE stays", SameSize(IMAGE.SIZE(outP$), 40, 20))
+
+    DIM outPG$ = P$("_strip_gps.png")
+    Check("STRIP gps of a PNG returns 0", IMAGE.STRIP(files{"png"}, outPG$, "gps") = 0)
+    DIM mpg AS MAP = IMAGE.META(outPG$)
+    Check("STRIP gps of a PNG: the text chunks stay", Txt$(TextMap(mpg), "Author") = "Test Artist")
+    DIM pgb$ = BINREADER$(outPG$)
+    Check("STRIP gps of a PNG: the latitude rationals are gone from the bytes", INSTR(pgb$, LAT_LE$) < 0 ANDALSO INSTR(pgb$, LAT_BE$) < 0)
+    Check("STRIP gps of a PNG: the IDAT is copied byte for byte", INSTR(pgb$, IDAT$) >= 0)
+    Check("STRIP gps of a PNG: every chunk CRC is valid", INSTR(PngWalk$(pgb$), "!") < 0)
+ENDSUB
+
+' ---------------------------------------------------------------- IMAGE.SETMETA
+
+FUNC SetInFunc(src$, dst$, who$)
+    RETURN IMAGE.SETMETA(src$, dst$, {"artist": who$})
+ENDFUNC
+
+SUB TestSetMeta()
+    DIM out1$ = P$("_set_bare.jpg")
+    Check("SETMETA on a JPEG without EXIF returns 0", IMAGE.SETMETA(files{"bare"}, out1$, {"artist": "Test Artist"}) = 0)
+    Check("SETMETA set artist reads back through META", Txt$(IMAGE.META(out1$), "artist") = "Test Artist")
+    Check("SETMETA on a JPEG without EXIF keeps the image bytes from SOF on", TailIs(BINREADER$(out1$), bareTail$))
+
+    DIM fields AS MAP
+    fields{"copyright"} = "CC BY 4.0"
+    fields{"artist"} = ""
+    DIM out2$ = P$("_set_full.jpg")
+    Check("SETMETA set and remove on a JPEG returns 0", IMAGE.SETMETA(files{"full"}, out2$, fields) = 0)
+    DIM b2$ = BINREADER$(out2$)
+    DIM m2 AS MAP = IMAGE.META(out2$)
+    Check("SETMETA sets copyright", Txt$(m2, "copyright") = "CC BY 4.0")
+    Check("SETMETA removes a field given an empty text", NOT Has(m2, "artist"))
+    Check("SETMETA leaves the GPS position", Near(Num(m2, "gps_latitude"), 47.5) ANDALSO Near(Num(m2, "gps_longitude"), -122.25))
+    Check("SETMETA leaves the orientation", Num(m2, "orientation") = 6)
+    Check("SETMETA leaves the serial", Txt$(m2, "serial") = "SN-0000-TEST")
+    Check("SETMETA leaves the comment", Txt$(m2, "comment") = "Invented comment")
+    Check("SETMETA leaves the XMP", Has(m2, "xmp"))
+    Check("SETMETA leaves the IPTC block", Has(m2, "iptc"))
+    Check("SETMETA leaves the colour profile", INSTR(b2$, ICCSEG$) >= 0)
+    Check("SETMETA keeps the image bytes from SOF on", TailIs(b2$, fullTail$))
+    Check("SETMETA: a rewritten EXIF loses the MakerNote", INSTR(b2$, MAKER$) < 0)
+
+    DIM out3$ = P$("_set_more.jpg")
+    DIM stamp$ = "2026:01:02 03:04:05"
+    Check("SETMETA description, software, datetime returns 0", IMAGE.SETMETA(files{"bare"}, out3$, {"description": "Invented scene", "software": "Test Suite " + STR$(1 + 1), "datetime": stamp$}) = 0)
+    DIM m3 AS MAP = IMAGE.META(out3$)
+    Check("SETMETA sets description", Txt$(m3, "description") = "Invented scene")
+    Check("SETMETA sets software from an expression", Txt$(m3, "software") = "Test Suite 2")
+    Check("SETMETA sets datetime from a variable", Txt$(m3, "datetime") = stamp$)
+
+    DIM out4$ = P$("_set_func.jpg")
+    Check("SETMETA from inside a FUNC returns 0", SetInFunc(files{"bare"}, out4$, "Func Artist") = 0)
+    Check("SETMETA from inside a FUNC sets the artist", Txt$(IMAGE.META(out4$), "artist") = "Func Artist")
+
+    DIM noFields AS MAP
+    DIM out5$ = P$("_set_empty.jpg")
+    Check("SETMETA with an empty map returns 0", IMAGE.SETMETA(files{"full"}, out5$, noFields) = 0)
+    Check("SETMETA with an empty map leaves the artist", Txt$(IMAGE.META(out5$), "artist") = "Test Artist")
+    DIM out6$ = P$("_set_absent.jpg")
+    Check("SETMETA removing an absent field returns 0", IMAGE.SETMETA(files{"bare"}, out6$, {"copyright": ""}) = 0)
+    Check("SETMETA removing an absent field leaves no copyright", NOT Has(IMAGE.META(out6$), "copyright"))
+    Check("SETMETA removing an absent field still writes a JPEG", Txt$(IMAGE.META(out6$), "format") = "jpeg" ANDALSO TailIs(BINREADER$(out6$), bareTail$))
+
+    Check("SETMETA returns -3 for an unknown name", IMAGE.SETMETA(files{"full"}, P$("_set_bad.jpg"), {"camera": "x"}) = -3)
+    Check("SETMETA returns -3 for a value that is not a text", IMAGE.SETMETA(files{"full"}, P$("_set_num.jpg"), {"artist": 5}) = -3)
+    Check("SETMETA returns -6 for a missing source", IMAGE.SETMETA(missing$, P$("_set_missing.jpg"), {"artist": "x"}) = -6)
+    Check("SETMETA returns -6 for a GIF source", IMAGE.SETMETA(files{"gif"}, P$("_set_gif.jpg"), {"artist": "x"}) = -6)
+    Check("SETMETA returns -1 when dst$ cannot be written", IMAGE.SETMETA(files{"full"}, nodir$, {"artist": "x"}) = -1)
+
+    DIM work$ = P$("_set_same.jpg")
+    CopyFile(files{"full"}, work$)
+    Check("SETMETA with src = dst returns 0", IMAGE.SETMETA(work$, work$, {"artist": "Same File Artist"}) = 0)
+    Check("SETMETA with src = dst sets the artist", Txt$(IMAGE.META(work$), "artist") = "Same File Artist")
+    Check("SETMETA with src = dst keeps the image bytes", TailIs(BINREADER$(work$), fullTail$))
+
+    DIM pOut$ = P$("_set.png")
+    Check("SETMETA on a PNG returns 0", IMAGE.SETMETA(files{"png"}, pOut$, {"artist": "Other Artist", "copyright": "Invented Copyright", "datetime": stamp$}) = 0)
+    DIM pt AS MAP = TextMap(IMAGE.META(pOut$))
+    Check("SETMETA artist on a PNG is the text chunk Author", Txt$(pt, "Author") = "Other Artist")
+    Check("SETMETA copyright on a PNG is the text chunk Copyright", Txt$(pt, "Copyright") = "Invented Copyright")
+    Check("SETMETA datetime on a PNG is the text chunk Creation Time", Txt$(pt, "Creation Time") = stamp$)
+    Check("SETMETA on a PNG leaves another keyword", Txt$(pt, "Title") = "Invented Title")
+    DIM pOutB$ = BINREADER$(pOut$)
+    Check("SETMETA on a PNG copies the IDAT byte for byte", INSTR(pOutB$, IDAT$) >= 0)
+    Check("SETMETA on a PNG leaves every chunk CRC valid", INSTR(PngWalk$(pOutB$), "!") < 0)
+
+    DIM pRm$ = P$("_set_rm.png")
+    Check("SETMETA remove on a PNG returns 0", IMAGE.SETMETA(files{"png"}, pRm$, {"artist": ""}) = 0)
+    DIM pr AS MAP = TextMap(IMAGE.META(pRm$))
+    Check("SETMETA remove on a PNG drops Author", NOT Has(pr, "Author"))
+    Check("SETMETA remove on a PNG leaves Title", Txt$(pr, "Title") = "Invented Title")
+
+    DIM pPlain$ = P$("_set_plain.png")
+    Check("SETMETA on a PNG without text returns 0", IMAGE.SETMETA(files{"plainpng"}, pPlain$, {"description": "Invented description"}) = 0)
+    Check("SETMETA description on a PNG is the text chunk Description", Txt$(TextMap(IMAGE.META(pPlain$)), "Description") = "Invented description")
+    Check("SETMETA on a PNG without text copies the IDAT", INSTR(BINREADER$(pPlain$), IDAT$) >= 0)
+ENDSUB
+
+' ---------------------------------------------------------------- Windows only
+
+SUB TestWindows()
+    DIM png$ = files{"plainpng"}
+    DIM conv$ = P$("_conv.jpg")
+    Check("CONVERT png to jpg returns 0", IMAGE.CONVERT(png$, conv$) = 0)
+    Check("CONVERT keeps width and height", SameSize(IMAGE.SIZE(conv$), 40, 20))
+    DIM convB$ = P$("_conv.bmp")
+    Check("CONVERT png to bmp returns 0", IMAGE.CONVERT(png$, convB$) = 0)
+    Check("CONVERT to bmp keeps width and height", SameSize(IMAGE.SIZE(convB$), 40, 20))
+    DIM convX$ = P$("_conv.xyz")
+    Check("CONVERT to another extension returns 0", IMAGE.CONVERT(png$, convX$) = 0)
+    Check("CONVERT to another extension writes PNG", LEFT$(BINREADER$(convX$), 8) = PNGSIG$)
+    Check("CONVERT returns -6 for a missing source", IMAGE.CONVERT(missing$, P$("_conv_missing.png")) = -6)
+    Check("CONVERT returns -6 for a source that is not an image", IMAGE.CONVERT(files{"text"}, P$("_conv_txt.png")) = -6)
+    Check("CONVERT returns -1 for an empty dst$", IMAGE.CONVERT(png$, "") = -1)
+
+    ' A decodable JPEG with orientation 6 and an artist spliced after SOI.
+    DIM j$ = BINREADER$(conv$)
+    DIM ro AS MAP = JOpts()
+    ro{"orient"} = 6
+    ro{"artist"} = "Test Artist"
+    DIM rot$ = P$("_rot.jpg")
+    BINWRITER rot$, LEFT$(j$, 2) + App1Exif$(Tiff$(ro)) + MID$(j$, 2, LEN(j$) - 2)
+    Check("SIZE of the turned real JPEG is swapped", SameSize(IMAGE.SIZE(rot$), 20, 40))
+    DIM rotPng$ = P$("_rot.png")
+    Check("CONVERT of a turned JPEG returns 0", IMAGE.CONVERT(rot$, rotPng$) = 0)
+    Check("CONVERT writes a turned JPEG the way it is displayed", SameSize(IMAGE.SIZE(rotPng$), 20, 40))
+    DIM rotJpg$ = P$("_rot_conv.jpg")
+    Check("CONVERT jpg to jpg returns 0", IMAGE.CONVERT(rot$, rotJpg$) = 0)
+    DIM mc AS MAP = IMAGE.META(rotJpg$)
+    Check("CONVERT target carries no artist", NOT Has(mc, "artist"))
+    Check("CONVERT target is displayed upright without the orientation", SameSize(IMAGE.SIZE(rotJpg$), 20, 40))
+
+    DIM c1$ = P$("_crop1.png")
+    Check("CROP returns 0", IMAGE.CROP(png$, c1$, 20, 0, 20, 10) = 0)
+    Check("CROP writes w by h", SameSize(IMAGE.SIZE(c1$), 20, 10))
+    DIM cb1$ = P$("_crop_tr.bmp")
+    Check("CROP top-right to bmp returns 0", IMAGE.CROP(png$, cb1$, 20, 0, 20, 10) = 0)
+    Check("CROP x 20 y 0 is the blue quarter", IsColor(BmpPixel(BINREADER$(cb1$), 0), 0, 0, 255, 2))
+    DIM cb2$ = P$("_crop_br.bmp")
+    Check("CROP bottom-right to bmp returns 0", IMAGE.CROP(png$, cb2$, 20, 10, 20, 10) = 0)
+    Check("CROP x 20 y 10 is the white quarter", IsColor(BmpPixel(BINREADER$(cb2$), 0), 255, 255, 255, 2))
+    DIM cb3$ = P$("_crop_bl.bmp")
+    Check("CROP bottom-left to bmp returns 0", IMAGE.CROP(png$, cb3$, 0, 10, 20, 10) = 0)
+    Check("CROP x 0 y 10 is the green quarter", IsColor(BmpPixel(BINREADER$(cb3$), 0), 0, 255, 0, 2))
+    Check("CROP returns -2 for a rectangle past the image", IMAGE.CROP(png$, P$("_crop_past.png"), 30, 0, 20, 10) = -2)
+    Check("CROP returns -2 for a rectangle past the bottom", IMAGE.CROP(png$, P$("_crop_low.png"), 0, 15, 10, 10) = -2)
+    Check("CROP returns -2 for an empty rectangle", IMAGE.CROP(png$, P$("_crop_empty.png"), 0, 0, 0, 10) = -2)
+    Check("CROP returns -6 for a missing source", IMAGE.CROP(missing$, P$("_crop_missing.png"), 0, 0, 1, 1) = -6)
+    DIM cr$ = P$("_crop_rot.png")
+    Check("CROP uses displayed coordinates: full displayed size returns 0", IMAGE.CROP(rot$, cr$, 0, 0, 20, 40) = 0)
+    Check("CROP of a turned JPEG writes the displayed size", SameSize(IMAGE.SIZE(cr$), 20, 40))
+    Check("CROP of a turned JPEG returns -2 for the stored size", IMAGE.CROP(rot$, P$("_crop_rot2.png"), 0, 0, 40, 20) = -2)
+    DIM crj$ = P$("_crop_rot.jpg")
+    Check("CROP to jpg returns 0", IMAGE.CROP(rot$, crj$, 0, 0, 10, 10) = 0)
+    DIM mcj AS MAP = IMAGE.META(crj$)
+    Check("CROP target carries no metadata", NOT Has(mcj, "artist") ANDALSO NOT Has(mcj, "orientation"))
+    Check("CROP to jpg writes a JPEG of w by h", Txt$(mcj, "format") = "jpeg" ANDALSO SameSize(IMAGE.SIZE(crj$), 10, 10))
+    DIM cs$ = P$("_crop_same.png")
+    CopyFile(png$, cs$)
+    Check("CROP with src = dst returns 0", IMAGE.CROP(cs$, cs$, 0, 0, 10, 10) = 0)
+    Check("CROP with src = dst writes the rectangle", SameSize(IMAGE.SIZE(cs$), 10, 10))
+
+    DIM r1$ = P$("_res1.png")
+    Check("RESIZE with h 0 returns 0", IMAGE.RESIZE(png$, r1$, 80, 0) = 0)
+    Check("RESIZE with h 0 keeps the proportions", SameSize(IMAGE.SIZE(r1$), 80, 40))
+    DIM r2$ = P$("_res2.png")
+    Check("RESIZE with w 0 returns 0", IMAGE.RESIZE(png$, r2$, 0, 10) = 0)
+    Check("RESIZE with w 0 keeps the proportions", SameSize(IMAGE.SIZE(r2$), 20, 10))
+    DIM r3$ = P$("_res3.png")
+    Check("RESIZE to w by h returns 0", IMAGE.RESIZE(png$, r3$, 10, 10) = 0)
+    Check("RESIZE writes w by h", SameSize(IMAGE.SIZE(r3$), 10, 10))
+    Check("RESIZE returns -2 for both 0", IMAGE.RESIZE(png$, P$("_res0.png"), 0, 0) = -2)
+    Check("RESIZE returns -2 for a negative w", IMAGE.RESIZE(png$, P$("_resneg.png"), -5, 10) = -2)
+    Check("RESIZE returns -2 for a negative h", IMAGE.RESIZE(png$, P$("_resnegh.png"), 10, -5) = -2)
+    Check("RESIZE returns -2 past 100 million pixels", IMAGE.RESIZE(png$, P$("_reshuge.png"), 20000, 20000) = -2)
+    Check("RESIZE returns -6 for a missing source", IMAGE.RESIZE(missing$, P$("_resmiss.png"), 10, 10) = -6)
+    DIM r4$ = P$("_res_rot.png")
+    Check("RESIZE of a turned JPEG returns 0", IMAGE.RESIZE(rot$, r4$, 10, 0) = 0)
+    Check("RESIZE takes the image as displayed", SameSize(IMAGE.SIZE(r4$), 10, 20))
+    DIM r5$ = P$("_res_rot.jpg")
+    Check("RESIZE to jpg returns 0", IMAGE.RESIZE(rot$, r5$, 10, 20) = 0)
+    DIM mr5 AS MAP = IMAGE.META(r5$)
+    Check("RESIZE target carries no metadata", NOT Has(mr5, "artist") ANDALSO NOT Has(mr5, "orientation"))
+    Check("RESIZE to jpg writes a JPEG of w by h", Txt$(mr5, "format") = "jpeg" ANDALSO SameSize(IMAGE.SIZE(r5$), 10, 20))
+    DIM avgPath$ = P$("_res_avg.bmp")
+    Check("RESIZE down to 2 by 1 returns 0", IMAGE.RESIZE(png$, avgPath$, 2, 1) = 0)
+    DIM avg$ = BINREADER$(avgPath$)
+    Check("RESIZE down averages red and green on the left", IsColor(BmpPixel(avg$, 0), 128, 128, 0, 3))
+    Check("RESIZE down averages blue and white on the right", IsColor(BmpPixel(avg$, 1), 128, 128, 255, 3))
+    DIM rs$ = P$("_res_same.png")
+    CopyFile(png$, rs$)
+    Check("RESIZE with src = dst returns 0", IMAGE.RESIZE(rs$, rs$, 20, 0) = 0)
+    Check("RESIZE with src = dst writes the new size", SameSize(IMAGE.SIZE(rs$), 20, 10))
+
+    ' The same calls with their numbers given in other forms.
+    DIM wh = IMAGE.SIZE(png$)
+    DIM cx AS INTEGER = 20
+    DIM cw AS INTEGER = INT(wh[0] / 2)
+    DIM box AS MAP
+    box{"y"} = 10
+    box{"h"} = 10
+    DIM vf$ = P$("_crop_forms.bmp")
+    DIM rc AS INTEGER = IMAGE.CROP(png$, vf$, cx, box{"y"}, cw, box{"h"})
+    Check("CROP with variable, map field and expression numbers returns 0", rc = 0)
+    Check("CROP with those numbers is the white quarter", IsColor(BmpPixel(BINREADER$(vf$), 0), 255, 255, 255, 2))
+    DIM vf2$ = P$("_crop_forms2.bmp")
+    rc = IMAGE.CROP(png$, vf2$, wh[0] - cw, INT((wh[1] - 10) / 2) - 5, HalfOf(wh[0]), wh[1] \ 2)
+    Check("CROP with array cell, expression and FUNC answer numbers returns 0", rc = 0)
+    Check("CROP with those numbers is the blue quarter", IsColor(BmpPixel(BINREADER$(vf2$), 0), 0, 0, 255, 2))
+    Check("CROP from inside a FUNC writes w by h", CropInFunc(png$, P$("_crop_func.png"), 0, 0, 12, 7) = 0 ANDALSO SameSize(IMAGE.SIZE(base$ + "_crop_func.png"), 12, 7))
+    DIM rw AS INTEGER = wh[0] * 2
+    DIM rf$ = P$("_res_forms.png")
+    rc = IMAGE.RESIZE(png$, rf$, rw, box{"h"} - 10)
+    Check("RESIZE with variable and map field expression returns 0", rc = 0)
+    Check("RESIZE with those numbers keeps the proportions", SameSize(IMAGE.SIZE(rf$), 80, 40))
+    DIM rf2$ = P$("_res_forms2.png")
+    rc = IMAGE.RESIZE(png$, rf2$, 0, HalfOf(wh[1]))
+    Check("RESIZE with a FUNC answer height returns 0", rc = 0)
+    Check("RESIZE with a FUNC answer height keeps the proportions", SameSize(IMAGE.SIZE(rf2$), 20, 10))
+    Check("RESIZE from inside a FUNC writes w by h", ResizeInFunc(png$, P$("_res_func.png"), 8, 4) = 0 ANDALSO SameSize(IMAGE.SIZE(base$ + "_res_func.png"), 8, 4))
+    Check("RESIZE with a negative expression returns -2", IMAGE.RESIZE(png$, P$("_res_negx.png"), wh[0] - 50, 0) = -2)
+    Check("CROP with a width past the image from an expression returns -2", IMAGE.CROP(png$, P$("_crop_negx.png"), 1, 0, wh[0], 1) = -2)
+ENDSUB
+
+FUNC HalfOf(n)
+    RETURN n \ 2
+ENDFUNC
+
+FUNC CropInFunc(src$, dst$, x AS INTEGER, y AS INTEGER, w AS INTEGER, h AS INTEGER)
+    RETURN IMAGE.CROP(src$, dst$, x, y, w, h)
+ENDFUNC
+
+FUNC ResizeInFunc(src$, dst$, w AS INTEGER, h AS INTEGER)
+    RETURN IMAGE.RESIZE(src$, dst$, w, h)
+ENDFUNC
+
+SUB TestElsewhere()
+    DIM png$ = files{"plainpng"}
+    Check("CONVERT returns -100 off Windows", IMAGE.CONVERT(png$, P$("_x.jpg")) = -100)
+    Check("CROP returns -100 off Windows", IMAGE.CROP(png$, P$("_x2.png"), 0, 0, 10, 10) = -100)
+    Check("RESIZE returns -100 off Windows", IMAGE.RESIZE(png$, P$("_x3.png"), 10, 0) = -100)
+ENDSUB
+
+' ---------------------------------------------------------------- run
+
+TRY
+    TestMeta()
+CATCH
+    Check("IMAGE.META group ran without raising: " + ERRMSG$, FALSE)
+ENDTRY
+TRY
+    TestSize()
+CATCH
+    Check("IMAGE.SIZE group ran without raising: " + ERRMSG$, FALSE)
+ENDTRY
+TRY
+    TestStrip()
+CATCH
+    Check("IMAGE.STRIP group ran without raising: " + ERRMSG$, FALSE)
+ENDTRY
+TRY
+    TestSetMeta()
+CATCH
+    Check("IMAGE.SETMETA group ran without raising: " + ERRMSG$, FALSE)
+ENDTRY
+TRY
+    IF OS.GETOS$() = "WINDOWS" THEN
+        TestWindows()
+    ELSE
+        TestElsewhere()
+    ENDIF
+CATCH
+    Check("CONVERT/CROP/RESIZE group ran without raising: " + ERRMSG$, FALSE)
+ENDTRY
+
+DIM k AS INTEGER
+FOR k = 0 TO LEN(made) - 1
+    IF FILE.EXISTS(made[k]) THEN KILL made[k]
+NEXT
+IF FILE.EXISTS("tmp/image_meta_test_lit.jpg") THEN KILL "tmp/image_meta_test_lit.jpg"
+
+PRINT "RESULTS: "; passed; " passed, "; failed; " failed"
+IF failed > 0 THEN END 1

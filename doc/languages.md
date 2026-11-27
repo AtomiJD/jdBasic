@@ -1622,13 +1622,55 @@ File and directory names are UTF-8 like every other string. On Windows a program
     rc = OS.SCREENSHOT("calc.bmp", "client", "Calculator")
     IF rc <> 0 THEN PRINT "capture failed: "; rc
     ```
-* **`IMAGE.CONVERT(src$, dst$) -> INTEGER`**: Reads the image file `src$` and writes it to `dst$` in the format chosen from `dst$`'s extension, without opening a window. Returns `0` on success (negative on error). **Windows only** (returns `-100` on other platforms); reading and writing go through the Windows Imaging Component, so `src$` may be any format WIC decodes (PNG, JPEG, GIF, BMP, TIFF, ICO, ...) whatever its extension. The target formats and extensions are those of `OS.SCREENSHOT` (`.png`, `.jpg`/`.jpeg`, `.bmp`, `.tif`/`.tiff`, `.gif`); any other extension writes PNG. Of an animated GIF or a multi-page TIFF only the first frame is written. Transparency survives into PNG; a JPEG or BMP target has none. `dst$` is overwritten if it exists, and may be the same file as `src$`. The width and height come out as they went in.
+* **`IMAGE.CONVERT(src$, dst$) -> INTEGER`**: Reads the image file `src$` and writes it to `dst$` in the format chosen from `dst$`'s extension, without opening a window. Returns `0` on success (negative on error). **Windows only** (returns `-100` on other platforms); reading and writing go through the Windows Imaging Component, so `src$` may be any format WIC decodes (PNG, JPEG, GIF, BMP, TIFF, ICO, ...) whatever its extension. The target formats and extensions are those of `OS.SCREENSHOT` (`.png`, `.jpg`/`.jpeg`, `.bmp`, `.tif`/`.tiff`, `.gif`); any other extension writes PNG. Of an animated GIF or a multi-page TIFF only the first frame is written. Transparency survives into PNG; a JPEG or BMP target has none. `dst$` is overwritten if it exists, and may be the same file as `src$`. A JPEG whose EXIF orientation says it is turned or mirrored is written the way it is displayed, so a portrait photo stays upright; otherwise width and height come out as they went in. The target carries no metadata of the source: no EXIF, no GPS position, no XMP.
 
     Errors: `-1` an empty `dst$`, or one that cannot be written; `-4` the encoder failed; `-5` the image has more than 100 million pixels; `-6` `src$` is empty, missing or not an image WIC can read.
 
     ```basic
     rc = IMAGE.CONVERT("diagram.gif", "diagram.png")
     IF rc <> 0 THEN PRINT "conversion failed: "; rc
+    ```
+* **`IMAGE.SIZE(src$) -> array`**: The width and height of the image file `src$` as `[width, height]`, the way it is displayed: for a JPEG whose EXIF orientation turns it a quarter (orientations 5 to 8), the two are swapped. Read from the file's header without decoding it, on every platform, for JPEG, PNG, GIF and BMP. `[0, 0]` when `src$` is missing or not one of these.
+* **`IMAGE.CROP(src$, dst$, x, y, w, h) -> INTEGER`**: Writes the rectangle of `src$` that starts `x` pixels from the left and `y` from the top and is `w` wide and `h` high to `dst$`, in the format of `dst$`'s extension as for `IMAGE.CONVERT`. The coordinates are those of the image as displayed (see `IMAGE.SIZE`). The target carries no metadata. `dst$` may be the same file as `src$`. **Windows only** (`-100` elsewhere).
+
+    Errors: as for `IMAGE.CONVERT`, and `-2` when the rectangle is empty or reaches past the image.
+* **`IMAGE.RESIZE(src$, dst$, w, h) -> INTEGER`**: Writes `src$` scaled to `w` by `h` pixels to `dst$`, in the format of `dst$`'s extension. When `w` or `h` is `0` it follows from the other so that the proportions stay; both `0` is an error. Scaling down averages the pixels it merges, scaling up interpolates. The image is taken as displayed, and the target carries no metadata. `dst$` may be the same file as `src$`. **Windows only** (`-100` elsewhere).
+
+    Errors: as for `IMAGE.CONVERT`, and `-2` when `w` or `h` is negative, both are `0`, or the target would have more than 100 million pixels.
+
+    ```basic
+    ' A photo cut to 4:3 from its middle, then made 1200 pixels wide
+    DIM wh = IMAGE.SIZE("photo.jpg")
+    DIM cw = wh[0]
+    DIM ch = INT(cw * 3 / 4)
+    IF ch > wh[1] THEN
+        ch = wh[1]
+        cw = INT(ch * 4 / 3)
+    ENDIF
+    rc = IMAGE.CROP("photo.jpg", "cut.jpg", INT((wh[0] - cw) / 2), INT((wh[1] - ch) / 2), cw, ch)
+    IF rc = 0 THEN rc = IMAGE.RESIZE("cut.jpg", "cut.jpg", 1200, 0)
+    ```
+* **`IMAGE.META(src$) -> map`**: The metadata of the JPEG or PNG file `src$`, read from its bytes without decoding the image, on every platform. `"format"` is `"jpeg"` or `"png"`; a missing file or another format gives an empty map. Only what the file holds is in the map:
+    - `"orientation"`: the EXIF orientation, `1` (upright) to `8`
+    - text fields of the EXIF: `"make"`, `"model"`, `"software"`, `"datetime"`, `"datetime_original"`, `"artist"`, `"copyright"`, `"description"`, `"owner"` (the camera owner's name), `"serial"` (the camera's serial number), `"lens_serial"`, `"user_comment"`, and the fields Windows writes from a file's properties: `"xp_title"`, `"xp_subject"`, `"xp_author"`, `"xp_comment"`, `"xp_keywords"`
+    - the GPS position: `"gps_latitude"` and `"gps_longitude"` in decimal degrees, south and west negative, and `"gps_altitude"` in metres
+    - `"xmp"`: the XMP packet as text; `"iptc"`: `TRUE` when the file holds an IPTC block; `"comment"`: the JPEG comment
+    - `"text"`: for a PNG, a map of its text chunks, keyword to text (`tEXt`, `iTXt` and `zTXt`)
+
+    Damaged or truncated metadata is skipped; what could be read is still returned. Of the text chunks of a PNG at most 8 MB of text are read in all.
+* **`IMAGE.STRIP(src$, dst$, [what$]) -> INTEGER`**: Writes `src$` to `dst$` without its metadata. The image itself is copied byte for byte, so a JPEG loses no quality. `what$` is `"all"` (the default) or `"gps"`, in any case.
+    - `"all"` removes the EXIF, the XMP, the IPTC block (the whole Photoshop segment) and the comment of a JPEG, and every text chunk, `eXIf` and `tIME` chunk of a PNG. The colour profile stays. An orientation other than `1` is kept, alone, so the image is still displayed upright.
+    - `"gps"` removes the GPS position and leaves the rest: the EXIF (in a PNG its eXIf chunk) without its GPS part, and an XMP packet that names a GPS field is removed whole.
+
+    In both, an EXIF that is written again loses its thumbnail and the camera maker's private block (MakerNote), which often holds a serial number. Returns `0` on success; `-1` `dst$` cannot be written, `-3` `what$` is not one of the two, `-6` `src$` is missing or not a JPEG or PNG. Every platform; `dst$` may be the same file as `src$`.
+* **`IMAGE.SETMETA(src$, dst$, fields) -> INTEGER`**: Writes `src$` to `dst$` with the text fields of the map `fields` set; a field given `""` is removed. The names, in any case, are `"artist"`, `"copyright"`, `"description"`, `"software"` and `"datetime"`. In a JPEG they are EXIF fields; in a PNG they are the text chunks `Author`, `Copyright`, `Description`, `Software` and `Creation Time`. The image is copied byte for byte, and everything else the file holds stays, except that a rewritten EXIF loses its thumbnail and MakerNote. Returns `0` on success; `-1` `dst$` cannot be written, `-3` a name that is not one of these or a value that is not a text, `-6` `src$` is missing or not a JPEG or PNG. Every platform; `dst$` may be the same file as `src$`.
+
+    ```basic
+    ' What a photo would give away, and a copy that gives none of it away
+    DIM m = IMAGE.META("photo.jpg")
+    IF MAP.EXISTS(m, "gps_latitude") THEN PRINT "taken at "; m{"gps_latitude"}; ", "; m{"gps_longitude"}
+    rc = IMAGE.STRIP("photo.jpg", "public.jpg")
+    rc = IMAGE.SETMETA("public.jpg", "public.jpg", {"copyright": "CC BY 4.0", "artist": ""})
     ```
 
 #### Setting EXE file properties (`.jdb.props` sidecar)
@@ -5391,7 +5433,7 @@ Every documented builtin, linked to the section that describes it.
 
 **H** · [HELP](#type-inspection) · [HELP$](#type-inspection) · [HISTEDGES](#array--matrix-functions) · [HISTOGRAM](#array--matrix-functions) · [HOUR](#system-and-time-functions) · [HTTP.CLEARCOOKIES](#http-functions) · [HTTP.CLEARHEADERS](#http-functions) · [HTTP.CLEARPARAMS](#http-functions) · [HTTP.DELETE$](#http-functions) · [HTTP.FOLLOWREDIRECTS](#http-functions) · [HTTP.GET$](#http-functions) · [HTTP.GETCOOKIE$](#http-functions) · [HTTP.GET_ASYNC](#http-functions) · [HTTP.POST$](#http-functions) · [HTTP.POST_ASYNC](#http-functions) · [HTTP.PUT$](#http-functions) · [HTTP.PUT_ASYNC](#http-functions) · [HTTP.REQUEST](#http-functions) · [HTTP.SERVER.LOG](#http-functions) · [HTTP.SERVER.ON_GET](#http-functions) · [HTTP.SERVER.ON_NOTFOUND](#http-functions) · [HTTP.SERVER.ON_POST](#http-functions) · [HTTP.SERVER.START](#http-functions) · [HTTP.SERVER.STOP](#http-functions) · [HTTP.SERVER.WAIT](#http-functions) · [HTTP.SETCOOKIE](#http-functions) · [HTTP.SETHEADER](#http-functions) · [HTTP.SETPARAM](#http-functions) · [HTTP.SETTIMEOUT](#http-functions) · [HTTP.STATUSCODE](#http-functions)
 
-**I** · [IF](#system--flow-control) · [IIF](#matharithmeticround-functions) · [IMAGE.CONVERT](#os-functions) · [IMPORT](#system--flow-control) · [INDEXOF](#array--matrix-functions) · [INPUT](#console-io-functions) · [INPUTBOX$](#native-windows-forms-form) · [INPUT_HIDDEN$](#console-io-functions) · [INSERT$](#string-functions) · [INSTR](#string-functions) · [INT](#matharithmeticround-functions) · [INTEGRATE](#array--matrix-functions) · [INVERT](#array--matrix-functions) · [IOTA](#array--matrix-functions) · [ISARR](#type-inspection) · [ISBOOL](#type-inspection) · [ISMAP](#type-inspection) · [ISNONE](#type-inspection) · [ISNUM](#type-inspection) · [ISSTR](#type-inspection)
+**I** · [IF](#system--flow-control) · [IIF](#matharithmeticround-functions) · [IMAGE.CONVERT](#os-functions) · [IMAGE.CROP](#os-functions) · [IMAGE.META](#os-functions) · [IMAGE.RESIZE](#os-functions) · [IMAGE.SETMETA](#os-functions) · [IMAGE.SIZE](#os-functions) · [IMAGE.STRIP](#os-functions) · [IMPORT](#system--flow-control) · [INDEXOF](#array--matrix-functions) · [INPUT](#console-io-functions) · [INPUTBOX$](#native-windows-forms-form) · [INPUT_HIDDEN$](#console-io-functions) · [INSERT$](#string-functions) · [INSTR](#string-functions) · [INT](#matharithmeticround-functions) · [INTEGRATE](#array--matrix-functions) · [INVERT](#array--matrix-functions) · [IOTA](#array--matrix-functions) · [ISARR](#type-inspection) · [ISBOOL](#type-inspection) · [ISMAP](#type-inspection) · [ISNONE](#type-inspection) · [ISNUM](#type-inspection) · [ISSTR](#type-inspection)
 
 **J** · [JDB.ALIASES](#type-inspection) · [JDB.CHECK$](#type-inspection) · [JDB.GLOBAL_GET](#type-inspection) · [JOIN](#string-functions) · [JOY.AXIS](#mouse--joystick--gamepad-input) · [JOY.BUTTON](#mouse--joystick--gamepad-input) · [JOY.COUNT](#mouse--joystick--gamepad-input) · [JOY.HAT](#mouse--joystick--gamepad-input) · [JOY.NAME$](#mouse--joystick--gamepad-input) · [JSON.PARSE](#json-functions) · [JSON.STRINGIFY$](#json-functions)
 

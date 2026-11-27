@@ -1,4 +1,5 @@
-// screencap.cpp - backing for the OS.SCREENSHOT builtin.
+// screencap.cpp - backing for OS.SCREENSHOT and the pixel side of IMAGE.*
+// (CONVERT, CROP, RESIZE).
 //
 // Windows: GDI BitBlt capture + WIC encode. The output format (PNG / JPG /
 // BMP / TIFF / GIF) is chosen from the file extension; WIC converts the
@@ -14,11 +15,14 @@
 #include <string>
 #include <cstdint>
 #include <cctype>
+#include <cstring>
+#include "image_meta.h"
 
 enum {
     SC_OK          = 0,
     SC_E_PATH      = -1,
     SC_E_WINDOW    = -2,
+    SC_E_RECT      = -2,   // IMAGE.CROP / IMAGE.RESIZE: a rectangle or size out of range
     SC_E_CAPTURE   = -3,
     SC_E_ENCODE    = -4,
     SC_E_SIZE      = -5,
@@ -193,17 +197,41 @@ extern "C" int jdb_screencap(const char* path_utf8, const char* mode,
     return rc;
 }
 
-// Decode the first frame of `src` (any WIC format) to 32bpp BGRA, then encode
-// it to `dst` by its extension. The source is closed before the target is
-// opened, so src and dst may name the same file.
-extern "C" int jdb_imgconvert(const char* src_utf8, const char* dst_utf8) {
+struct ScCom {
+    bool did = false;
+    ScCom() {
+        HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+        did = (hr == S_OK || hr == S_FALSE);
+    }
+    ~ScCom() { if (did) CoUninitialize(); }
+};
+
+struct ScImage {
+    std::vector<uint8_t> px;  // top-down 32bpp BGRA
+    int w = 0, h = 0;
+};
+
+// The pixel of the displayed image at (dx, dy) is the stored one at
+// (sx, sy); sw and sh are the stored width and height.
+static void sc_source_of(int orientation, int dx, int dy, int sw, int sh, int& sx, int& sy) {
+    switch (orientation) {
+        case 2: sx = sw - 1 - dx; sy = dy; break;
+        case 3: sx = sw - 1 - dx; sy = sh - 1 - dy; break;
+        case 4: sx = dx; sy = sh - 1 - dy; break;
+        case 5: sx = dy; sy = dx; break;
+        case 6: sx = dy; sy = sh - 1 - dx; break;
+        case 7: sx = sw - 1 - dy; sy = sh - 1 - dx; break;
+        case 8: sx = sw - 1 - dy; sy = dx; break;
+        default: sx = dx; sy = dy; break;
+    }
+}
+
+// Decodes the first frame of `src` (any WIC format) to BGRA, turned the way
+// a JPEG's EXIF orientation says it is displayed. The file is closed again
+// before this returns, so a target may name the same file.
+static int sc_load(const char* src_utf8, ScImage& img) {
     if (!src_utf8 || !*src_utf8) return SC_E_DECODE;
-    if (!dst_utf8 || !*dst_utf8) return SC_E_PATH;
-
-    bool did_co = false;
-    HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
-    if (hr == S_OK || hr == S_FALSE) did_co = true;
-
+    ScCom com;
     IWICImagingFactory*    factory = NULL;
     IWICBitmapDecoder*     decoder = NULL;
     IWICBitmapFrameDecode* frame   = NULL;
@@ -211,9 +239,8 @@ extern "C" int jdb_imgconvert(const char* src_utf8, const char* dst_utf8) {
     std::vector<uint8_t> buf;
     UINT w = 0, h = 0;
     int rc = SC_E_DECODE;
-
-    hr = CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER,
-                          IID_PPV_ARGS(&factory));
+    HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER,
+                                  IID_PPV_ARGS(&factory));
     if (FAILED(hr) || !factory) goto done;
     hr = factory->CreateDecoderFromFilename(sc_wide(src_utf8).c_str(), NULL,
             GENERIC_READ, WICDecodeMetadataCacheOnDemand, &decoder);
@@ -237,17 +264,122 @@ extern "C" int jdb_imgconvert(const char* src_utf8, const char* dst_utf8) {
     hr = conv->CopyPixels(NULL, w * 4u, (UINT)buf.size(), buf.data());
     if (FAILED(hr)) goto done;
     rc = SC_OK;
-
 done:
     if (conv)    conv->Release();
     if (frame)   frame->Release();
     if (decoder) decoder->Release();
     if (factory) factory->Release();
-    if (rc == SC_OK)
-        rc = sc_wic_write(sc_wide(dst_utf8).c_str(), buf.data(), (int)w, (int)h,
-                          sc_container_for_ext(dst_utf8));
-    if (did_co) CoUninitialize();
-    return rc;
+    if (rc != SC_OK) return rc;
+
+    int orientation = 1;
+    jdb_image::Bytes file;
+    if (jdb_image::read_file(src_utf8, file)) orientation = jdb_image::jpeg_orientation(file);
+    if (orientation <= 1) {
+        img.px.swap(buf);
+        img.w = (int)w;
+        img.h = (int)h;
+        return SC_OK;
+    }
+    int sw = (int)w, sh = (int)h;
+    img.w = orientation >= 5 ? sh : sw;
+    img.h = orientation >= 5 ? sw : sh;
+    try {
+        img.px.resize(buf.size());
+    } catch (const std::bad_alloc&) {
+        return SC_E_SIZE;
+    }
+    const uint32_t* from = (const uint32_t*)buf.data();
+    uint32_t* to = (uint32_t*)img.px.data();
+    for (int dy = 0; dy < img.h; dy++)
+        for (int dx = 0; dx < img.w; dx++) {
+            int sx, sy;
+            sc_source_of(orientation, dx, dy, sw, sh, sx, sy);
+            to[(size_t)dy * img.w + dx] = from[(size_t)sy * sw + sx];
+        }
+    return SC_OK;
+}
+
+static int sc_save(const char* dst_utf8, const ScImage& img) {
+    return sc_wic_write(sc_wide(dst_utf8).c_str(), img.px.data(), img.w, img.h,
+                        sc_container_for_ext(dst_utf8));
+}
+
+// Writes `src` to `dst` by its extension, as displayed.
+extern "C" int jdb_imgconvert(const char* src_utf8, const char* dst_utf8) {
+    if (!src_utf8 || !*src_utf8) return SC_E_DECODE;
+    if (!dst_utf8 || !*dst_utf8) return SC_E_PATH;
+    ScImage img;
+    int rc = sc_load(src_utf8, img);
+    return rc != SC_OK ? rc : sc_save(dst_utf8, img);
+}
+
+// Writes the rectangle (x, y, w, h) of `src` as displayed to `dst`.
+extern "C" int jdb_imgcrop(const char* src_utf8, const char* dst_utf8, int x, int y, int w, int h) {
+    if (!src_utf8 || !*src_utf8) return SC_E_DECODE;
+    if (!dst_utf8 || !*dst_utf8) return SC_E_PATH;
+    ScImage img;
+    int rc = sc_load(src_utf8, img);
+    if (rc != SC_OK) return rc;
+    if (x < 0 || y < 0 || w <= 0 || h <= 0 || x > img.w - w || y > img.h - h) return SC_E_RECT;
+    ScImage out;
+    out.w = w;
+    out.h = h;
+    out.px.resize((size_t)w * 4u * (size_t)h);
+    for (int row = 0; row < h; row++)
+        memcpy(&out.px[(size_t)row * w * 4u], &img.px[((size_t)(y + row) * img.w + x) * 4u], (size_t)w * 4u);
+    return sc_save(dst_utf8, out);
+}
+
+// Writes `src` as displayed, scaled to w by h, to `dst`; a 0 follows from
+// the other side so that the proportions stay.
+extern "C" int jdb_imgresize(const char* src_utf8, const char* dst_utf8, int w, int h) {
+    if (!src_utf8 || !*src_utf8) return SC_E_DECODE;
+    if (!dst_utf8 || !*dst_utf8) return SC_E_PATH;
+    if (w < 0 || h < 0 || (w == 0 && h == 0)) return SC_E_RECT;
+    ScImage img;
+    int rc = sc_load(src_utf8, img);
+    if (rc != SC_OK) return rc;
+    double nw = w, nh = h;
+    if (w == 0) nw = (double)img.w * h / img.h;
+    if (h == 0) nh = (double)img.h * w / img.w;
+    nw = nw < 1 ? 1 : nw + 0.5;
+    nh = nh < 1 ? 1 : nh + 0.5;
+    if (nw * nh > (double)SC_MAX_PIXELS) return SC_E_RECT;
+    ScImage out;
+    out.w = (int)nw;
+    out.h = (int)nh;
+    try {
+        out.px.resize((size_t)out.w * 4u * (size_t)out.h);
+    } catch (const std::bad_alloc&) {
+        return SC_E_SIZE;
+    }
+    ScCom com;
+    IWICImagingFactory* factory = NULL;
+    IWICBitmap*         bitmap  = NULL;
+    IWICBitmapScaler*   scaler  = NULL;
+    rc = SC_E_ENCODE;
+    HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER,
+                                  IID_PPV_ARGS(&factory));
+    if (FAILED(hr) || !factory) goto done;
+    hr = factory->CreateBitmapFromMemory((UINT)img.w, (UINT)img.h, GUID_WICPixelFormat32bppBGRA,
+            (UINT)img.w * 4u, (UINT)img.px.size(), img.px.data(), &bitmap);
+    if (FAILED(hr)) goto done;
+    hr = factory->CreateBitmapScaler(&scaler);
+    if (FAILED(hr)) goto done;
+    // Fant averages every pixel a target pixel covers when shrinking;
+    // growing is interpolated by the cubic.
+    hr = scaler->Initialize(bitmap, (UINT)out.w, (UINT)out.h,
+            (out.w < img.w || out.h < img.h) ? WICBitmapInterpolationModeFant
+                                             : WICBitmapInterpolationModeCubic);
+    if (FAILED(hr)) goto done;
+    hr = scaler->CopyPixels(NULL, (UINT)out.w * 4u, (UINT)out.px.size(), out.px.data());
+    if (FAILED(hr)) goto done;
+    rc = SC_OK;
+done:
+    if (scaler)  scaler->Release();
+    if (bitmap)  bitmap->Release();
+    if (factory) factory->Release();
+    return rc != SC_OK ? rc : sc_save(dst_utf8, out);
 }
 
 #elif defined(__linux__) && defined(GFX)
@@ -413,6 +545,12 @@ extern "C" int jdb_screencap(const char*, const char*, const char*) {
 
 #if !defined(_WIN32)
 extern "C" int jdb_imgconvert(const char*, const char*) {
+    return SC_UNSUPPORTED;
+}
+extern "C" int jdb_imgcrop(const char*, const char*, int, int, int, int) {
+    return SC_UNSUPPORTED;
+}
+extern "C" int jdb_imgresize(const char*, const char*, int, int) {
     return SC_UNSUPPORTED;
 }
 #endif

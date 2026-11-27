@@ -4,6 +4,21 @@ Range: `v1.3.0..HEAD`.
 
 ## New
 
+- **Images without a window** (#1109, #1114): `IMAGE.SIZE` reads the width
+  and height of a JPEG, PNG, GIF or BMP from its header, `IMAGE.CROP` and
+  `IMAGE.RESIZE` (Windows) cut and scale a photo. All of them, and
+  `IMAGE.CONVERT`, take a JPEG the way its EXIF orientation displays it, so
+  a phone photo stays upright, and write no metadata. `IMAGE.META` reads the
+  EXIF, GPS position, XMP and PNG text of a JPEG or PNG on every platform,
+  `IMAGE.STRIP` removes all of it or only the position without touching the
+  image, and `IMAGE.SETMETA` sets or removes the artist, copyright,
+  description, software and date.
+- **`tools/hooks/check_images.ps1`** (#1115): an agent commit that takes an
+  image with a GPS position, a photographer or owner name, a camera serial
+  or a private term in its metadata is blocked; an untracked image goes into
+  `.gitignore`, a tracked one is reported. The check itself is
+  `tools/hooks/image_privacy.jdb <repo> <list-file>`, usable from any
+  repository.
 - **`jdbasic --repl-script <file>`**: the REPL fed from a file, or from
   standard input with `-`. Each line is echoed behind the prompt and
   executed as if typed, then the program exits; a REPL session can be

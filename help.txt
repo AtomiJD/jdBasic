@@ -2873,6 +2873,59 @@ Returns 0 on success; -1 dst$ empty or not writable, -4 encoder failed,
 -5 more than 100 million pixels, -6 src$ empty, missing or not an image.
 Example: rc = IMAGE.CONVERT("diagram.gif", "diagram.png")
 
+[IMAGE.SIZE]
+Syntax: IMAGE.SIZE(src$) -> array
+Description: [width, height] of a JPEG, PNG, GIF or BMP as displayed (a
+JPEG's EXIF orientation applied), read from the header. Every platform.
+[0, 0] when src$ is missing or of another format.
+Example: wh = IMAGE.SIZE("photo.jpg")
+
+[IMAGE.CROP]
+Syntax: IMAGE.CROP(src$, dst$, x, y, w, h) -> INTEGER
+Description: Writes the rectangle x, y, w, h of src$ as displayed to dst$
+in the format of its extension, without metadata. Windows only (-100
+elsewhere). Errors as IMAGE.CONVERT, and -2 for an empty rectangle or one
+reaching past the image.
+Example: rc = IMAGE.CROP("photo.jpg", "cut.jpg", 0, 500, 3024, 2268)
+
+[IMAGE.RESIZE]
+Syntax: IMAGE.RESIZE(src$, dst$, w, h) -> INTEGER
+Description: Writes src$ as displayed, scaled to w by h, to dst$ without
+metadata; w or h 0 keeps the proportions. Windows only (-100 elsewhere).
+Errors as IMAGE.CONVERT, and -2 for a negative size, both 0, or more than
+100 million pixels.
+Example: rc = IMAGE.RESIZE("cut.jpg", "small.jpg", 1200, 0)
+
+[IMAGE.META]
+Syntax: IMAGE.META(src$) -> map
+Description: The metadata of a JPEG or PNG, read from its bytes on every
+platform: "format", "orientation", EXIF text fields (make, model, software,
+datetime, datetime_original, artist, copyright, description, owner, serial,
+lens_serial, user_comment, xp_title, xp_subject, xp_author, xp_comment,
+xp_keywords), gps_latitude / gps_longitude / gps_altitude, "xmp", "iptc",
+"comment", and for a PNG "text" (keyword to text). Only what the file
+holds; an empty map for a missing file or another format.
+Example: m = IMAGE.META("photo.jpg")
+
+[IMAGE.STRIP]
+Syntax: IMAGE.STRIP(src$, dst$, [what$]) -> INTEGER
+Description: Writes src$ to dst$ without metadata, the image copied byte for
+byte. what$ "all" (default) removes EXIF, XMP, IPTC and comments (JPEG) or
+text, eXIf and tIME chunks (PNG), keeping the colour profile and the
+orientation; "gps" removes only the position. A rewritten EXIF loses its
+thumbnail and MakerNote. 0 ok, -1 dst$ not writable, -3 bad what$, -6 src$
+missing or not JPEG/PNG. Every platform.
+Example: rc = IMAGE.STRIP("photo.jpg", "public.jpg")
+
+[IMAGE.SETMETA]
+Syntax: IMAGE.SETMETA(src$, dst$, fields) -> INTEGER
+Description: Writes src$ to dst$ with text fields set from the map fields;
+"" removes one. Names: artist, copyright, description, software, datetime
+(EXIF in a JPEG; Author, Copyright, Description, Software, Creation Time
+text chunks in a PNG). 0 ok, -1 dst$ not writable, -3 unknown name or a
+value that is no text, -6 src$ missing or not JPEG/PNG. Every platform.
+Example: rc = IMAGE.SETMETA("photo.jpg", "photo.jpg", {"copyright": "CC BY 4.0"})
+
 [OUTER]
 Syntax: OUTER(vectorA, vectorB, operator)
 Description: Creates an outer product table from two vectors and an operator.

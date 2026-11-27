@@ -332,7 +332,7 @@ fi
 SRC="src/main.cpp src/lexer.cpp src/parser.cpp src/compiler.cpp src/vm.cpp src/vm_builtins_math.cpp src/vm_builtins_string.cpp src/vm_builtins_data.cpp src/vm_builtins_array.cpp src/vm_builtins_datetime.cpp src/vm_builtins_codec.cpp src/vm_builtins_console.cpp src/vm_builtins_file.cpp src/vm_builtins_system.cpp src/vm_builtins_async.cpp \
      src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp src/audio_fx.cpp src/midi.cpp src/audio_io.cpp \
      src/gui.cpp src/ai.cpp src/llm.cpp src/channels.cpp src/file_streams.cpp \
-     src/numerics.cpp src/screencap.cpp src/pybridge.cpp src/pcode.cpp \
+     src/numerics.cpp src/screencap.cpp src/image_meta.cpp src/pybridge.cpp src/pcode.cpp \
      $HTTP_SRC $NET_SRC $GFX_SRC $OPENGL_SRC $IMGUI_SRC $NATIVEC_SRC $MCPSERVER_SRC $SQL_SRC $FTXUI_SRC $TUI_SRC $MIDI_SRC"
 
 # ── Compile in parallel ──────────────────────────────────────
@@ -445,7 +445,7 @@ if [ "$WANT_NATIVEC" = "1" ]; then
             src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp \
             src/audio_fx.cpp src/midi.cpp src/audio_io.cpp src/pybridge.cpp \
             src/gui.cpp src/ai.cpp src/llm.cpp src/channels.cpp src/file_streams.cpp \
-            src/numerics.cpp src/screencap.cpp src/pcode.cpp \
+            src/numerics.cpp src/screencap.cpp src/image_meta.cpp src/pcode.cpp \
             $HTTP_SRC $NET_SRC $GFX_SRC $IMGUI_SRC $TUI_SRC $SQL_SRC"
     RT_FLAGS_HASH=$(echo "$CXX $CXXFLAGS -fPIC -DJDRT_EXPORTS" | sha1sum | cut -c1-12)
     RT_STAMP="build/obj_pic/.flags-$RT_FLAGS_HASH"

@@ -82,6 +82,9 @@ extern "C" int jdb_stdin_getc(int timeout_us);
 extern "C" int jdb_screencap(const char* path, const char* mode, const char* caption);
 // IMAGE.CONVERT backing (src/screencap.cpp). WIC on Windows, -100 elsewhere.
 extern "C" int jdb_imgconvert(const char* src, const char* dst);
+// IMAGE.CROP / IMAGE.RESIZE backing, the same way.
+extern "C" int jdb_imgcrop(const char* src, const char* dst, int x, int y, int w, int h);
+extern "C" int jdb_imgresize(const char* src, const char* dst, int w, int h);
 
 #ifdef PICOCALC
 extern "C" int  picocalc_gfx_buffered(void);

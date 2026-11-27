@@ -3,6 +3,9 @@
 #include "jdb_aliases.h"
 #include "vm_internal.h"
 #include "os_spawn.h"
+#include "image_meta.h"
+#include <algorithm>
+#include <climits>
 #include <fstream>
 #include <mutex>
 #include <thread>
@@ -696,6 +699,113 @@ void VM::register_system_builtins() {
         if (args[1].type != ValueType::STRING) return Value::make_i64(-1);
         return Value::make_i64(jdb_imgconvert(args[0].as_string()->data.c_str(),
                                               args[1].as_string()->data.c_str()));
+    });
+
+    auto int_arg = [](const Value& v, int64_t& out) {
+        if (!is_numeric(v.type)) return false;
+        double d = v.to_double();
+        if (!(d > -2147483648.0 && d < 2147483648.0)) return false;
+        out = (int64_t)d;
+        return true;
+    };
+    auto clamp_int = [](int64_t v) { return (int)std::max<int64_t>(INT_MIN, std::min<int64_t>(INT_MAX, v)); };
+
+    // IMAGE.CROP(src$, dst$, x, y, w, h) -> int rc
+    register_native("IMAGE.CROP", 6, 6, [=](const std::vector<Value>& args) -> Value {
+        if (args[0].type != ValueType::STRING) return Value::make_i64(-6);
+        if (args[1].type != ValueType::STRING) return Value::make_i64(-1);
+        int64_t r[4];
+        for (int i = 0; i < 4; i++) if (!int_arg(args[2 + i], r[i])) return Value::make_i64(-2);
+        return Value::make_i64(jdb_imgcrop(args[0].as_string()->data.c_str(), args[1].as_string()->data.c_str(),
+                                           clamp_int(r[0]), clamp_int(r[1]), clamp_int(r[2]), clamp_int(r[3])));
+    });
+
+    // IMAGE.RESIZE(src$, dst$, w, h) -> int rc
+    register_native("IMAGE.RESIZE", 4, 4, [=](const std::vector<Value>& args) -> Value {
+        if (args[0].type != ValueType::STRING) return Value::make_i64(-6);
+        if (args[1].type != ValueType::STRING) return Value::make_i64(-1);
+        int64_t w, h;
+        if (!int_arg(args[2], w) || !int_arg(args[3], h)) return Value::make_i64(-2);
+        return Value::make_i64(jdb_imgresize(args[0].as_string()->data.c_str(), args[1].as_string()->data.c_str(),
+                                             clamp_int(w), clamp_int(h)));
+    });
+
+    // IMAGE.SIZE(src$) -> [width, height] as displayed, [0, 0] when unreadable
+    register_native("IMAGE.SIZE", 1, 1, [](const std::vector<Value>& args) -> Value {
+        int w = 0, h = 0;
+        jdb_image::Bytes file;
+        if (args[0].type == ValueType::STRING && jdb_image::read_file(args[0].as_string()->data, file))
+            jdb_image::display_size(file, w, h);
+        Value r = Value::make_array();
+        r.as_array()->elements.push_back(Value::make_i64(w));
+        r.as_array()->elements.push_back(Value::make_i64(h));
+        return r;
+    });
+
+    // IMAGE.META(src$) -> map; empty for a missing file or another format
+    register_native("IMAGE.META", 1, 1, [](const std::vector<Value>& args) -> Value {
+        Value m = Value::make_object();
+        auto* o = m.as_object();
+        jdb_image::Bytes file;
+        jdb_image::Meta meta;
+        if (args[0].type != ValueType::STRING || !jdb_image::read_file(args[0].as_string()->data, file) ||
+            !jdb_image::read_meta(file, meta))
+            return m;
+        o->set("format", Value::make_string(meta.format));
+        if (meta.orientation) o->set("orientation", Value::make_i64(meta.orientation));
+        for (auto& t : meta.texts) o->set(t.first, Value::make_string(t.second));
+        if (meta.has_gps) {
+            o->set("gps_latitude", Value::make_f64(meta.latitude));
+            o->set("gps_longitude", Value::make_f64(meta.longitude));
+        }
+        if (meta.has_altitude) o->set("gps_altitude", Value::make_f64(meta.altitude));
+        if (!meta.xmp.empty()) o->set("xmp", Value::make_string(meta.xmp));
+        if (meta.iptc) o->set("iptc", Value::make_bool(true));
+        if (meta.has_comment) o->set("comment", Value::make_string(meta.comment));
+        if (!meta.png_text.empty()) {
+            Value t = Value::make_object();
+            for (auto& kv : meta.png_text) t.as_object()->set(kv.first, Value::make_string(kv.second));
+            o->set("text", t);
+        }
+        return m;
+    });
+
+    // IMAGE.STRIP(src$, dst$ [, what$]) -> int rc
+    register_native("IMAGE.STRIP", 2, 3, [](const std::vector<Value>& args) -> Value {
+        if (args[0].type != ValueType::STRING) return Value::make_i64(-6);
+        if (args[1].type != ValueType::STRING) return Value::make_i64(-1);
+        std::string what = "all";
+        if (args.size() > 2) {
+            if (args[2].type != ValueType::STRING) return Value::make_i64(-3);
+            what = args[2].as_string()->data;
+            for (auto& c : what) c = (char)tolower((unsigned char)c);
+        }
+        if (what != "all" && what != "gps") return Value::make_i64(-3);
+        jdb_image::Bytes file, out;
+        if (!jdb_image::read_file(args[0].as_string()->data, file)) return Value::make_i64(-6);
+        int rc = jdb_image::strip(file, what, out);
+        if (rc != 0) return Value::make_i64(rc);
+        return Value::make_i64(jdb_image::write_file(args[1].as_string()->data, out) ? 0 : -1);
+    });
+
+    // IMAGE.SETMETA(src$, dst$, fields) -> int rc
+    register_native("IMAGE.SETMETA", 3, 3, [](const std::vector<Value>& args) -> Value {
+        if (args[0].type != ValueType::STRING) return Value::make_i64(-6);
+        if (args[1].type != ValueType::STRING) return Value::make_i64(-1);
+        if (args[2].type != ValueType::OBJECT || args[2].is_com() || !args[2].as_object())
+            return Value::make_i64(-3);
+        jdb_image::Fields fields;
+        for (auto& kv : args[2].as_object()->fields) {
+            if (kv.second.type != ValueType::STRING) return Value::make_i64(-3);
+            std::string name = kv.first;
+            for (auto& c : name) c = (char)tolower((unsigned char)c);
+            fields.push_back({ name, kv.second.as_string()->data });
+        }
+        jdb_image::Bytes file, out;
+        if (!jdb_image::read_file(args[0].as_string()->data, file)) return Value::make_i64(-6);
+        int rc = jdb_image::set_meta(file, fields, out);
+        if (rc != 0) return Value::make_i64(rc);
+        return Value::make_i64(jdb_image::write_file(args[1].as_string()->data, out) ? 0 : -1);
     });
 #endif
 

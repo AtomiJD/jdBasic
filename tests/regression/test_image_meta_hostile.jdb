@@ -1,0 +1,83 @@
+' IMAGE.META and IMAGE.STRIP on files built to make the reader copy or
+' inflate far more than the file holds: an EXIF whose Exif and GPS parts
+' point back at its first directory, every entry naming the whole TIFF as
+' its value, and a PNG of many compressed text chunks that each inflate to
+' a megabyte. Both answer within a second and keep the file readable.
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Check(ok AS BOOLEAN, label$)
+    IF ok THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: "; label$
+    ENDIF
+ENDSUB
+
+FUNC Chunk$(kind$, body$)
+    RETURN PACK$(">I", LEN(body$)) + kind$ + body$ + PACK$(">I", CODEC.CRC32(kind$ + body$))
+ENDFUNC
+
+FUNC PngHead$()
+    DIM sig$ = CHR$(137) + "PNG" + CHR$(13) + CHR$(10) + CHR$(26) + CHR$(10)
+    RETURN sig$ + Chunk$("IHDR", PACK$(">IIBBBBB", 2, 2, 8, 2, 0, 0, 0))
+ENDFUNC
+
+DIM dir$ = MKTEMP$("imghostile")
+MKDIR dir$
+
+' 1000 entries in IFD0, the Exif and GPS pointers back at IFD0, the rest
+' UNDEFINED values as long as the whole TIFF, starting at its first byte.
+DIM tiffLen AS INTEGER = 262144
+DIM entries AS INTEGER = 1000
+DIM ifd$ = PACK$(">H", entries)
+ifd$ = ifd$ + PACK$(">HHII", 34665, 4, 1, 8) + PACK$(">HHII", 34853, 4, 1, 8)
+DIM i AS INTEGER
+FOR i = 3 TO entries
+    ifd$ = ifd$ + PACK$(">HHII", 40000 + i, 7, tiffLen, 0)
+NEXT i
+ifd$ = ifd$ + PACK$(">I", 0)
+DIM tiff$ = "MM" + PACK$(">HI", 42, 8) + ifd$
+tiff$ = tiff$ + SPACE$(tiffLen - LEN(tiff$))
+DIM loopPng$ = PATH.JOIN$(dir$, "loop.png")
+BINWRITER loopPng$, PngHead$() + Chunk$("eXIf", tiff$) + Chunk$("IEND", "")
+
+DIM t0 = TICK()
+DIM m = IMAGE.META(loopPng$)
+Check(TICK() - t0 < 1000, "an EXIF that points back at itself is read within a second")
+Check(m{"format"} = "png", "the PNG with the looping EXIF is still a PNG")
+t0 = TICK()
+Check(IMAGE.STRIP(loopPng$, PATH.JOIN$(dir$, "loop_gps.png"), "gps") = 0, "STRIP gps of the looping EXIF succeeds")
+Check(TICK() - t0 < 1000, "STRIP gps of the looping EXIF takes under a second")
+Check(FILE.SIZE(PATH.JOIN$(dir$, "loop_gps.png")) < 2 * FILE.SIZE(loopPng$), "the rewritten EXIF is not larger than twice the file")
+
+' 300 compressed text chunks, each a megabyte of the same byte.
+DIM packed$ = CODEC.DEFLATE$(REPEAT$("x", 1048576), 9, "zlib")
+DIM body$ = ""
+FOR i = 1 TO 300
+    body$ = body$ + Chunk$("zTXt", "k" + STR$(i) + CHR$(0) + CHR$(0) + packed$)
+NEXT i
+DIM bombPng$ = PATH.JOIN$(dir$, "bomb.png")
+BINWRITER bombPng$, PngHead$() + body$ + Chunk$("IEND", "")
+t0 = TICK()
+m = IMAGE.META(bombPng$)
+Check(TICK() - t0 < 2000, "a PNG of 300 one-megabyte text chunks is read within two seconds")
+DIM total AS INTEGER = 0
+DIM k$ = ""
+FOR EACH k$ IN MAP.KEYS(m{"text"})
+    total = total + LEN(m{"text"}{k$})
+NEXT
+Check(total <= 8388608, "the text read from it stays within 8 MB")
+Check(total > 0, "the first text chunks are read")
+
+KILL loopPng$
+KILL PATH.JOIN$(dir$, "loop_gps.png")
+KILL bombPng$
+RMDIR dir$
+
+PRINT "RESULTS: "; passed; " passed, "; failed; " failed"
+IF failed > 0 THEN END 1
