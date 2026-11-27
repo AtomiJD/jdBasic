@@ -1,0 +1,498 @@
+' jdPix - a picture viewer on native Windows forms.
+'
+'   jdbasic jdpix.jdb [picture | folder]
+'   jdbasic -c jdpix.jdb            (jdpix.jdb.props gives the .exe its icon)
+'
+' Opens a picture and steps through the pictures of its folder. Fit to the
+' window or zoom with the wheel at the pointer, drag to pan, turn a photo
+' without losing quality, see what it gives away (camera, date, GPS
+' position) and save a copy without any of it. No library, no account.
+
+OPTION "EXPLICIT"
+
+DIM APP_NAME AS STRING = "jdPix"
+DIM PIC_EXTS AS ARRAY = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tif", ".tiff", ".ico", ".webp", ".heic", ".jxr"]
+DIM PIC_FILTER AS STRING = "Pictures|*.jpg;*.jpeg;*.png;*.gif;*.bmp;*.tif;*.tiff;*.ico;*.webp;*.heic|All files (*.*)|*.*"
+DIM SB_HEIGHT AS INTEGER = 22
+DIM INFO_W AS INTEGER = 300
+DIM BACK AS INTEGER = $202020
+DIM ZOOM_STEP AS DOUBLE = 1.25
+DIM REG_KEY AS STRING = "Software\jdPix"
+DIM HKEY_CURRENT_USER AS INTEGER = -2147483647
+DIM REG_SZ AS INTEGER = 1
+
+DIM frm AS DOUBLE = 0
+DIM pic AS DOUBLE = 0
+DIM info AS DOUBLE = 0
+DIM sb AS DOUBLE = 0
+DIM hint AS DOUBLE = 0
+DIM client_w AS INTEGER = 1100
+DIM client_h AS INTEGER = 760
+DIM info_on AS INTEGER = 0
+DIM window_place AS STRING = ""
+
+' The folder being looked through and where in it we are.
+DIM folder AS STRING = ""
+DIM names AS ARRAY = []
+DIM cur AS INTEGER = -1
+DIM cur_path AS STRING = ""
+
+' A drag that pans: the picture pixel the mouse took hold of.
+DIM dragging AS INTEGER = 0
+DIM grab_x AS DOUBLE = 0
+DIM grab_y AS DOUBLE = 0
+
+' ── settings (registry) ─────────────────────────────────────────
+
+DECLARE FUNC RegSetKeyValueA LIB "advapi32.dll" ALIAS "RegSetKeyValueA" (hkey AS INTEGER, subkey AS STRING, value_name AS STRING, kind AS INTEGER, data AS STRING, n_bytes AS INTEGER) AS INTEGER
+DECLARE FUNC SHRegGetPathA LIB "shlwapi.dll" ALIAS "SHRegGetPathA" (hkey AS INTEGER, subkey AS STRING, value_name AS STRING, buf AS RETURN, flags AS INTEGER) AS ARRAY
+
+FUNC REG_GET$(item_name AS STRING, fallback AS STRING)
+    DIM got AS ARRAY = SHRegGetPathA(HKEY_CURRENT_USER, REG_KEY, item_name, 260, 0)
+    IF got[0] <> 0 THEN RETURN fallback
+    RETURN got[1]
+ENDFUNC
+
+SUB REG_PUT(item_name AS STRING, v AS STRING)
+    DIM rc AS INTEGER = RegSetKeyValueA(HKEY_CURRENT_USER, REG_KEY, item_name, REG_SZ, v, LEN(v) + 1)
+ENDSUB
+
+' ── the folder ─────────────────────────────────────────────────
+
+FUNC IS_PICTURE(name AS STRING) AS BOOLEAN
+    RETURN INDEXOF(PIC_EXTS, LCASE$(PATH.EXT$(name))) >= 0
+ENDFUNC
+
+' The pictures of `dir_path`, by name regardless of case.
+FUNC PICTURES_IN(dir_path AS STRING) AS ARRAY
+    DIM found AS ARRAY = []
+    DIM f AS STRING = ""
+    FOR EACH f IN FILE.LIST(PATH.JOIN$(dir_path, "*"))
+        IF IS_PICTURE(f) ANDALSO NOT FILE.ISDIR(PATH.JOIN$(dir_path, f)) THEN found = APPEND(found, f)
+    NEXT
+    IF LEN(found) < 2 THEN RETURN found
+    DIM order AS ARRAY = GRADE(SELECT(LAMBDA s -> LCASE$(s), found))
+    DIM sorted AS ARRAY = []
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(order) - 1
+        sorted = APPEND(sorted, found[order[i]])
+    NEXT
+    RETURN sorted
+ENDFUNC
+
+' ── showing a picture ──────────────────────────────────────────
+
+SUB UPDATE_STATUS()
+    IF cur < 0 THEN
+        FORM.SET(sb, "TEXT", ["", "", "", ""])
+        FORM.SET(frm, "TEXT", APP_NAME)
+        RETURN
+    ENDIF
+    DIM where AS STRING = STR$(cur + 1) + " / " + STR$(LEN(names))
+    DIM dims AS STRING = STR$(FORM.GET(pic, "IMAGEWIDTH")) + " x " + STR$(FORM.GET(pic, "IMAGEHEIGHT"))
+    DIM pct AS STRING = STR$(CINT(FORM.GET(pic, "SCALE") * 100)) + "%"
+    IF FORM.GET(pic, "SCALEMODE") = "fit" THEN pct = pct + " (fit)"
+    FORM.SET(sb, "TEXT", [names[cur], where, dims, pct])
+    FORM.SET(frm, "TEXT", names[cur] + " - " + APP_NAME)
+ENDSUB
+
+FUNC FILE_SIZE_TEXT$(bytes AS DOUBLE)
+    IF bytes >= 1048576 THEN RETURN STR$(ROUND(bytes / 1048576, 1)) + " MB"
+    IF bytes >= 1024 THEN RETURN STR$(ROUND(bytes / 1024, 0)) + " KB"
+    RETURN STR$(bytes) + " bytes"
+ENDFUNC
+
+SUB UPDATE_INFO()
+    IF NOT info_on THEN RETURN
+    FORM.SET(info, "CLEAR", TRUE)
+    IF cur < 0 THEN RETURN
+    DIM st AS OBJECT = FILE.STAT(cur_path)
+    DIM m AS OBJECT = IMAGE.META(cur_path)
+    DIM rows AS ARRAY = []
+    PUSH(rows, ["File", names[cur]])
+    PUSH(rows, ["Folder", folder])
+    PUSH(rows, ["Size", STR$(FORM.GET(pic, "IMAGEWIDTH")) + " x " + STR$(FORM.GET(pic, "IMAGEHEIGHT")) + " pixels"])
+    PUSH(rows, ["File size", FILE_SIZE_TEXT$(st{"size"})])
+    PUSH(rows, ["Modified", st{"mtime"}])
+    DIM labels AS ARRAY = [["datetime_original", "Taken"], ["make", "Camera make"], ["model", "Camera model"], _
+        ["software", "Software"], ["artist", "Artist"], ["copyright", "Copyright"], ["owner", "Camera owner"], _
+        ["serial", "Camera serial"], ["description", "Description"], ["xp_author", "Author"], ["comment", "Comment"]]
+    DIM lab AS ARRAY = []
+    FOR EACH lab IN labels
+        IF MAP.EXISTS(m, lab[0]) THEN PUSH(rows, [lab[1], m{lab[0]}])
+    NEXT
+    IF MAP.EXISTS(m, "gps_latitude") THEN
+        PUSH(rows, ["GPS position", STR$(ROUND(m{"gps_latitude"}, 6)) + ", " + STR$(ROUND(m{"gps_longitude"}, 6))])
+    ENDIF
+    IF MAP.EXISTS(m, "gps_altitude") THEN PUSH(rows, ["GPS altitude", STR$(ROUND(m{"gps_altitude"}, 1)) + " m"])
+    IF MAP.EXISTS(m, "format") THEN
+        DIM leaks AS STRING = "nothing"
+        IF MAP.EXISTS(m, "gps_latitude") THEN
+            leaks = "its position"
+        ELSEIF MAP.EXISTS(m, "artist") ORELSE MAP.EXISTS(m, "owner") ORELSE MAP.EXISTS(m, "xp_author") ORELSE MAP.EXISTS(m, "serial") THEN
+            leaks = "a name or serial"
+        ENDIF
+        PUSH(rows, ["Gives away", leaks])
+    ENDIF
+    FORM.SET(info, "ITEMS", rows)
+ENDSUB
+
+SUB SHOW_HINT(empty AS INTEGER)
+    FORM.SET(hint, "VISIBLE", empty)
+    FORM.SET(pic, "VISIBLE", NOT empty)
+ENDSUB
+
+' Shows names[i] fitted to the window.
+SUB SHOW_AT(i AS INTEGER)
+    IF LEN(names) = 0 THEN
+        cur = -1
+        cur_path = ""
+        SHOW_HINT(1)
+        UPDATE_STATUS()
+        UPDATE_INFO()
+        RETURN
+    ENDIF
+    IF i < 0 THEN i = 0
+    IF i > LEN(names) - 1 THEN i = LEN(names) - 1
+    DIM path AS STRING = PATH.JOIN$(folder, names[i])
+    TRY
+        FORM.SET(pic, "PICTURE", path)
+    CATCH
+        MSGBOX("Cannot show " + names[i] + "." + CHR$(10) + "It is not a picture this computer can read.", 48, APP_NAME)
+        RETURN
+    ENDTRY
+    cur = i
+    cur_path = path
+    FORM.SET(pic, "SCALEMODE", "fit")
+    SHOW_HINT(0)
+    UPDATE_STATUS()
+    UPDATE_INFO()
+ENDSUB
+
+' Opens a picture, or the first picture of a folder, with its folder.
+SUB OPEN_PATH(p AS STRING)
+    IF p = "" THEN RETURN
+    p = PATH.ABS$(p)
+    IF FILE.ISDIR(p) THEN
+        folder = p
+        names = PICTURES_IN(folder)
+        SHOW_AT(0)
+        RETURN
+    ENDIF
+    folder = PATH.DIRNAME$(p)
+    names = PICTURES_IN(folder)
+    DIM at AS INTEGER = -1
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(names) - 1
+        IF LCASE$(names[i]) = LCASE$(PATH.BASENAME$(p)) THEN at = i
+    NEXT
+    IF at < 0 THEN
+        names = APPEND(names, PATH.BASENAME$(p))
+        at = LEN(names) - 1
+    ENDIF
+    SHOW_AT(at)
+ENDSUB
+
+' ── zoom and pan ───────────────────────────────────────────────
+
+' Sets the zoom to `z`, keeping the picture pixel (ix, iy) where it is.
+SUB ZOOM_AT(z AS DOUBLE, ix AS DOUBLE, iy AS DOUBLE)
+    IF cur < 0 THEN RETURN
+    z = CLAMP(z, 0.02, 32)
+    DIM k AS DOUBLE = FORM.GET(pic, "SCALE") / z
+    ' the middle of the control after the zoom, so (ix, iy) stays put
+    DIM cx AS DOUBLE = ix - (ix - FORM.GET(pic, "CENTERX")) * k
+    DIM cy AS DOUBLE = iy - (iy - FORM.GET(pic, "CENTERY")) * k
+    FORM.SET(pic, "ZOOM", z)
+    FORM.SET(pic, "SCROLLX", cx - (FORM.GET(pic, "CENTERX") - FORM.GET(pic, "SCROLLX")))
+    FORM.SET(pic, "SCROLLY", cy - (FORM.GET(pic, "CENTERY") - FORM.GET(pic, "SCROLLY")))
+    UPDATE_STATUS()
+ENDSUB
+
+' Zooms by `f` at the middle of what is shown.
+SUB ZOOM_BY(f AS DOUBLE)
+    IF cur < 0 THEN RETURN
+    ZOOM_AT(FORM.GET(pic, "SCALE") * f, FORM.GET(pic, "CENTERX"), FORM.GET(pic, "CENTERY"))
+ENDSUB
+
+SUB FIT()
+    IF cur < 0 THEN RETURN
+    FORM.SET(pic, "SCALEMODE", "fit")
+    UPDATE_STATUS()
+ENDSUB
+
+SUB ACTUAL_SIZE()
+    IF cur < 0 THEN RETURN
+    ZOOM_AT(1, FORM.GET(pic, "IMAGEWIDTH") / 2, FORM.GET(pic, "IMAGEHEIGHT") / 2)
+ENDSUB
+
+' ── the actions ────────────────────────────────────────────────
+
+SUB STEP_BY(n AS INTEGER)
+    IF cur < 0 THEN RETURN
+    SHOW_AT(cur + n)
+ENDSUB
+
+SUB TURN_PICTURE(turn_by AS INTEGER)
+    IF cur < 0 THEN RETURN
+    DIM rc AS INTEGER = IMAGE.ROTATE(cur_path, cur_path, turn_by)
+    IF rc <> 0 THEN
+        MSGBOX("Cannot turn " + names[cur] + " (error " + STR$(rc) + ").", 48, APP_NAME)
+        RETURN
+    ENDIF
+    SHOW_AT(cur)
+ENDSUB
+
+SUB DELETE_CURRENT()
+    IF cur < 0 THEN RETURN
+    IF NOT FILE.RECYCLE(cur_path) THEN
+        MSGBOX("Cannot move " + names[cur] + " to the recycle bin.", 48, APP_NAME)
+        RETURN
+    ENDIF
+    DIM kept AS ARRAY = []
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(names) - 1
+        IF i <> cur THEN kept = APPEND(kept, names[i])
+    NEXT
+    names = kept
+    SHOW_AT(cur)
+ENDSUB
+
+SUB COPY_PICTURE()
+    IF cur < 0 THEN RETURN
+    IF NOT CLIPBOARD.SETIMAGE(cur_path) THEN MSGBOX("Cannot copy the picture.", 48, APP_NAME)
+ENDSUB
+
+' A copy without camera, date, position or names, under a name chosen.
+SUB SAVE_CLEAN()
+    IF cur < 0 THEN RETURN
+    DIM ext AS STRING = PATH.EXT$(names[cur])
+    DIM base AS STRING = LEFT$(names[cur], LEN(names[cur]) - LEN(ext))
+    DIM target AS STRING = FILESAVE$(PIC_FILTER, "Save a copy without metadata", base + "-clean" + ext)
+    IF target = "" THEN RETURN
+    DIM rc AS INTEGER = 0
+    DIM lext AS STRING = LCASE$(PATH.EXT$(target))
+    IF (lext = LCASE$(ext)) ANDALSO (lext = ".jpg" ORELSE lext = ".jpeg" ORELSE lext = ".png") THEN
+        rc = IMAGE.STRIP(cur_path, target)
+    ELSE
+        rc = IMAGE.CONVERT(cur_path, target)
+    ENDIF
+    IF rc <> 0 THEN
+        MSGBOX("Cannot write " + target + " (error " + STR$(rc) + ").", 48, APP_NAME)
+    ELSEIF PATH.DIRNAME$(PATH.ABS$(target)) = folder THEN
+        DIM keep AS INTEGER = cur
+        names = PICTURES_IN(folder)
+        SHOW_AT(keep)
+    ENDIF
+ENDSUB
+
+SUB OPEN_DIALOG()
+    DIM p AS STRING = FILEOPEN$(PIC_FILTER, "Open a picture", folder)
+    IF p <> "" THEN OPEN_PATH(p)
+ENDSUB
+
+SUB TOGGLE_INFO()
+    info_on = 1 - info_on
+    FORM.SET(info, "VISIBLE", info_on)
+    FORM.SET(FORM.FIND(frm, "mnuInfo"), "CHECKED", info_on)
+    LAYOUT()
+    UPDATE_INFO()
+ENDSUB
+
+' ── layout ─────────────────────────────────────────────────────
+
+SUB LAYOUT()
+    DIM w AS INTEGER = client_w
+    DIM h AS INTEGER = client_h - SB_HEIGHT
+    IF info_on THEN w = w - INFO_W
+    IF w < 50 THEN w = 50
+    IF h < 50 THEN h = 50
+    FORM.SET(pic, "WIDTH", w)
+    FORM.SET(pic, "HEIGHT", h)
+    FORM.SET(hint, "WIDTH", w)
+    FORM.SET(hint, "Y", h / 2 - 12)
+    FORM.SET(info, "X", w)
+    FORM.SET(info, "HEIGHT", h)
+    UPDATE_STATUS()
+ENDSUB
+
+' ── events ─────────────────────────────────────────────────────
+
+SUB MAIN_RESIZE(e)
+    client_w = CINT(e[0]{"width"})
+    client_h = CINT(e[0]{"height"})
+    LAYOUT()
+ENDSUB
+
+SUB MAIN_UNLOAD(e)
+    REG_PUT("Window", FORM.GET(frm, "PLACEMENT"))
+    REG_PUT("Info", STR$(info_on))
+ENDSUB
+
+SUB MAIN_DROPFILES(e)
+    OPEN_PATH(e[0]{"files"}[0])
+ENDSUB
+
+SUB pic_DROPFILES(e)
+    OPEN_PATH(e[0]{"files"}[0])
+ENDSUB
+
+SUB pic_KEYDOWN(e)
+    DIM k AS INTEGER = CINT(e[0]{"key"})
+    IF e[0]{"ctrl"} THEN RETURN
+    SWITCH k
+        CASE 37, 33
+            STEP_BY(-1)
+        CASE 39, 34, 32
+            STEP_BY(1)
+        CASE 36
+            SHOW_AT(0)
+        CASE 35
+            SHOW_AT(LEN(names) - 1)
+        CASE 46
+            DELETE_CURRENT()
+        CASE 187, 107
+            ZOOM_BY(ZOOM_STEP)
+        CASE 189, 109
+            ZOOM_BY(1 / ZOOM_STEP)
+    ENDSWITCH
+ENDSUB
+
+SUB pic_MOUSEWHEEL(e)
+    IF cur < 0 THEN RETURN
+    DIM f AS DOUBLE = ZOOM_STEP
+    IF e[0]{"delta"} < 0 THEN f = 1 / ZOOM_STEP
+    ZOOM_AT(FORM.GET(pic, "SCALE") * f, e[0]{"imagex"}, e[0]{"imagey"})
+ENDSUB
+
+SUB pic_MOUSEDOWN(e)
+    IF cur < 0 ORELSE e[0]{"button"} <> 1 THEN RETURN
+    IF FORM.GET(pic, "SCALEMODE") <> "zoom" THEN RETURN
+    dragging = 1
+    grab_x = e[0]{"imagex"}
+    grab_y = e[0]{"imagey"}
+    FORM.SET(pic, "CURSOR", "SIZEALL")
+ENDSUB
+
+SUB pic_MOUSEMOVE(e)
+    IF NOT dragging THEN RETURN
+    FORM.SET(pic, "SCROLLX", FORM.GET(pic, "SCROLLX") + grab_x - e[0]{"imagex"})
+    FORM.SET(pic, "SCROLLY", FORM.GET(pic, "SCROLLY") + grab_y - e[0]{"imagey"})
+ENDSUB
+
+SUB pic_MOUSEUP(e)
+    IF NOT dragging THEN RETURN
+    dragging = 0
+    FORM.SET(pic, "CURSOR", "DEFAULT")
+ENDSUB
+
+' A double click switches between the whole picture and 100% at the pointer.
+SUB pic_DBLCLICK(e)
+    IF cur < 0 THEN RETURN
+    IF FORM.GET(pic, "SCALEMODE") = "fit" THEN
+        ZOOM_AT(1, e[0]{"imagex"}, e[0]{"imagey"})
+    ELSE
+        FIT()
+    ENDIF
+ENDSUB
+
+SUB mnuOpen_CLICK(e)
+    OPEN_DIALOG()
+ENDSUB
+SUB mnuSaveClean_CLICK(e)
+    SAVE_CLEAN()
+ENDSUB
+SUB mnuExit_CLICK(e)
+    FORM.CLOSE(frm)
+ENDSUB
+SUB mnuCopy_CLICK(e)
+    COPY_PICTURE()
+ENDSUB
+SUB mnuDelete_CLICK(e)
+    DELETE_CURRENT()
+ENDSUB
+SUB mnuRotRight_CLICK(e)
+    TURN_PICTURE(90)
+ENDSUB
+SUB mnuRotLeft_CLICK(e)
+    TURN_PICTURE(-90)
+ENDSUB
+SUB mnuPrev_CLICK(e)
+    STEP_BY(-1)
+ENDSUB
+SUB mnuNext_CLICK(e)
+    STEP_BY(1)
+ENDSUB
+SUB mnuFit_CLICK(e)
+    FIT()
+ENDSUB
+SUB mnuActual_CLICK(e)
+    ACTUAL_SIZE()
+ENDSUB
+SUB mnuZoomIn_CLICK(e)
+    ZOOM_BY(ZOOM_STEP)
+ENDSUB
+SUB mnuZoomOut_CLICK(e)
+    ZOOM_BY(1 / ZOOM_STEP)
+ENDSUB
+SUB mnuInfo_CLICK(e)
+    TOGGLE_INFO()
+ENDSUB
+SUB mnuAbout_CLICK(e)
+    MSGBOX(APP_NAME + " - a picture viewer written in jdBasic." + CHR$(10) + CHR$(10) + _
+        "No library, no account, no cloud, no ads.", 64, APP_NAME)
+ENDSUB
+
+' ── build the window ───────────────────────────────────────────
+
+window_place = REG_GET$("Window", "")
+info_on = CINT(VAL(REG_GET$("Info", "0")))
+
+frm = FORM.CREATE(APP_NAME, client_w, client_h, "MAIN")
+pic = FORM.PICTURE(frm, "pic", "", 0, 0, client_w, client_h - SB_HEIGHT)
+FORM.SET(pic, "BACKCOLOR", BACK)
+FORM.SET(pic, "SCALEMODE", "fit")
+FORM.SET(pic, "DROPFILES", TRUE)
+FORM.SET(frm, "DROPFILES", TRUE)
+hint = FORM.LABEL(frm, "hint", "Open a picture with Ctrl+O, or drop one here.", 0, 0, client_w, 24)
+FORM.SET(hint, "ALIGN", "CENTER")
+info = FORM.LISTVIEW(frm, "info", client_w - INFO_W, 0, INFO_W, client_h - SB_HEIGHT)
+FORM.SET(info, "COLUMNS", [{"text": "Property", "width": 100}, {"text": "Value", "width": INFO_W - 104}])
+FORM.SET(info, "VISIBLE", info_on)
+sb = FORM.STATUSBAR(frm, "sb", [300, 90, 120, -1])
+
+FORM.MENU(frm, [ _
+    {"text": "&File", "items": [ _
+        {"text": "&Open...", "name": "mnuOpen", "key": "Ctrl+O"}, _
+        {"text": "&Save a Copy without Metadata...", "name": "mnuSaveClean", "key": "Ctrl+Shift+S"}, _
+        "-", _
+        {"text": "E&xit", "name": "mnuExit"}]}, _
+    {"text": "&Edit", "items": [ _
+        {"text": "&Copy Picture", "name": "mnuCopy", "key": "Ctrl+C"}, _
+        {"text": "&Delete to Recycle Bin" + CHR$(9) + "Del", "name": "mnuDelete"}, _
+        "-", _
+        {"text": "Turn &Right", "name": "mnuRotRight", "key": "Ctrl+R"}, _
+        {"text": "Turn &Left", "name": "mnuRotLeft", "key": "Ctrl+L"}]}, _
+    {"text": "&View", "items": [ _
+        {"text": "&Previous" + CHR$(9) + "Left", "name": "mnuPrev"}, _
+        {"text": "&Next" + CHR$(9) + "Right", "name": "mnuNext"}, _
+        "-", _
+        {"text": "&Fit to Window", "name": "mnuFit", "key": "Ctrl+0"}, _
+        {"text": "&Actual Size (100%)", "name": "mnuActual", "key": "Ctrl+1"}, _
+        {"text": "Zoom &In", "name": "mnuZoomIn", "key": "Ctrl+Plus"}, _
+        {"text": "Zoom &Out", "name": "mnuZoomOut", "key": "Ctrl+Minus"}, _
+        "-", _
+        {"text": "&Info", "name": "mnuInfo", "key": "Ctrl+I"}]}, _
+    {"text": "&Help", "items": [ _
+        {"text": "&About jdPix", "name": "mnuAbout"}]}])
+FORM.SET(FORM.FIND(frm, "mnuInfo"), "CHECKED", info_on)
+
+LAYOUT()
+DIM args AS ARRAY = OS.ARGS()
+IF LEN(args) > 1 THEN
+    OPEN_PATH(args[1])
+ELSE
+    SHOW_AT(0)
+ENDIF
+IF window_place <> "" THEN FORM.SET(frm, "PLACEMENT", window_place)
+FORM.RUN(frm)

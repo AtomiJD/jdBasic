@@ -1,0 +1,8 @@
+# EXE properties for jdpix.exe (jdbasic -c jdpix.jdb)
+FileVersion      = 1.0.0.0
+ProductVersion   = 1.0.0.0
+FileDescription  = jdPix picture viewer
+ProductName      = jdPix
+LegalCopyright   = Written in jdBasic
+OriginalFilename = jdpix.exe
+Subsystem        = Windows
