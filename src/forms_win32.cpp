@@ -1994,8 +1994,15 @@ void set_dark_mode(int handle, HWND h, bool dark) {
         DwmSetWindowAttribute(h, 19, &on, sizeof(on));
     if (dark) g_dark_forms.insert(handle); else g_dark_forms.erase(handle);
     set_app_dark_menus(!g_dark_forms.empty());
-    for (HWND c = GetWindow(h, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT))
+    for (HWND c = GetWindow(h, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT)) {
         SetWindowTheme(c, dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+        // A list view's column header has a dark theme of its own.
+        wchar_t cls[32] = {};
+        GetClassNameW(c, cls, 32);
+        if (wcscmp(cls, WC_LISTVIEWW) != 0) continue;
+        HWND hdr = (HWND)SendMessageW(c, LVM_GETHEADER, 0, 0);
+        if (hdr) SetWindowTheme(hdr, dark ? L"DarkMode_ItemsView" : L"Explorer", nullptr);
+    }
     SetWindowPos(h, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
                  SWP_NOACTIVATE | SWP_FRAMECHANGED);
     DrawMenuBar(h);
@@ -2996,11 +3003,18 @@ void set_prop(int handle, FormsItem& it, const std::string& prop, const Value& v
         SendMessageW(h, UDM_SETRANGE32, lo, hi);
     } else if (prop == "FORECOLOR") {
         g_fore[handle] = (int)v.to_int();
+        // A list view draws its own rows and takes its colours by message.
+        if (it.kind == "LISTVIEW")
+            SendMessageW(h, LVM_SETTEXTCOLOR, 0, (LPARAM)rgb_to_colorref((int)v.to_int()));
         InvalidateRect(h, nullptr, TRUE);
     } else if (prop == "BACKCOLOR") {
         auto old = g_back_brush.find(handle);
         if (old != g_back_brush.end()) DeleteObject(old->second);
         int rgb = (int)v.to_int();
+        if (it.kind == "LISTVIEW") {
+            SendMessageW(h, LVM_SETBKCOLOR, 0, (LPARAM)rgb_to_colorref(rgb));
+            SendMessageW(h, LVM_SETTEXTBKCOLOR, 0, (LPARAM)rgb_to_colorref(rgb));
+        }
         g_back[handle] = rgb;
         g_back_brush[handle] = CreateSolidBrush(rgb_to_colorref(rgb));
         InvalidateRect(h, nullptr, TRUE);
@@ -3854,7 +3868,7 @@ void load_controls(int frm, const Value& doc, const std::string& path) {
             g_shape_brushes[handle] = CreateSolidBrush(rgb_to_colorref(rgb));
         } else if (type == "PICTURE") {
             handle = create_control(frm, name, L"STATIC", "",
-                                    SS_BITMAP | SS_CENTERIMAGE, 0, x, y, w, h, "PICTURE");
+                                    SS_BITMAP | SS_CENTERIMAGE | WS_CLIPSIBLINGS, 0, x, y, w, h, "PICTURE");
             std::string ppath = resolve_data_path(jf_str(c, "picture", where, ""));
             if (!ppath.empty() && !picture_load(handle, ppath))
                 throw std::runtime_error("FORM.LOAD: " + where +
@@ -4243,7 +4257,7 @@ void register_forms_builtins(VM& vm) {
     vm.register_native("FORM.PICTURE", 7, 7, [](const std::vector<Value>& args) -> Value {
         int handle = create_control(
             arg_int(args, 0), arg_str(args, 1, "FORM.PICTURE"), L"STATIC", "",
-            SS_BITMAP | SS_CENTERIMAGE, 0,
+            SS_BITMAP | SS_CENTERIMAGE | WS_CLIPSIBLINGS, 0,
             arg_int(args, 3), arg_int(args, 4), arg_int(args, 5), arg_int(args, 6), "PICTURE");
         std::string path = resolve_data_path(arg_str(args, 2, "FORM.PICTURE"));
         if (!picture_load(handle, path))
