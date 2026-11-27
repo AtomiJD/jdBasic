@@ -45,6 +45,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "windowscodecs.lib")
 #pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "oleaut32.lib")
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "uxtheme.lib")
 #pragma comment(lib, "msimg32.lib")
