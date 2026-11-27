@@ -5,10 +5,10 @@
 # Always exits 0 - never blocks the session.
 
 $ErrorActionPreference = 'SilentlyContinue'
-$exe = 'D:\usr\dev\cc\mcp-runtime\jdBasic_mcp.exe'
+$exe = 'D:\usr\bin\jdbasic\current\jdBasic.exe'
 
 if (-not (Test-Path $exe)) {
-    Write-Output "[MCP CHECK] jdBasic MCP binary not found at $exe - the jdbasic-stdio-win server cannot start. jdb_* / jdlab tools are UNAVAILABLE. Report it (rebuild mcp-runtime)."
+    Write-Output "[MCP CHECK] jdBasic MCP binary not found at $exe - the jdbasic-stdio-win server cannot start. jdb_* / jdlab tools are UNAVAILABLE. Report it (install the full pack with tools/install_bin.jdb)."
     exit 0
 }
 
