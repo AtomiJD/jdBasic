@@ -5,7 +5,8 @@ REM build_full.bat - the Windows pack with every feature the Windows build
 REM has, for the machines here: tools/install_bin.jdb installs it under
 REM D:\usr\bin\jdbasic\<version> so hooks, the MCP and other repositories
 REM run a released jdBasic instead of the build directory of this checkout.
-REM It is not uploaded to GitHub.
+REM It is not uploaded to GitHub. SOUND stays out: it puts the sound into
+REM the deviceless pull mode and replaces the audio output GFX brings.
 REM
 REM   build_full.bat          release build (bumps build_number.txt)
 REM   build_full.bat DEV      the same without RELEASE, between two releases
@@ -15,8 +16,8 @@ pushd "%~dp0"
 set BUNDLE=jdbasic-full-windows-x64
 set OUT=release\%BUNDLE%
 set ZIP=release\%BUNDLE%.zip
-set FLAGS=HTTP NET COM GFX IMGUI NATIVEC MCPSERVER FORMS SERIAL SQLITE FX MIDI MINIAUDIO SOUND OPENGL TUI FTXUI LLM ONNX PYTHON
-set RTFLAGS=HTTP NET COM GFX IMGUI FORMS SERIAL SQLITE FX MIDI MINIAUDIO SOUND OPENGL TUI FTXUI LLM ONNX PYTHON
+set FLAGS=HTTP NET COM GFX IMGUI NATIVEC MCPSERVER FORMS SERIAL SQLITE FX MIDI MINIAUDIO OPENGL TUI FTXUI LLM ONNX PYTHON
+set RTFLAGS=HTTP NET COM GFX IMGUI FORMS SERIAL SQLITE FX MIDI MINIAUDIO OPENGL TUI FTXUI LLM ONNX PYTHON
 set REL=RELEASE
 if /I "%~1"=="DEV" set REL=
 
