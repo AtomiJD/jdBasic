@@ -611,8 +611,8 @@ Syntax: CLIPBOARD.GET$()
 Description: Returns the text currently in the system clipboard (Unicode text, as UTF-8).
 
 [CLIPBOARD.SET]
-Syntax: CLIPBOARD.SET text$
-Description: Sets the system clipboard text (UTF-8 in, Unicode text on the clipboard).
+Syntax: CLIPBOARD.SET text$, [rtf$]
+Description: Sets the system clipboard text (UTF-8 in, Unicode text on the clipboard). With rtf$ (an RTF document, e.g. a RICHTEXT SELRTF) the clipboard holds both, so Word pastes the RTF and a plain editor the text. Windows only.
 
 [CLNG]
 Syntax: CLNG(x)

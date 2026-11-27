@@ -10,7 +10,10 @@ Range: `v1.3.0..HEAD`.
   prints. `MDRICH` takes it as `opts{"table_width"}`: a wider table is
   narrowed to fit, its wide columns wrapping inside the cell. jdTexti
   prints and copies the rendered view that way, drawn light also in dark
-  mode, and has a right-click menu in both panes.
+  mode, and has a right-click menu in both panes. `CLIPBOARD.SET text$,
+  [rtf$]` puts formatted text on the clipboard next to the plain text;
+  jdTexti gives the Markdown as the plain text, so Word, which reads pasted
+  Markdown, no longer turns a copied document into one numbered list.
 - **Images without a window** (#1109, #1114): `IMAGE.SIZE` reads the width
   and height of a JPEG, PNG, GIF or BMP from its header, `IMAGE.CROP` and
   `IMAGE.RESIZE` (Windows) cut and scale a photo. All of them, and

@@ -314,7 +314,9 @@ void VM::register_console_builtins() {
     });
 
 #ifndef JDB_LEAN
-    register_native("CLIPBOARD.SET", [](const std::vector<Value>& args) -> Value {
+    // CLIPBOARD.SET text$, [rtf$]: with rtf$ the clipboard holds both, and a
+    // program that reads formatted text takes the RTF
+    register_native("CLIPBOARD.SET", 1, 2, [](const std::vector<Value>& args) -> Value {
 #if defined(_WIN32)
         std::string text = args[0].to_string();
         int wn = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), (int)text.size(), nullptr, 0);
@@ -327,6 +329,17 @@ void VM::register_console_builtins() {
                 w[wn] = 0;
                 GlobalUnlock(hg);
                 SetClipboardData(CF_UNICODETEXT, hg);
+            }
+            if (args.size() > 1) {
+                std::string rtf = args[1].to_string();
+                UINT cf_rtf = RegisterClipboardFormatA("Rich Text Format");
+                HGLOBAL hr = cf_rtf ? GlobalAlloc(GMEM_MOVEABLE, rtf.size() + 1) : nullptr;
+                if (hr) {
+                    char* r = static_cast<char*>(GlobalLock(hr));
+                    memcpy(r, rtf.c_str(), rtf.size() + 1);
+                    GlobalUnlock(hr);
+                    SetClipboardData(cf_rtf, hr);
+                }
             }
             CloseClipboard();
         }

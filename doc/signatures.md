@@ -43,7 +43,7 @@ count from 0. A builtin that is nowhere in this file does not exist.
 
 ## System & Flow Control
 
-`CLS [r, g, b]` · `COLOR fg, bg` · `CURSOR state` · `GOTO label` · `IF condition THEN ... [ELSEIF ...] [ELSE ...] ENDIF` · `FOR variable TO ... STEP ... NEXT` · `FOR EACH variable IN collection` · `DO ... LOOP [WHILE/UNTIL condition]` · `DO WHILE condition ... LOOP` · `DO UNTIL condition ... LOOP` · `WHILE condition ... WEND` · `TRY ... CATCH ... FINALLY ... ENDTRY` · `OPTION option$` · `SLEEP milliseconds` · `STOP` · `IMPORT module [, module ...]` · `EXPORT MODULE [module]` · `DECLARE FUNC name LIB "lib" ALIAS "export_name" (params) AS rettype` · `CLIPBOARD.SET text$` · `CLIPBOARD.GET$() -> string$` · `END [exit_code]` · `YIELD` · `ON event_name$ func_name$` · `RAISEEVENT event_name$, [event_data]`
+`CLS [r, g, b]` · `COLOR fg, bg` · `CURSOR state` · `GOTO label` · `IF condition THEN ... [ELSEIF ...] [ELSE ...] ENDIF` · `FOR variable TO ... STEP ... NEXT` · `FOR EACH variable IN collection` · `DO ... LOOP [WHILE/UNTIL condition]` · `DO WHILE condition ... LOOP` · `DO UNTIL condition ... LOOP` · `WHILE condition ... WEND` · `TRY ... CATCH ... FINALLY ... ENDTRY` · `OPTION option$` · `SLEEP milliseconds` · `STOP` · `IMPORT module [, module ...]` · `EXPORT MODULE [module]` · `DECLARE FUNC name LIB "lib" ALIAS "export_name" (params) AS rettype` · `CLIPBOARD.SET text$, [rtf$]` · `CLIPBOARD.GET$() -> string$` · `END [exit_code]` · `YIELD` · `ON event_name$ func_name$` · `RAISEEVENT event_name$, [event_data]`
 
 ## SWITCH...CASE...ENDSWITCH
 

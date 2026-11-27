@@ -1492,23 +1492,43 @@ SUB MNUREDO_CLICK(e)
     ENDIF
 ENDSUB
 
-' A selection in the rendered view goes to the clipboard as it would print:
-' drawn light, tables inside the page width. The paper copy holds the same
-' text as the view, so the selection carries over by offset.
+' The plain text that goes with a selection in the view: inside one block
+' the text as shown, across blocks the Markdown of every block it touches,
+' so a program that reads Markdown from the clipboard rebuilds the blocks.
+FUNC VIEW_PLAIN$(sel_from AS INTEGER, sel_len AS INTEGER)
+    DIM k_first AS INTEGER = CINT(MDSYNC.BLOCKAT(md_doc, sel_from))
+    DIM k_last AS INTEGER = CINT(MDSYNC.BLOCKAT(md_doc, sel_from + sel_len - 1))
+    IF k_first = k_last THEN RETURN FORM.GET(mdv, "SELTEXT")
+    DIM src_from AS INTEGER = CINT(MDSYNC.SOURCEPOS(md_doc, k_first))
+    DIM src_to AS INTEGER = CINT(MDSYNC.SOURCEPOS(md_doc, k_last + 1))
+    DIM piece AS STRING = MID$(MDSYNC.SOURCE$(md_doc), src_from, src_to - src_from)
+    DO WHILE RIGHT$(piece, 1) = LF ORELSE RIGHT$(piece, 1) = CR
+        piece = LEFT$(piece, LEN(piece) - 1)
+    LOOP
+    RETURN piece
+ENDFUNC
+
+' A selection in the rendered view goes to the clipboard as it would print,
+' drawn light with tables inside the page width, and as plain text from
+' VIEW_PLAIN$. The paper copy holds the same text as the view, so the
+' selection carries over by offset.
 SUB COPY_SELECTION()
     DIM ed_now AS DOUBLE = ED()
     IF ed_now <> mdv THEN
         FORM.SET(ed_now, "COPY", TRUE)
         RETURN
     ENDIF
+    DIM sel_from AS INTEGER = CINT(FORM.GET(mdv, "SELSTART"))
+    DIM sel_len AS INTEGER = CINT(FORM.GET(mdv, "SELLENGTH"))
+    IF sel_len <= 0 THEN RETURN
     MD_PAPER()
     IF FORM.GET(mdprint, "TEXT") <> FORM.GET(mdv, "TEXT") THEN
         FORM.SET(mdv, "COPY", TRUE)
         RETURN
     ENDIF
-    FORM.SET(mdprint, "SELSTART", CINT(FORM.GET(mdv, "SELSTART")))
-    FORM.SET(mdprint, "SELLENGTH", CINT(FORM.GET(mdv, "SELLENGTH")))
-    FORM.SET(mdprint, "COPY", TRUE)
+    FORM.SET(mdprint, "SELSTART", sel_from)
+    FORM.SET(mdprint, "SELLENGTH", sel_len)
+    CLIPBOARD.SET VIEW_PLAIN$(sel_from, sel_len), FORM.GET(mdprint, "SELRTF")
 ENDSUB
 
 SUB MNUCUT_CLICK(e)

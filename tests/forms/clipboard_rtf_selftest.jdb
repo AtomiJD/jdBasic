@@ -1,0 +1,37 @@
+' CLIPBOARD.SET text$, [rtf$]: the text reads back with CLIPBOARD.GET$
+' whether or not RTF goes with it. The clipboard text found at the start
+' is put back at the end.
+DIM N_PASS = 0
+DIM N_FAIL = 0
+
+SUB Check(cond, label$)
+    IF cond THEN
+        N_PASS = N_PASS + 1
+        PRINT "  PASS  "; label$
+    ELSE
+        N_FAIL = N_FAIL + 1
+        PRINT "  FAIL  "; label$
+    ENDIF
+ENDSUB
+
+IF UCASE$(OS.GETOS$()) <> "WINDOWS" THEN
+    PRINT "RESULTS: 0 passed, 0 failed (Windows only)"
+    END
+ENDIF
+
+DIM before$ = CLIPBOARD.GET$()
+
+CLIPBOARD.SET "plain ä"
+Check(CLIPBOARD.GET$() = "plain ä", "text alone reads back")
+
+DIM rtf$ = "{\rtf1\ansi{\fonttbl{\f0 Segoe UI;}}\f0 \b bold\b0  text\par}"
+CLIPBOARD.SET "# Heading" + CHR$(13) + CHR$(10) + "**bold** text", rtf$
+Check(CLIPBOARD.GET$() = "# Heading" + CHR$(13) + CHR$(10) + "**bold** text", "the text reads back when RTF goes with it")
+
+CLIPBOARD.SET "after", ""
+Check(CLIPBOARD.GET$() = "after", "an empty RTF leaves the text")
+
+CLIPBOARD.SET before$
+
+PRINT
+PRINT "RESULTS: "; N_PASS; " passed, "; N_FAIL; " failed"
