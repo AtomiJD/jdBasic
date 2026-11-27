@@ -328,7 +328,7 @@ void VM::register_console_builtins() {
                 MultiByteToWideChar(CP_UTF8, 0, text.c_str(), (int)text.size(), w, wn);
                 w[wn] = 0;
                 GlobalUnlock(hg);
-                SetClipboardData(CF_UNICODETEXT, hg);
+                if (!SetClipboardData(CF_UNICODETEXT, hg)) GlobalFree(hg);
             }
             if (args.size() > 1) {
                 std::string rtf = args[1].to_string();
@@ -338,7 +338,7 @@ void VM::register_console_builtins() {
                     char* r = static_cast<char*>(GlobalLock(hr));
                     memcpy(r, rtf.c_str(), rtf.size() + 1);
                     GlobalUnlock(hr);
-                    SetClipboardData(cf_rtf, hr);
+                    if (!SetClipboardData(cf_rtf, hr)) GlobalFree(hr);
                 }
             }
             CloseClipboard();
