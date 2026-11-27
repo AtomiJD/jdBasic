@@ -115,7 +115,7 @@ headless test - this is for the hands, not the arithmetic.
 - Then **`Read tmp/shot.png`** - that's the actual seeing step.
 
 ## Tips
-- Use **absolute paths** (or know the CWD): the MCP server's CWD is `mcp-runtime/`,
+- Use **absolute paths** (or know the CWD): the MCP server runs from `D:/usr/bin/jdbasic/current` and its CWD is not the repo,
   a `-c` exe's CWD is wherever it runs - a bare `tmp/x.png` may land in the wrong place.
 - Delete throwaway captures from `tmp/` when done.
 - A solid-black/empty PNG almost always means "captured after the flip" - move the

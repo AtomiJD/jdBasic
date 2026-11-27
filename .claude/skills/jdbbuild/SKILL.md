@@ -1,6 +1,6 @@
 ---
 name: jdbbuild
-description: Build jdBasic.exe + jdbrt.dll with feature flags. Default is `HTTP NET COM GFX IMGUI NATIVEC MCPSERVER` (mandatory base on Windows - COM for the VBA customer work, MCPSERVER so the mcp-runtime build can serve the MCP tools). Pass extra flags to extend (`SERIAL LLM ONNX SQLITE PYTHON`). Auto-kills stale jdBasic.exe on LNK1104 lock. Verify with --version.
+description: Build jdBasic.exe + jdbrt.dll with feature flags. Default is `HTTP NET COM GFX IMGUI NATIVEC MCPSERVER` (mandatory base on Windows - COM for the VBA customer work, MCPSERVER so the installed full pack can serve the MCP tools). Pass extra flags to extend (`SERIAL LLM ONNX SQLITE PYTHON`). Auto-kills stale jdBasic.exe on LNK1104 lock. Verify with --version.
 ---
 
 # Build jdBasic
@@ -15,7 +15,7 @@ Working dir: `/d/usr/dev/cc`.
   - Dropping NET removes the `NET.*` socket builtins, and `tests/net/net_test.jdb` turns red in the parity sweep
   - Dropping IMGUI strips SCREEN/RECT/SPRITE from the runtime DLL
   - Dropping NATIVEC means `-c` won't compile
-  - Dropping MCPSERVER means the resulting `jdBasic.exe` can't serve as the MCP backend (`--mcp` mode); the `mcp-runtime/` build needs it
+  - Dropping MCPSERVER means the resulting `jdBasic.exe` can't serve as the MCP backend (`--mcp` mode); the full pack installed under `D:/usr/bin/jdbasic/current` (build_full.bat) needs it
 - **Full feature** (AI.LOAD/AI.RUN, Serial, LLM): add `SERIAL LLM ONNX SQLITE PYTHON`
   - PYTHON embeds CPython (PYTHON$ / PY.*); needs dev headers + `python3xx.dll` (set `JDB_PYTHON_HOME` or use the per-user `pythoncore` package). The build copies `python314.dll` next to the exe.
 

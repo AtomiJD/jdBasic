@@ -68,7 +68,7 @@ Use it for **volume, search and privacy**; the agent keeps the reasoning.
 5. **Persistence/scope**: one RAG per repo, `AI.RAG_SAVE` to `.jdco/<repo>.rag`, `AI.RAG_LOAD` at session start; incremental re-index on demand / git-diff-driven later.
 
 ## Validated jdBasic API (the building blocks)
-- MCP server must be the LLM build: `build.bat HTTP GFX LLM ONNX NATIVEC MCPSERVER`, staged into `mcp-runtime/` (the `.mcp.json` path already points there). `OS.FEATURE` bare = NONE (needs an arg; ignore).
+- MCP server must be the LLM build: `build.bat HTTP GFX LLM ONNX NATIVEC MCPSERVER`, installed by `build_full.bat` + `tools/install_bin.jdb` under `D:/usr/bin/jdbasic/current`, where `.mcp.json` points. `OS.FEATURE` bare = NONE (needs an arg; ignore).
 - `eid = AI.LOAD_EMBEDDINGS(path, ctx, gpu_layers)` → embedder id.
 - `vec = AI.EMBED_LLM(eid, text)` → 768-dim vector. **NOT `AI.EMBED`** (that returns per-token `[[word,score]]`).
 - `AI.COSINE_SIM(a, b)` → discriminates (NL query vs relevant code ~0.71 vs noise ~0.40).
