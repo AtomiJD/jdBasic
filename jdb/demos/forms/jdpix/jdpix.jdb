@@ -1,6 +1,7 @@
 ' jdPix - a picture viewer on native Windows forms.
 '
 '   jdbasic jdpix.jdb [picture | folder]
+'   jdpix --register | --unregister   (Open with and Default apps)
 '   jdbasic -c jdpix.jdb            (jdpix.jdb.props gives the .exe its icon)
 '
 ' Opens a picture and steps through the pictures of its folder. Fit to the
@@ -10,8 +11,10 @@
 ' library, no account.
 
 OPTION "EXPLICIT"
+IMPORT APPREG
 
 DIM APP_NAME AS STRING = "jdPix"
+DIM PROG_ID AS STRING = "jdPix.Picture"
 DIM PIC_EXTS AS ARRAY = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tif", ".tiff", ".ico", ".webp", ".heic", ".jxr"]
 DIM PIC_FILTER AS STRING = "Pictures|*.jpg;*.jpeg;*.png;*.gif;*.bmp;*.tif;*.tiff;*.ico;*.webp;*.heic|All files (*.*)|*.*"
 DIM CR AS STRING = CHR$(13)
@@ -577,6 +580,9 @@ SUB BUILD_MENU()
             {"text": "&Status Bar", "name": "mnuStatus"}, _
             {"text": "&Dark Mode", "name": "mnuDark"}]}, _
         {"text": "&Help", "items": [ _
+            {"text": "Set as &Default App...", "name": "mnuRegister"}, _
+            {"text": "&Remove from Default Apps", "name": "mnuUnregister"}, _
+            "-", _
             {"text": "&About " + APP_NAME, "name": "mnuAbout"}]}])
     IF LEN(recent) = 0 THEN FORM.SET(FORM.FIND(frm, "mnuRecentNone"), "ENABLED", FALSE)
     MENU_CHECKS()
@@ -801,7 +807,34 @@ SUB mnuAbout_CLICK(e)
         "No library, no account, no cloud, no ads.", 64, APP_NAME)
 ENDSUB
 
+' ── Open with and Default apps ─────────────────────────────────
+
+FUNC REGISTER_APP() AS INTEGER
+    RETURN APPREG.REGISTER(APP_NAME, PROG_ID, "A picture viewer written in jdBasic.", APP_NAME + " Picture", PIC_EXTS)
+ENDFUNC
+
+SUB mnuRegister_CLICK(e)
+    IF REGISTER_APP() <> 0 THEN
+        MSGBOX("Windows did not take every entry of the registration.", 48, APP_NAME)
+        RETURN
+    ENDIF
+    MSGBOX(APP_NAME + " now shows under Open with and in Default apps." + CRLF + CRLF + _
+        "Windows lets only you make it the default: Settings opens on its page, " + _
+        "pick " + APP_NAME + " there for each type of picture.", 64, APP_NAME)
+    APPREG.OPEN_SETTINGS(APP_NAME)
+ENDSUB
+SUB mnuUnregister_CLICK(e)
+    DIM rc AS INTEGER = APPREG.UNREGISTER(APP_NAME, PROG_ID, PIC_EXTS)
+    MSGBOX(APP_NAME + " is no longer offered under Open with and in Default apps.", 64, APP_NAME)
+ENDSUB
+
 ' ── build the window ───────────────────────────────────────────
+
+DIM args AS ARRAY = OS.ARGS()
+IF LEN(args) > 1 THEN
+    IF LCASE$(args[1]) = "--register" THEN END REGISTER_APP()
+    IF LCASE$(args[1]) = "--unregister" THEN END APPREG.UNREGISTER(APP_NAME, PROG_ID, PIC_EXTS)
+ENDIF
 
 LOAD_SETTINGS()
 LOAD_RECENT()
@@ -835,7 +868,6 @@ tmr_slide = FORM.TIMER(frm, "tmrSlide", 0)
 BUILD_MENU()
 APPLY_COLORS()
 LAYOUT()
-DIM args AS ARRAY = OS.ARGS()
 IF LEN(args) > 1 THEN
     OPEN_PATH(args[1])
 ELSE

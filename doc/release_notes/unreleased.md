@@ -41,6 +41,11 @@ Range: `v1.3.0..HEAD`.
 - **jdPix** (#1120): `jdb/demos/forms/jdpix`, a picture viewer on native
   forms: steps through a folder, fits, zooms at the pointer and pans, turns
   a photo, shows what it gives away and saves a copy without it.
+- **`APPREG`** (`lib/appreg.jdb`): a program registers itself with Windows
+  for some file types, so it shows under Open with and in Default apps,
+  and removes itself again, under `HKEY_CURRENT_USER` without
+  administrator rights. jdPix and jdTexti use it from Help > Set as Default
+  App and from `--register` / `--unregister`.
 - **`tools/hooks/check_images.ps1`** (#1115): an agent commit that takes an
   image with a GPS position, a photographer or owner name, a camera serial
   or a private term in its metadata is blocked; an untracked image goes into

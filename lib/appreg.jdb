@@ -1,0 +1,106 @@
+' appreg.jdb - a program registers itself with Windows as an app that opens
+' some file types, so it shows in Settings > Apps > Default apps and under
+' Open with, and removes itself again. Everything goes under
+' HKEY_CURRENT_USER: no administrator rights, nothing for other users.
+'
+'   IMPORT APPREG
+'   DIM rc = APPREG.REGISTER("jdPix", "jdPix.Image", "A picture viewer", _
+'                            "jdPix Picture", [".jpg", ".png"])
+'   APPREG.OPEN_SETTINGS("jdPix")          ' the user picks it as default
+'   rc = APPREG.UNREGISTER("jdPix", "jdPix.Image", [".jpg", ".png"])
+'
+' Windows lets no program make itself the default: the user confirms that
+' in Settings, which OPEN_SETTINGS opens on the app's page. A compiled
+' program registers its own .exe; run in the interpreter, it registers
+' jdBasic with the script. Windows only; elsewhere every call answers -1.
+' version: 1.0.0
+
+EXPORT MODULE APPREG
+
+DECLARE FUNC RegSetKeyValueA LIB "advapi32.dll" ALIAS "RegSetKeyValueA" (hkey AS INTEGER, subkey AS STRING, value_name AS STRING, kind AS INTEGER, data AS STRING, n_bytes AS INTEGER) AS INTEGER
+DECLARE FUNC RegDeleteTreeA LIB "advapi32.dll" ALIAS "RegDeleteTreeA" (hkey AS INTEGER, subkey AS STRING) AS INTEGER
+DECLARE FUNC RegDeleteKeyValueA LIB "advapi32.dll" ALIAS "RegDeleteKeyValueA" (hkey AS INTEGER, subkey AS STRING, value_name AS STRING) AS INTEGER
+DECLARE SUB SHChangeNotify LIB "shell32.dll" ALIAS "SHChangeNotify" (event_id AS INTEGER, flags AS INTEGER, item1 AS INTEGER, item2 AS INTEGER)
+
+DIM gHKCU AS INTEGER = -2147483647
+DIM gREG_SZ AS INTEGER = 1
+DIM gQ$ = CHR$(34)
+
+FUNC PutValue(subkey$, value_name$, data$) AS INTEGER
+    IF RegSetKeyValueA(gHKCU, subkey$, value_name$, gREG_SZ, data$, LEN(data$) + 1) <> 0 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+FUNC OnWindows() AS BOOLEAN
+    RETURN OS.GETOS$() = "WINDOWS"
+ENDFUNC
+
+' The command line Windows runs to open a file with the running program.
+EXPORT FUNC COMMAND$()
+    DIM self$ = OS.SELF$()
+    IF OS.FEATURE("INTERPRETER") THEN
+        RETURN gQ$ + self$ + gQ$ + " " + gQ$ + PATH.ABS$(OS.ARGS()[0]) + gQ$ + " " + gQ$ + "%1" + gQ$
+    ENDIF
+    RETURN gQ$ + self$ + gQ$ + " " + gQ$ + "%1" + gQ$
+ENDFUNC
+
+' Registers the running program as `app$` that opens the extensions in
+' exts (".jpg" and so on) through the ProgID prog_id$. Answers the number of
+' values that could not be written, 0 when all went in.
+EXPORT FUNC REGISTER(app$, prog_id$, description$, type_name$, exts) AS INTEGER
+    IF NOT OnWindows() THEN RETURN -1
+    DIM cmd$ = COMMAND$()
+    DIM self$ = OS.SELF$()
+    DIM failed AS INTEGER = 0
+    DIM class_key$ = "Software\Classes\" + prog_id$
+    failed = failed + PutValue(class_key$, "", type_name$)
+    failed = failed + PutValue(class_key$, "FriendlyTypeName", type_name$)
+    failed = failed + PutValue(class_key$ + "\DefaultIcon", "", gQ$ + self$ + gQ$ + ",0")
+    failed = failed + PutValue(class_key$ + "\shell\open\command", "", cmd$)
+    DIM caps$ = "Software\" + app$ + "\Capabilities"
+    failed = failed + PutValue(caps$, "ApplicationName", app$)
+    failed = failed + PutValue(caps$, "ApplicationDescription", description$)
+    ' A compiled program is also an entry of its own under Open with.
+    DIM exe_key$ = ""
+    IF NOT OS.FEATURE("INTERPRETER") THEN
+        exe_key$ = "Software\Classes\Applications\" + PATH.BASENAME$(self$)
+        failed = failed + PutValue(exe_key$, "FriendlyAppName", app$)
+        failed = failed + PutValue(exe_key$ + "\shell\open\command", "", cmd$)
+    ENDIF
+    DIM ext$ = ""
+    FOR EACH ext$ IN exts
+        failed = failed + PutValue(caps$ + "\FileAssociations", ext$, prog_id$)
+        failed = failed + PutValue("Software\Classes\" + ext$ + "\OpenWithProgids", prog_id$, "")
+        IF exe_key$ <> "" THEN failed = failed + PutValue(exe_key$ + "\SupportedTypes", ext$, "")
+    NEXT
+    failed = failed + PutValue("Software\RegisteredApplications", app$, caps$)
+    ' SHCNE_ASSOCCHANGED: Explorer reads the associations again.
+    SHChangeNotify(134217728, 0, 0, 0)
+    RETURN failed
+ENDFUNC
+
+' Takes back what REGISTER wrote; the program's own settings under
+' Software\<app> stay. Answers 0, or -1 off Windows.
+EXPORT FUNC UNREGISTER(app$, prog_id$, exts) AS INTEGER
+    IF NOT OnWindows() THEN RETURN -1
+    DIM rc AS INTEGER = 0
+    rc = RegDeleteKeyValueA(gHKCU, "Software\RegisteredApplications", app$)
+    rc = RegDeleteTreeA(gHKCU, "Software\" + app$ + "\Capabilities")
+    rc = RegDeleteTreeA(gHKCU, "Software\Classes\" + prog_id$)
+    IF NOT OS.FEATURE("INTERPRETER") THEN
+        rc = RegDeleteTreeA(gHKCU, "Software\Classes\Applications\" + PATH.BASENAME$(OS.SELF$()))
+    ENDIF
+    DIM ext$ = ""
+    FOR EACH ext$ IN exts
+        rc = RegDeleteKeyValueA(gHKCU, "Software\Classes\" + ext$ + "\OpenWithProgids", prog_id$)
+    NEXT
+    SHChangeNotify(134217728, 0, 0, 0)
+    RETURN 0
+ENDFUNC
+
+' Opens Settings on the Default apps page of `app$`, where the user makes
+' it the default for each type.
+EXPORT SUB OPEN_SETTINGS(app$)
+    IF NOT OnWindows() THEN RETURN
+    DIM pid = OS.SPAWN("explorer.exe", ["ms-settings:defaultapps?registeredAppUser=" + app$])
+ENDSUB

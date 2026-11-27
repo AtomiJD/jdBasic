@@ -62,6 +62,11 @@ orientation, so it still stands upright.
 - **Open Recent** lists the last eight pictures.
 - Settings live in `HKEY_CURRENT_USER\Software\jdPix`, the recent list in
   `%APPDATA%\jdPix\recent.txt`; nothing leaves the computer.
+- **Help > Set as Default App** registers jdPix for its picture types and
+  opens Settings on its Default apps page, where you pick it for each
+  type; Windows lets no program do that step itself. **Remove from Default
+  Apps** takes it back. The same from a script:
+  `jdpix --register`, `jdpix --unregister` (exit code 0 when done).
 
 The icon is drawn in `jdpix_icon.svg` and made into `jdpix.ico` by
 `tools/make_icon.jdb`.

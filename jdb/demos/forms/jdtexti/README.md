@@ -6,6 +6,7 @@ rendered view you can type in. Needs a FORMS build.
 ```
 jdbasic jdtexti.jdb [file.txt | file.md]
 jdbasic -c jdtexti.jdb            (jdtexti.jdb.props gives the .exe its icon)
+jdtexti --register | --unregister  (Open with and Default apps)
 ```
 
 ## Text
@@ -140,3 +141,12 @@ numbers as written.
 
 Built on two library modules: `lib/mdrich.jdb` (Markdown blocks to rich text
 and back) and `lib/mdsync.jdb` (the two-way sync).
+
+## Open with and Default apps
+
+**Help > Set as Default App** registers jdTexti for `.txt`, `.md`,
+`.markdown` and `.log` and opens Settings on its Default apps page, where
+you pick it for each type; Windows lets no program do that step itself.
+**Remove from Default Apps** takes it back. The same from a script:
+`jdtexti --register`, `jdtexti --unregister` (exit code 0 when done). Both
+go through `lib/appreg.jdb`.

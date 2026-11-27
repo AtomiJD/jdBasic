@@ -1,0 +1,71 @@
+' APPREG: a test app registers itself for an extension of its own, every
+' key Windows reads is checked, and UNREGISTER takes all of it back while
+' a setting of the app under Software\<app> stays. Windows only.
+
+IMPORT TESTKIT, APPREG
+
+DECLARE FUNC SHRegGetPathA LIB "shlwapi.dll" ALIAS "SHRegGetPathA" (hkey AS INTEGER, subkey AS STRING, value_name AS STRING, buf AS RETURN, flags AS INTEGER) AS ARRAY
+DECLARE FUNC RegSetKeyValueA LIB "advapi32.dll" ALIAS "RegSetKeyValueA" (hkey AS INTEGER, subkey AS STRING, value_name AS STRING, kind AS INTEGER, data AS STRING, n_bytes AS INTEGER) AS INTEGER
+DECLARE FUNC RegDeleteTreeA LIB "advapi32.dll" ALIAS "RegDeleteTreeA" (hkey AS INTEGER, subkey AS STRING) AS INTEGER
+
+DIM HKCU AS INTEGER = -2147483647
+DIM APP$ = "jdAppregSelftest"
+DIM PROG$ = "jdAppregSelftest.File"
+DIM EXTS = [".jdappregtest", ".jdappregtest2"]
+
+' The value, or "<missing>" when the key or value is not there.
+FUNC RegRead$(subkey$, value_name$)
+    DIM got = SHRegGetPathA(HKCU, subkey$, value_name$, 1024, 0)
+    IF got[0] <> 0 THEN RETURN "<missing>"
+    RETURN got[1]
+ENDFUNC
+
+IF OS.GETOS$() <> "WINDOWS" THEN
+    TESTKIT.EQ(APPREG.REGISTER(APP$, PROG$, "d", "t", EXTS), -1, "REGISTER answers -1 off Windows")
+    TESTKIT.EQ(APPREG.UNREGISTER(APP$, PROG$, EXTS), -1, "UNREGISTER answers -1 off Windows")
+    TESTKIT.REPORT()
+    END
+ENDIF
+
+DIM rc = RegSetKeyValueA(HKCU, "Software\" + APP$, "Kept", 1, "yes", 4)
+
+TESTKIT.EQ(APPREG.REGISTER(APP$, PROG$, "A test app", "Selftest File", EXTS), 0, "REGISTER writes every value")
+
+DIM cmd$ = APPREG.COMMAND$()
+TESTKIT.ISTRUE(STARTSWITH(cmd$, CHR$(34) + OS.SELF$() + CHR$(34)), "the command starts with the quoted program")
+TESTKIT.ISTRUE(ENDSWITH(cmd$, CHR$(34) + "%1" + CHR$(34)), "the command ends with the quoted file")
+IF OS.FEATURE("INTERPRETER") THEN
+    TESTKIT.ISTRUE(INSTR(cmd$, "appreg_selftest.jdb") >= 0, "interpreted, the command names the script")
+ENDIF
+
+TESTKIT.EQ(RegRead$("Software\RegisteredApplications", APP$), "Software\" + APP$ + "\Capabilities", "RegisteredApplications points at the capabilities")
+TESTKIT.EQ(RegRead$("Software\" + APP$ + "\Capabilities", "ApplicationName"), APP$, "the application name")
+TESTKIT.EQ(RegRead$("Software\" + APP$ + "\Capabilities", "ApplicationDescription"), "A test app", "the application description")
+TESTKIT.EQ(RegRead$("Software\" + APP$ + "\Capabilities\FileAssociations", ".jdappregtest"), PROG$, "the first extension goes to the ProgID")
+TESTKIT.EQ(RegRead$("Software\" + APP$ + "\Capabilities\FileAssociations", ".jdappregtest2"), PROG$, "the second extension goes to the ProgID")
+TESTKIT.EQ(RegRead$("Software\Classes\" + PROG$, ""), "Selftest File", "the ProgID carries the type name")
+TESTKIT.EQ(RegRead$("Software\Classes\" + PROG$, "FriendlyTypeName"), "Selftest File", "the friendly type name")
+TESTKIT.NE(RegRead$("Software\Classes\" + PROG$ + "\shell\open\command", ""), "<missing>", "the ProgID has an open command")
+TESTKIT.NE(RegRead$("Software\Classes\" + PROG$ + "\DefaultIcon", ""), "<missing>", "the ProgID has an icon")
+TESTKIT.EQ(RegRead$("Software\Classes\.jdappregtest\OpenWithProgids", PROG$), "", "the extension offers the ProgID under Open with")
+IF NOT OS.FEATURE("INTERPRETER") THEN
+    DIM exe_key$ = "Software\Classes\Applications\" + PATH.BASENAME$(OS.SELF$())
+    TESTKIT.EQ(RegRead$(exe_key$, "FriendlyAppName"), APP$, "compiled, the .exe has its own Open with entry")
+    TESTKIT.EQ(RegRead$(exe_key$ + "\SupportedTypes", ".jdappregtest"), "", "compiled, the .exe lists its types")
+ENDIF
+
+TESTKIT.EQ(APPREG.UNREGISTER(APP$, PROG$, EXTS), 0, "UNREGISTER answers 0")
+TESTKIT.EQ(RegRead$("Software\RegisteredApplications", APP$), "<missing>", "RegisteredApplications no longer names the app")
+TESTKIT.EQ(RegRead$("Software\" + APP$ + "\Capabilities", "ApplicationName"), "<missing>", "the capabilities are gone")
+TESTKIT.EQ(RegRead$("Software\Classes\" + PROG$, ""), "<missing>", "the ProgID is gone")
+TESTKIT.EQ(RegRead$("Software\Classes\.jdappregtest\OpenWithProgids", PROG$), "<missing>", "Open with no longer offers the ProgID")
+TESTKIT.EQ(RegRead$("Software\" + APP$, "Kept"), "yes", "a setting of the app stays")
+IF NOT OS.FEATURE("INTERPRETER") THEN
+    TESTKIT.EQ(RegRead$("Software\Classes\Applications\" + PATH.BASENAME$(OS.SELF$()), "FriendlyAppName"), "<missing>", "compiled, the .exe entry is gone")
+ENDIF
+
+rc = RegDeleteTreeA(HKCU, "Software\" + APP$)
+rc = RegDeleteTreeA(HKCU, "Software\Classes\.jdappregtest")
+rc = RegDeleteTreeA(HKCU, "Software\Classes\.jdappregtest2")
+
+TESTKIT.REPORT()

@@ -9,14 +9,18 @@
 ' step, and an edit in the view changes only the Markdown it reached.
 '
 '   jdbasic jdtexti.jdb [file.txt | file.md]
+'   jdtexti --register | --unregister   (Open with and Default apps)
 '   jdbasic -c jdtexti.jdb       (jdtexti.jdb.props gives the .exe its icon)
 OPTION "EXPLICIT"
 IMPORT MDSYNC
 IMPORT MDRICH
 IMPORT TEXTX
 IMPORT MD
+IMPORT APPREG
 
 DIM APP_NAME AS STRING = "jdTexti"
+DIM PROG_ID AS STRING = "jdTexti.Document"
+DIM DOC_EXTS AS ARRAY = [".txt", ".md", ".markdown", ".log"]
 DIM CR AS STRING = CHR$(13)
 DIM LF AS STRING = CHR$(10)
 DIM CRLF AS STRING = CR + LF
@@ -778,6 +782,9 @@ SUB BUILD_MENU()
             {"text": "&Status Bar", "name": "mnuStatus"}, _
             {"text": "&Dark Mode", "name": "mnuDark"}]}, _
         {"text": "&Help", "items": [ _
+            {"text": "Set as &Default App...", "name": "mnuRegister"}, _
+            {"text": "&Remove from Default Apps", "name": "mnuUnregister"}, _
+            "-", _
             {"text": "&About " + APP_NAME, "name": "mnuAbout"}]}])
     IF LEN(recent) = 0 THEN FORM.SET(FORM.FIND(frm, "mnuRecentNone"), "ENABLED", FALSE)
     MENU_CHECKS()
@@ -1705,6 +1712,26 @@ SUB MNUABOUT_CLICK(e)
     MSGBOX(APP_NAME + CRLF + CRLF + "A plain-text and Markdown editor written in jdBasic" + CRLF + "on native Windows forms.", 64, "About " + APP_NAME)
 ENDSUB
 
+FUNC REGISTER_APP() AS INTEGER
+    RETURN APPREG.REGISTER(APP_NAME, PROG_ID, "A plain-text and Markdown editor written in jdBasic.", APP_NAME + " Document", DOC_EXTS)
+ENDFUNC
+
+SUB MNUREGISTER_CLICK(e)
+    IF REGISTER_APP() <> 0 THEN
+        MSGBOX("Windows did not take every entry of the registration.", 48, APP_NAME)
+        RETURN
+    ENDIF
+    MSGBOX(APP_NAME + " now shows under Open with and in Default apps." + CRLF + CRLF + _
+        "Windows lets only you make it the default: Settings opens on its page, " + _
+        "pick " + APP_NAME + " there for each type of file.", 64, APP_NAME)
+    APPREG.OPEN_SETTINGS(APP_NAME)
+ENDSUB
+
+SUB MNUUNREGISTER_CLICK(e)
+    DIM rc AS INTEGER = APPREG.UNREGISTER(APP_NAME, PROG_ID, DOC_EXTS)
+    MSGBOX(APP_NAME + " is no longer offered under Open with and in Default apps.", 64, APP_NAME)
+ENDSUB
+
 ' ── Markdown commands ───────────────────────────────────────────
 
 SUB MNUMDOFF_CLICK(e)
@@ -1976,6 +2003,12 @@ ENDSUB
 
 ' ── build the windows ───────────────────────────────────────────
 
+DIM args AS ARRAY = OS.ARGS()
+IF LEN(args) > 1 THEN
+    IF LCASE$(args[1]) = "--register" THEN END REGISTER_APP()
+    IF LCASE$(args[1]) = "--unregister" THEN END APPREG.UNREGISTER(APP_NAME, PROG_ID, DOC_EXTS)
+ENDIF
+
 LOAD_RECENT()
 LOAD_SETTINGS()
 frm = FORM.CREATE("Untitled - " + APP_NAME, client_w, client_h, "MAIN")
@@ -2052,7 +2085,6 @@ FORM.BUTTON(dlg, "btnCancel", "Cancel", 326, 139, 94, 26)
 IF dark_on THEN FORM.SET(frm, "DARKMODE", TRUE)
 APPLY_COLORS()
 
-DIM args AS ARRAY = OS.ARGS()
 IF LEN(args) > 1 THEN LOAD_DOC(args[1])
 UPDATE_TITLE()
 
