@@ -1,0 +1,138 @@
+' install_bin.jdb - installs a jdBasic pack for every tool on this machine.
+'
+'   jdBasic tools/install_bin.jdb [pack-dir] [root]
+'
+' pack-dir  the assembled pack, default release\jdbasic-full-windows-x64
+' root      default D:\usr\bin
+'
+' The pack is copied to <root>\jdbasic\<version> beside the versions there
+' are, checked there (--version with every feature of the pack, a script,
+' the image check, a native compile), and only then the junction
+' <root>\jdbasic\current is pointed at it. A version that fails its check
+' stays in its folder and current keeps pointing where it did. The older
+' versions stay for a rollback: point current back with
+'   cmd /c rmdir <root>\jdbasic\current
+'   cmd /c mklink /J <root>\jdbasic\current <root>\jdbasic\<version>
+' <root>\jdbasic.cmd starts current\jdBasic.exe; it is written when missing.
+
+OPTION "EXPLICIT"
+
+FUNC Run(cmd$, args)
+    DIM r = OS.EXEC(cmd$, args)
+    RETURN r
+ENDFUNC
+
+FUNC Fail(msg$) AS INTEGER
+    PRINT "install_bin: " + msg$
+    END 1
+    RETURN 1
+ENDFUNC
+
+' "v1.3-b123" for a release build, "v1.3-dev-<commit>" between releases.
+FUNC VersionName$(exe$, packDir$)
+    DIM r = Run(exe$, ["--version"])
+    DIM out$ = r{"output"}
+    DIM first$ = SPLIT(out$, CHR$(10))[0]
+    DIM ver = REGEX.FINDALL("v[0-9]+\.[0-9]+", first$)
+    IF LEN(ver) = 0 THEN RETURN ""
+    DIM build = REGEX.FINDALL("Build [0-9]+", first$)
+    DIM num$ = "0"
+    IF LEN(build) > 0 THEN num$ = MID$(build[0], 6)
+    IF num$ <> "0" THEN RETURN ver[0] + "-b" + num$
+    DIM commit$ = "unknown"
+    DIM info$ = PATH.JOIN$(packDir$, "BUILD_INFO.txt")
+    IF FILE.EXISTS(info$) THEN
+        DIM found = REGEX.FINDALL("Commit: [0-9a-f]+", TXTREADER$(info$))
+        IF LEN(found) > 0 THEN commit$ = MID$(found[0], 8)
+    ENDIF
+    RETURN ver[0] + "-dev-" + commit$
+ENDFUNC
+
+FUNC Features$(exe$)
+    DIM lines = SPLIT(Run(exe$, ["--version"]){"output"}, CHR$(10))
+    DIM ln$ = ""
+    FOR EACH ln$ IN lines
+        IF STARTSWITH(TRIM$(ln$), "Features:") THEN RETURN TRIM$(MID$(TRIM$(ln$), 9))
+    NEXT
+    RETURN ""
+ENDFUNC
+
+' Checks an installed version; "" when it passes, else what failed.
+FUNC Check$(verDir$, want$)
+    DIM exe$ = PATH.JOIN$(verDir$, "jdBasic.exe")
+    IF Features$(exe$) <> want$ THEN RETURN "features differ from the pack: " + Features$(exe$)
+    DIM tmp$ = MKTEMP$("jdbinstall")
+    MKDIR tmp$
+    DIM script$ = PATH.JOIN$(tmp$, "smoke.jdb")
+    TXTWRITER script$, "PRINT SUM(IOTA(10)); "" ""; IMAGE.SIZE(""none.png"")" + CHR$(10)
+    DIM r = Run(exe$, [script$])
+    DIM why$ = ""
+    IF INSTR(r{"output"}, "55 [0, 0]") < 0 THEN why$ = "a script answered: " + TRIM$(r{"output"})
+    IF why$ = "" THEN
+        DIM list$ = PATH.JOIN$(tmp$, "list.txt")
+        TXTWRITER list$, "smoke.jdb" + CHR$(10)
+        r = Run(exe$, [PATH.JOIN$(verDir$, "tools", "image_privacy.jdb"), tmp$, list$])
+        IF r{"exit_code"} <> 0 THEN why$ = "the image check failed: " + TRIM$(r{"output"})
+    ENDIF
+    IF why$ = "" THEN
+        DIM target$ = PATH.JOIN$(tmp$, "smoke.exe")
+        r = Run(exe$, ["-c", "-o", target$, script$])
+        IF NOT FILE.EXISTS(target$) THEN
+            why$ = "a native compile failed: " + TRIM$(r{"output"})
+        ELSE
+            r = Run(target$, [])
+            IF INSTR(r{"output"}, "55 [0, 0]") < 0 THEN why$ = "the compiled program answered: " + TRIM$(r{"output"})
+        ENDIF
+    ENDIF
+    Run("cmd", ["/c", "rmdir", "/s", "/q", tmp$])
+    RETURN why$
+ENDFUNC
+
+DIM argv = OS.ARGS()
+DIM here$ = PATH.DIRNAME$(PATH.ABS$(argv[0]))
+DIM packDir$ = PATH.JOIN$(here$, "..", "release", "jdbasic-full-windows-x64")
+DIM root$ = "D:\usr\bin"
+IF LEN(argv) > 1 THEN packDir$ = argv[1]
+IF LEN(argv) > 2 THEN root$ = argv[2]
+packDir$ = PATH.NORMALIZE$(PATH.ABS$(packDir$))
+root$ = PATH.NORMALIZE$(root$)
+
+DIM packExe$ = PATH.JOIN$(packDir$, "jdBasic.exe")
+IF NOT FILE.EXISTS(packExe$) THEN Fail("no jdBasic.exe in " + packDir$)
+DIM name$ = VersionName$(packExe$, packDir$)
+IF name$ = "" THEN Fail("cannot read the version of " + packExe$)
+DIM want$ = Features$(packExe$)
+
+DIM base$ = PATH.JOIN$(root$, "jdbasic")
+DIM dest$ = PATH.JOIN$(base$, name$)
+DIM current$ = PATH.JOIN$(base$, "current")
+IF NOT FILE.ISDIR(base$) THEN MKDIR base$
+
+' A version that is current may be running; it is never copied over.
+DIM r = Run("cmd", ["/c", "dir", "/AL", base$])
+DIM live$ = ""
+DIM found = REGEX.FINDALL("current \[[^\]]+\]", r{"output"})
+IF LEN(found) > 0 THEN live$ = PATH.BASENAME$(MID$(found[0], 9, LEN(found[0]) - 10))
+IF live$ = name$ THEN Fail(name$ + " is current already; build a new pack or remove the junction first")
+
+PRINT "installing " + name$ + " (" + want$ + ")"
+r = Run("robocopy", [packDir$, dest$, "/MIR", "/NFL", "/NDL", "/NJH", "/NJS", "/NP"])
+IF r{"exit_code"} >= 8 THEN Fail("robocopy failed: " + TRIM$(r{"output"}))
+
+DIM why$ = Check$(dest$, want$)
+IF why$ <> "" THEN Fail(name$ + " stays in " + dest$ + " but is not made current: " + why$)
+
+IF FILE.ISDIR(current$) THEN
+    r = Run("cmd", ["/c", "rmdir", current$])
+    IF r{"exit_code"} <> 0 THEN Fail("cannot remove the junction " + current$ + ": " + TRIM$(r{"output"}))
+ENDIF
+r = Run("cmd", ["/c", "mklink", "/J", current$, dest$])
+IF r{"exit_code"} <> 0 THEN Fail("cannot make the junction: " + TRIM$(r{"output"}))
+
+DIM shim$ = PATH.JOIN$(root$, "jdbasic.cmd")
+IF NOT FILE.EXISTS(shim$) THEN
+    TXTWRITER shim$, "@""%~dp0jdbasic\current\jdBasic.exe"" %*" + CHR$(13) + CHR$(10)
+    PRINT "wrote " + shim$
+ENDIF
+
+PRINT "current -> " + name$ + IIF(live$ = "", "", " (was " + live$ + ")")

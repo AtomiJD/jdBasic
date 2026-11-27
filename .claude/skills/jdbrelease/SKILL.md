@@ -187,6 +187,27 @@ shows 14 assets (4 zips + 3 tarballs + 7 sha256), the body greps for every new h
 `"$GH" release download <tag> -p '<one asset>*'` into an empty directory hashes to what
 the body claims. A size match alone does not prove the upload.
 
+## 5 - Install the full pack on this machine
+
+Hooks, the MCP and other repositories (3dprint) run the jdBasic installed
+under `D:\usr\bin\jdbasic\current`, not the build directory of this
+checkout. After publishing, build the full pack (every Windows feature;
+it is **not uploaded**) and install it:
+
+```bash
+./build_full.bat                       # RELEASE: one more build number
+./build/jdBasic.exe tools/install_bin.jdb
+```
+
+`install_bin.jdb` copies `release\jdbasic-full-windows-x64` to
+`D:\usr\bin\jdbasic\v<X.Y>-b<N>`, checks it there (all features, a script,
+the image check, a native compile) and only then points the junction
+`current` at it; the versions before stay for a rollback. A version that is
+current and may be running is never copied over. Between two releases,
+`./build_full.bat DEV` installs as `v<X.Y>-dev-<commit>` without a new build
+number. `D:\usr\bin\jdbasic.cmd` starts `current\jdBasic.exe`; no DLL of the
+pack lies directly in `D:\usr\bin`.
+
 ## Notes / gotchas
 
 - The repo's source push is separate and follows the normal rule - **local-first, no push

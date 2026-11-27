@@ -229,7 +229,13 @@ addrinfo* resolve(const std::string& host, int64_t port, int socktype, bool pass
     std::string port_text = std::to_string(port);
     int rc = getaddrinfo(host.empty() ? nullptr : host.c_str(), port_text.c_str(), &hints, &res);
     if (rc != 0) {
+#ifdef _WIN32
+        // The narrow form by name: a build with UNICODE (TUI, FTXUI) maps
+        // gai_strerror to the wide one.
+        set_error("cannot resolve " + host + ": " + std::string(gai_strerrorA(rc)));
+#else
         set_error("cannot resolve " + host + ": " + std::string(gai_strerror(rc)));
+#endif
         return nullptr;
     }
     return res;
