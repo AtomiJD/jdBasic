@@ -3219,6 +3219,9 @@ void set_prop(int handle, FormsItem& it, const std::string& prop, const Value& v
         if (prop == "X") x = n; else if (prop == "Y") y = n;
         else if (prop == "WIDTH") w = n; else hh = n;
         MoveWindow(h, x, y, w, hh, TRUE);
+        // A label redraws only what it newly covers, so its old centred or
+        // right-aligned text stayed where it was.
+        InvalidateRect(h, nullptr, TRUE);
     } else {
         throw std::runtime_error(std::string(who) + ": unknown property '" + prop +
                                  "' for " + it.kind);

@@ -228,7 +228,6 @@ ENDSUB
 
 SUB SHOW_HINT(empty AS INTEGER)
     FORM.SET(hint, "VISIBLE", empty)
-    FORM.SET(pic, "VISIBLE", NOT empty)
 ENDSUB
 
 ' Shows names[i] fitted to the window.
@@ -814,6 +813,7 @@ FORM.SET(pic, "DROPFILES", TRUE)
 FORM.SET(frm, "DROPFILES", TRUE)
 hint = FORM.LABEL(frm, "hint", "Open a picture with Ctrl+O, or drop one here.", 0, 0, client_w, 24)
 FORM.SET(hint, "ALIGN", "CENTER")
+FORM.SET(hint, "TABINDEX", 0)
 btn_prev = FORM.BUTTON(frm, "btnPrev", "<", 10, 0, ARROW_W, ARROW_H)
 btn_next = FORM.BUTTON(frm, "btnNext", ">", 0, 0, ARROW_W, ARROW_H)
 FORM.SET(btn_prev, "FONT", {"name": "Segoe UI", "size": 20, "bold": TRUE})
