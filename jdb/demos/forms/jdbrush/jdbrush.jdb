@@ -1,0 +1,1155 @@
+' jdBrush - paint and screenshot annotation on native Windows forms.
+'
+'   jdbasic jdbrush.jdb [picture]
+'   jdbrush --register | --unregister   (Open with and Default apps)
+'   jdbasic -c jdbrush.jdb          (jdbrush.jdb.props gives the .exe its icon)
+'
+' Takes a screenshot, a picture from the clipboard or a file, or an empty
+' page. Pen, highlighter, line, arrow, rectangle, ellipse and text mark it
+' up; pixelate and blur hide what nobody should read; crop, resize and
+' turn it. Undo and redo, copy to the clipboard, save as PNG, JPEG or BMP
+' without any metadata, print. No account, no cloud, no AI.
+
+OPTION "EXPLICIT"
+IMPORT APPREG
+
+DIM APP_NAME AS STRING = "jdBrush"
+DIM PROG_ID AS STRING = "jdBrush.Picture"
+DIM PIC_EXTS AS ARRAY = [".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff", ".webp"]
+DIM OPEN_FILTER AS STRING = "Pictures|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff;*.webp;*.heic|All files (*.*)|*.*"
+DIM SAVE_FILTER AS STRING = "PNG picture (*.png)|*.png|JPEG picture (*.jpg)|*.jpg|Bitmap (*.bmp)|*.bmp"
+DIM CR AS STRING = CHR$(13)
+DIM LF AS STRING = CHR$(10)
+DIM CRLF AS STRING = CR + LF
+DIM SB_HEIGHT AS INTEGER = 22
+DIM PANEL_W AS INTEGER = 136
+DIM SWATCH AS INTEGER = 30
+DIM NEW_W AS INTEGER = 1280
+DIM NEW_H AS INTEGER = 800
+DIM PRINT_MAX_W AS INTEGER = 2400
+DIM ZOOM_STEP AS DOUBLE = 1.25
+DIM MAX_RECENT AS INTEGER = 8
+DIM DARK_PIC AS INTEGER = $202020
+DIM LIGHT_PIC AS INTEGER = $C8C8C8
+DIM SELECT_COLOR AS INTEGER = $0078D7
+DIM REG_KEY AS STRING = "Software\jdBrush"
+DIM HKEY_CURRENT_USER AS INTEGER = -2147483647
+DIM REG_SZ AS INTEGER = 1
+
+' The tools: key, caption of the radio, its letter on the keyboard, hint.
+DIM TOOLS AS ARRAY = [ _
+    ["pen", "&Pen", "P", "Drag to draw."], _
+    ["marker", "&Highlighter", "H", "Drag over text to mark it."], _
+    ["line", "&Line", "L", "Drag from one end to the other."], _
+    ["arrow", "&Arrow", "A", "Drag from the tail to the point."], _
+    ["rect", "&Rectangle", "R", "Drag from corner to corner."], _
+    ["ellipse", "&Ellipse", "E", "Drag the box around the ellipse."], _
+    ["text", "&Text", "T", "Click where the text starts."], _
+    ["pixelate", "Pi&xelate", "X", "Drag over what nobody should read."], _
+    ["blur", "&Blur", "B", "Drag over what should go soft."], _
+    ["crop", "&Crop", "C", "Drag over the part to keep."]]
+DIM PALETTE AS ARRAY = [$000000, $FFFFFF, $808080, $D02020, $F08000, $FFD800, _
+    $20A040, $00B0C0, $1E6FE0, $7030C0, $FF5AA8, $8B4513]
+
+DIM frm AS DOUBLE = 0
+DIM tb AS DOUBLE = 0
+DIM pic AS DOUBLE = 0
+DIM sb AS DOUBLE = 0
+DIM hint AS DOUBLE = 0
+DIM cur_swatch AS DOUBLE = 0
+DIM upd_width AS DOUBLE = 0
+DIM chk_fill AS DOUBLE = 0
+DIM printer_rt AS DOUBLE = 0
+DIM tb_h AS INTEGER = 0
+DIM client_w AS INTEGER = 1200
+DIM client_h AS INTEGER = 800
+
+' Kept across runs.
+DIM window_place AS STRING = ""
+DIM dark_on AS INTEGER = 0
+DIM status_on AS INTEGER = 1
+DIM tool AS STRING = "pen"
+DIM ink AS INTEGER = $D02020
+DIM pen_w AS INTEGER = 4
+DIM fill_on AS INTEGER = 0
+DIM recent AS ARRAY = []
+
+' The document.
+DIM has_pic AS INTEGER = 0
+DIM cur_path AS STRING = ""
+DIM doc_name AS STRING = "Untitled"
+DIM dirty AS INTEGER = 0
+
+' A drag in progress.
+DIM stroke AS ARRAY = []
+DIM drag_on AS INTEGER = 0
+DIM start_x AS DOUBLE = 0
+DIM start_y AS DOUBLE = 0
+DIM pan_on AS INTEGER = 0
+DIM grab_x AS DOUBLE = 0
+DIM grab_y AS DOUBLE = 0
+
+' ── settings (registry) ─────────────────────────────────────────
+
+DECLARE FUNC RegSetKeyValueA LIB "advapi32.dll" ALIAS "RegSetKeyValueA" (hkey AS INTEGER, subkey AS STRING, value_name AS STRING, kind AS INTEGER, data AS STRING, n_bytes AS INTEGER) AS INTEGER
+DECLARE FUNC SHRegGetPathA LIB "shlwapi.dll" ALIAS "SHRegGetPathA" (hkey AS INTEGER, subkey AS STRING, value_name AS STRING, buf AS RETURN, flags AS INTEGER) AS ARRAY
+
+FUNC REG_GET$(item_name AS STRING, fallback AS STRING)
+    DIM got AS ARRAY = SHRegGetPathA(HKEY_CURRENT_USER, REG_KEY, item_name, 260, 0)
+    IF got[0] <> 0 THEN RETURN fallback
+    RETURN got[1]
+ENDFUNC
+
+FUNC REG_GET_INT(item_name AS STRING, fallback AS INTEGER) AS INTEGER
+    RETURN CINT(VAL(REG_GET$(item_name, STR$(fallback))))
+ENDFUNC
+
+SUB REG_PUT(item_name AS STRING, v AS STRING)
+    DIM rc AS INTEGER = RegSetKeyValueA(HKEY_CURRENT_USER, REG_KEY, item_name, REG_SZ, v, LEN(v) + 1)
+ENDSUB
+
+SUB LOAD_SETTINGS()
+    window_place = REG_GET$("Window", "")
+    dark_on = REG_GET_INT("DarkMode", dark_on)
+    status_on = REG_GET_INT("StatusBar", status_on)
+    ink = REG_GET_INT("Color", ink)
+    pen_w = CINT(CLAMP(REG_GET_INT("Width", pen_w), 1, 60))
+    fill_on = REG_GET_INT("Fill", fill_on)
+    DIM t AS STRING = REG_GET$("Tool", tool)
+    IF TOOL_INDEX(t) >= 0 THEN tool = t
+ENDSUB
+
+SUB SAVE_SETTINGS()
+    REG_PUT("DarkMode", STR$(dark_on))
+    REG_PUT("StatusBar", STR$(status_on))
+    REG_PUT("Color", STR$(ink))
+    REG_PUT("Width", STR$(pen_w))
+    REG_PUT("Fill", STR$(fill_on))
+    REG_PUT("Tool", tool)
+ENDSUB
+
+' ── recent pictures ────────────────────────────────────────────
+
+FUNC RECENT_FILE$()
+    RETURN GETENV$("APPDATA") + "\jdBrush\recent.txt"
+ENDFUNC
+
+SUB LOAD_RECENT()
+    recent = []
+    IF NOT FILE.EXISTS(RECENT_FILE$()) THEN RETURN
+    DIM entries AS ARRAY = SPLIT(REPLACE$(TXTREADER$(RECENT_FILE$()), CR, ""), LF)
+    DIM i AS INTEGER = 0
+    FOR i = 0 TO LEN(entries) - 1
+        IF entries[i] <> "" ANDALSO LEN(recent) < MAX_RECENT THEN recent = APPEND(recent, entries[i])
+    NEXT
+ENDSUB
+
+SUB SAVE_RECENT()
+    TRY
+        MKDIR PATH.DIRNAME$(RECENT_FILE$())
+        TXTWRITER RECENT_FILE$(), JOIN(recent, CRLF)
+    CATCH
+    ENDTRY
+ENDSUB
+
+SUB ADD_RECENT(path AS STRING)
+    DIM kept AS ARRAY = [path]
+    DIM i AS INTEGER = 0
+    FOR i = 0 TO LEN(recent) - 1
+        IF UCASE$(recent[i]) <> UCASE$(path) ANDALSO LEN(kept) < MAX_RECENT THEN kept = APPEND(kept, recent[i])
+    NEXT
+    recent = kept
+    SAVE_RECENT()
+    BUILD_MENU()
+ENDSUB
+
+SUB OPEN_RECENT(n AS INTEGER)
+    IF n > LEN(recent) THEN RETURN
+    IF NOT FILE.EXISTS(recent[n - 1]) THEN
+        MSGBOX(recent[n - 1] + " is not there any more.", 48, APP_NAME)
+        RETURN
+    ENDIF
+    IF NOT CONFIRM_DISCARD() THEN RETURN
+    OPEN_FILE(recent[n - 1])
+ENDSUB
+
+' ── the document ───────────────────────────────────────────────
+
+SUB UPDATE_TITLE()
+    DIM t AS STRING = doc_name + " - " + APP_NAME
+    IF dirty THEN t = "*" + t
+    FORM.SET(frm, "TEXT", t)
+ENDSUB
+
+SUB UPDATE_STATUS(ix AS DOUBLE, iy AS DOUBLE)
+    IF NOT has_pic THEN
+        FORM.SET(sb, "TEXT", ["", "", "", TOOL_HINT$()])
+        RETURN
+    ENDIF
+    DIM where AS STRING = ""
+    IF ix >= 0 THEN where = STR$(INT(ix)) + ", " + STR$(INT(iy))
+    DIM dims AS STRING = STR$(FORM.GET(pic, "IMAGEWIDTH")) + " x " + STR$(FORM.GET(pic, "IMAGEHEIGHT"))
+    DIM pct AS STRING = STR$(CINT(FORM.GET(pic, "SCALE") * 100)) + "%"
+    FORM.SET(sb, "TEXT", [where, dims, pct, TOOL_HINT$()])
+ENDSUB
+
+SUB CHANGED()
+    IF NOT dirty THEN
+        dirty = 1
+        UPDATE_TITLE()
+    ENDIF
+    MENU_STATE()
+ENDSUB
+
+' Shows the document just loaded or made, fitted to the window.
+SUB DOCUMENT_SHOWN(path AS STRING, name AS STRING, is_dirty AS INTEGER)
+    has_pic = 1
+    cur_path = path
+    doc_name = name
+    dirty = is_dirty
+    FORM.HISTORY(pic, "clear")
+    FORM.SET(pic, "SCALEMODE", "fit")
+    FORM.SET(hint, "VISIBLE", FALSE)
+    UPDATE_TITLE()
+    UPDATE_STATUS(-1, -1)
+    MENU_STATE()
+ENDSUB
+
+' Asks whether to save the changes; FALSE when the user cancels.
+FUNC CONFIRM_DISCARD() AS BOOLEAN
+    IF NOT dirty THEN RETURN TRUE
+    DIM answer AS INTEGER = MSGBOX("Save the changes to " + doc_name + "?", 3 + 48, APP_NAME)
+    IF answer = 2 THEN RETURN FALSE
+    IF answer = 6 THEN RETURN SAVE_DOC()
+    RETURN TRUE
+ENDFUNC
+
+SUB NEW_BLANK()
+    IF NOT CONFIRM_DISCARD() THEN RETURN
+    FORM.NEWIMAGE(pic, NEW_W, NEW_H, $FFFFFF)
+    DOCUMENT_SHOWN("", "Untitled", 0)
+ENDSUB
+
+SUB OPEN_FILE(p AS STRING)
+    IF p = "" THEN RETURN
+    p = PATH.ABS$(p)
+    TRY
+        FORM.SET(pic, "PICTURE", p)
+    CATCH
+        MSGBOX("Cannot open " + PATH.BASENAME$(p) + "." + LF + "It is not a picture this computer can read.", 48, APP_NAME)
+        RETURN
+    ENDTRY
+    DOCUMENT_SHOWN(p, PATH.BASENAME$(p), 0)
+    ADD_RECENT(p)
+ENDSUB
+
+SUB OPEN_DIALOG()
+    IF NOT CONFIRM_DISCARD() THEN RETURN
+    DIM start AS STRING = ""
+    IF cur_path <> "" THEN start = PATH.DIRNAME$(cur_path)
+    DIM p AS STRING = FILEOPEN$(OPEN_FILTER, "Open a picture", start)
+    IF p <> "" THEN OPEN_FILE(p)
+ENDSUB
+
+' Loads a picture written to a temporary file as a new, unsaved document.
+SUB ADOPT_TEMP(tmp AS STRING, name AS STRING)
+    TRY
+        FORM.SET(pic, "PICTURE", tmp)
+    CATCH
+        MSGBOX("Cannot read the picture.", 48, APP_NAME)
+        RETURN
+    ENDTRY
+    KILL tmp
+    DOCUMENT_SHOWN("", name, 1)
+ENDSUB
+
+SUB NEW_FROM_CLIPBOARD()
+    IF NOT CONFIRM_DISCARD() THEN RETURN
+    DIM tmp AS STRING = MKTEMP$("jdbrush") + ".png"
+    IF NOT CLIPBOARD.GETIMAGE(tmp) THEN
+        MSGBOX("There is no picture on the clipboard.", 64, APP_NAME)
+        RETURN
+    ENDIF
+    ADOPT_TEMP(tmp, "Pasted picture")
+ENDSUB
+
+' The whole screen without this window, ready to be cropped.
+SUB NEW_SCREENSHOT()
+    IF NOT CONFIRM_DISCARD() THEN RETURN
+    DIM tmp AS STRING = MKTEMP$("jdbrush") + ".png"
+    FORM.SET(frm, "VISIBLE", FALSE)
+    DIM i AS INTEGER
+    FOR i = 1 TO 8
+        FORM.DOEVENTS()
+        SLEEP 40
+    NEXT
+    DIM rc AS INTEGER = OS.SCREENSHOT(tmp, "screen")
+    FORM.SET(frm, "VISIBLE", TRUE)
+    IF rc <> 0 THEN
+        MSGBOX("Cannot take a screenshot (error " + STR$(rc) + ").", 48, APP_NAME)
+        RETURN
+    ENDIF
+    ADOPT_TEMP(tmp, "Screenshot")
+    SELECT_TOOL("crop")
+ENDSUB
+
+FUNC SAVE_TO(path AS STRING) AS BOOLEAN
+    IF NOT FORM.SAVEIMAGE(pic, path) THEN
+        MSGBOX("Cannot write " + path + ".", 48, APP_NAME)
+        RETURN FALSE
+    ENDIF
+    cur_path = PATH.ABS$(path)
+    doc_name = PATH.BASENAME$(path)
+    dirty = 0
+    UPDATE_TITLE()
+    ADD_RECENT(cur_path)
+    RETURN TRUE
+ENDFUNC
+
+FUNC SAVE_AS() AS BOOLEAN
+    IF NOT has_pic THEN RETURN FALSE
+    DIM base AS STRING = doc_name
+    DIM ext AS STRING = PATH.EXT$(base)
+    IF ext <> "" THEN base = LEFT$(base, LEN(base) - LEN(ext))
+    DIM target AS STRING = FILESAVE$(SAVE_FILTER, "Save As", base + ".png")
+    IF target = "" THEN RETURN FALSE
+    IF PATH.EXT$(target) = "" THEN target = target + ".png"
+    RETURN SAVE_TO(target)
+ENDFUNC
+
+FUNC SAVE_DOC() AS BOOLEAN
+    IF NOT has_pic THEN RETURN FALSE
+    DIM ext AS STRING = LCASE$(PATH.EXT$(cur_path))
+    IF cur_path = "" ORELSE (ext <> ".png" ANDALSO ext <> ".jpg" ANDALSO ext <> ".jpeg" ANDALSO ext <> ".bmp") THEN
+        RETURN SAVE_AS()
+    ENDIF
+    RETURN SAVE_TO(cur_path)
+ENDFUNC
+
+SUB COPY_PICTURE()
+    IF NOT has_pic THEN RETURN
+    DIM tmp AS STRING = MKTEMP$("jdbrush") + ".png"
+    IF FORM.SAVEIMAGE(pic, tmp) THEN
+        IF NOT CLIPBOARD.SETIMAGE(tmp) THEN MSGBOX("Cannot copy the picture.", 48, APP_NAME)
+        KILL tmp
+    ENDIF
+ENDSUB
+
+' ── changes through a file: crop, resize, turn ─────────────────
+
+' Writes the picture to a temporary PNG, lets `how` make a second one from
+' it and shows that; one undo step takes it back.
+SUB THROUGH_FILE(how AS STRING, a AS DOUBLE, b AS DOUBLE, c AS DOUBLE, d AS DOUBLE)
+    DIM src AS STRING = MKTEMP$("bra") + ".png"
+    DIM dst AS STRING = MKTEMP$("brb") + ".png"
+    IF NOT FORM.SAVEIMAGE(pic, src) THEN RETURN
+    DIM rc AS INTEGER = 0
+    IF how = "crop" THEN rc = IMAGE.CROP(src, dst, a, b, c, d)
+    IF how = "resize" THEN rc = IMAGE.RESIZE(src, dst, a, b)
+    IF how = "turn" THEN rc = IMAGE.ROTATE(src, dst, a)
+    KILL src
+    IF rc <> 0 THEN
+        MSGBOX("Cannot change the picture (error " + STR$(rc) + ").", 48, APP_NAME)
+        RETURN
+    ENDIF
+    FORM.HISTORY(pic, "checkpoint")
+    FORM.SET(pic, "PICTURE", dst)
+    KILL dst
+    FORM.SET(pic, "SCALEMODE", "fit")
+    CHANGED()
+    UPDATE_STATUS(-1, -1)
+ENDSUB
+
+SUB RESIZE_DIALOG()
+    IF NOT has_pic THEN RETURN
+    DIM w AS INTEGER = FORM.GET(pic, "IMAGEWIDTH")
+    DIM h AS INTEGER = FORM.GET(pic, "IMAGEHEIGHT")
+    DIM answer AS STRING = INPUTBOX$("New width in pixels; the height follows (now " + STR$(w) + " x " + STR$(h) + "):", "Resize", STR$(w))
+    IF answer = "" THEN RETURN
+    DIM nw AS INTEGER = CINT(VAL(answer))
+    IF nw < 1 ORELSE nw > 20000 THEN
+        MSGBOX("The width is between 1 and 20000 pixels.", 48, APP_NAME)
+        RETURN
+    ENDIF
+    IF nw = w THEN RETURN
+    THROUGH_FILE("resize", nw, 0, 0, 0)
+ENDSUB
+
+' ── hiding: pixelate and blur ──────────────────────────────────
+
+' The region in blocks of `n` pixels, each the colour of its middle.
+FUNC PIXELATED(px AS ARRAY, n AS INTEGER) AS ARRAY
+    DIM h AS INTEGER = LEN(px)
+    DIM w AS INTEGER = LEN(px[0])
+    DIM rows AS ARRAY = []
+    DIM r AS INTEGER
+    DIM c AS INTEGER
+    DIM k AS INTEGER
+    FOR r = 0 TO h - 1 STEP n
+        DIM src AS ARRAY = px[MIN([r + n / 2, h - 1])]
+        DIM row AS ARRAY = []
+        FOR c = 0 TO w - 1
+            PUSH(row, src[MIN([c - c MOD n + n / 2, w - 1])])
+        NEXT
+        FOR k = r TO MIN([r + n - 1, h - 1])
+            PUSH(rows, row)
+        NEXT
+    NEXT
+    RETURN rows
+ENDFUNC
+
+' The region softened by two passes of a box `k` pixels wide, each colour
+' channel apart; at the edge of the region only the pixels inside count.
+FUNC BLURRED(px AS ARRAY, k AS INTEGER) AS ARRAY
+    DIM kr AS ARRAY = [IOTA(k) * 0 + 1]
+    DIM kc AS ARRAY = RESHAPE(IOTA(k) * 0 + 1, [k, 1])
+    DIM unit AS ARRAY = px * 0 + 1
+    DIM weight AS ARRAY = CONVOLVE(CONVOLVE(unit, kr), kc)
+    DIM ch_r AS ARRAY = FLOOR(px / 65536)
+    DIM ch_g AS ARRAY = FLOOR(px / 256) MOD 256
+    DIM ch_b AS ARRAY = px MOD 256
+    DIM pass AS INTEGER
+    FOR pass = 1 TO 2
+        ch_r = CONVOLVE(CONVOLVE(ch_r, kr), kc) / weight
+        ch_g = CONVOLVE(CONVOLVE(ch_g, kr), kc) / weight
+        ch_b = CONVOLVE(CONVOLVE(ch_b, kr), kc) / weight
+    NEXT
+    RETURN ROUND(ch_r) * 65536 + ROUND(ch_g) * 256 + ROUND(ch_b)
+ENDFUNC
+
+SUB HIDE_REGION(how AS STRING, x AS INTEGER, y AS INTEGER, w AS INTEGER, h AS INTEGER)
+    IF w < 2 ORELSE h < 2 THEN RETURN
+    FORM.SET(frm, "CURSOR", "WAIT")
+    DIM px AS ARRAY = FORM.PIXELS(pic, x, y, w, h)
+    IF LEN(px) = 0 THEN RETURN
+    DIM side AS INTEGER = MIN([LEN(px), LEN(px[0])])
+    FORM.HISTORY(pic, "checkpoint")
+    IF how = "pixelate" THEN
+        FORM.SETPIXELS(pic, x, y, PIXELATED(px, MAX([6, CINT(side / 8)])))
+    ELSE
+        FORM.SETPIXELS(pic, x, y, BLURRED(px, MAX([9, CINT(side / 6) * 2 + 1])))
+    ENDIF
+    FORM.SET(frm, "CURSOR", "ARROW")
+    CHANGED()
+ENDSUB
+
+' ── tools ──────────────────────────────────────────────────────
+
+FUNC TOOL_INDEX(key AS STRING) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(TOOLS) - 1
+        IF TOOLS[i][0] = key THEN RETURN i
+    NEXT
+    RETURN -1
+ENDFUNC
+
+FUNC TOOL_HINT$()
+    IF NOT has_pic THEN RETURN "Start with a screenshot (Ctrl+Shift+N), the clipboard (Ctrl+Shift+V), a picture (Ctrl+O) or an empty page (Ctrl+N)."
+    RETURN TOOLS[TOOL_INDEX(tool)][3] + "  Wheel zooms, right drag moves."
+ENDFUNC
+
+SUB SELECT_TOOL(key AS STRING)
+    IF TOOL_INDEX(key) < 0 THEN RETURN
+    tool = key
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(TOOLS) - 1
+        FORM.SET(FORM.FIND(frm, "opt" + TOOLS[i][0]), "CHECKED", TOOLS[i][0] = key)
+    NEXT
+    FORM.SET(pic, "CURSOR", IIF(key = "text", "IBEAM", "CROSS"))
+    FORM.PREVIEW(pic, "", [])
+    UPDATE_STATUS(-1, -1)
+ENDSUB
+
+FUNC STYLE_OF(shape AS STRING) AS OBJECT
+    IF tool = "marker" THEN RETURN {"color": ink, "width": MAX([12, pen_w * 5]), "alpha": 100}
+    DIM st AS OBJECT = {"color": ink, "width": pen_w}
+    IF fill_on ANDALSO (shape = "rect" ORELSE shape = "ellipse") THEN st{"fill"} = ink
+    RETURN st
+ENDFUNC
+
+' A dashed frame that stays thin on the screen whatever the zoom.
+FUNC SELECTION_STYLE() AS OBJECT
+    RETURN {"color": SELECT_COLOR, "width": 1.5 / FORM.GET(pic, "SCALE"), "dash": TRUE}
+ENDFUNC
+
+FUNC DRAG_SHAPE$()
+    IF tool = "pixelate" ORELSE tool = "blur" ORELSE tool = "crop" THEN RETURN "rect"
+    RETURN tool
+ENDFUNC
+
+SUB PLACE_TEXT(ix AS DOUBLE, iy AS DOUBLE)
+    DIM words AS STRING = INPUTBOX$("Text to place at " + STR$(INT(ix)) + ", " + STR$(INT(iy)) + ":", "Text", "")
+    IF words = "" THEN RETURN
+    FORM.HISTORY(pic, "checkpoint")
+    FORM.DRAW(pic, "text", [ix, iy], {"text": words, "color": ink, "size": MAX([12, pen_w * 6]), "bold": TRUE})
+    CHANGED()
+ENDSUB
+
+SUB FINISH_DRAG(ex AS DOUBLE, ey AS DOUBLE)
+    FORM.PREVIEW(pic, "", [])
+    DIM w AS DOUBLE = FORM.GET(pic, "IMAGEWIDTH")
+    DIM h AS DOUBLE = FORM.GET(pic, "IMAGEHEIGHT")
+    DIM x0 AS INTEGER = INT(CLAMP(MIN([start_x, ex]), 0, w))
+    DIM y0 AS INTEGER = INT(CLAMP(MIN([start_y, ey]), 0, h))
+    DIM x1 AS INTEGER = CEIL(CLAMP(MAX([start_x, ex]), 0, w))
+    DIM y1 AS INTEGER = CEIL(CLAMP(MAX([start_y, ey]), 0, h))
+    IF tool = "crop" THEN
+        IF x1 - x0 >= 2 ANDALSO y1 - y0 >= 2 THEN THROUGH_FILE("crop", x0, y0, x1 - x0, y1 - y0)
+        RETURN
+    ENDIF
+    IF tool = "pixelate" ORELSE tool = "blur" THEN
+        HIDE_REGION(tool, x0, y0, x1 - x0, y1 - y0)
+        RETURN
+    ENDIF
+    IF ABS(ex - start_x) < 1 ANDALSO ABS(ey - start_y) < 1 THEN RETURN
+    FORM.HISTORY(pic, "checkpoint")
+    FORM.DRAW(pic, tool, [start_x, start_y, ex, ey], STYLE_OF(tool))
+    CHANGED()
+ENDSUB
+
+' ── colour and width ───────────────────────────────────────────
+
+SUB SET_INK(rgb AS INTEGER)
+    ink = rgb
+    FORM.SET(cur_swatch, "COLOR", ink)
+ENDSUB
+
+SUB PICK_SWATCH(i AS INTEGER)
+    SET_INK(PALETTE[i])
+ENDSUB
+
+SUB MORE_COLORS()
+    DIM rgb AS INTEGER = COLORDIALOG(ink)
+    IF rgb >= 0 THEN SET_INK(rgb)
+ENDSUB
+
+' ── zoom and pan ───────────────────────────────────────────────
+
+SUB ZOOM_AT(z AS DOUBLE, ix AS DOUBLE, iy AS DOUBLE)
+    IF NOT has_pic THEN RETURN
+    z = CLAMP(z, 0.02, 32)
+    DIM k AS DOUBLE = FORM.GET(pic, "SCALE") / z
+    DIM cx AS DOUBLE = ix - (ix - FORM.GET(pic, "CENTERX")) * k
+    DIM cy AS DOUBLE = iy - (iy - FORM.GET(pic, "CENTERY")) * k
+    FORM.SET(pic, "ZOOM", z)
+    FORM.SET(pic, "SCROLLX", cx - (FORM.GET(pic, "CENTERX") - FORM.GET(pic, "SCROLLX")))
+    FORM.SET(pic, "SCROLLY", cy - (FORM.GET(pic, "CENTERY") - FORM.GET(pic, "SCROLLY")))
+    UPDATE_STATUS(-1, -1)
+ENDSUB
+
+SUB ZOOM_BY(f AS DOUBLE)
+    IF NOT has_pic THEN RETURN
+    ZOOM_AT(FORM.GET(pic, "SCALE") * f, FORM.GET(pic, "CENTERX"), FORM.GET(pic, "CENTERY"))
+ENDSUB
+
+SUB FIT()
+    IF NOT has_pic THEN RETURN
+    FORM.SET(pic, "SCALEMODE", "fit")
+    UPDATE_STATUS(-1, -1)
+ENDSUB
+
+' ── printing ───────────────────────────────────────────────────
+
+' The bytes of b$ as hexadecimal digits, the way RTF carries a picture.
+FUNC HEX_OF$(b$)
+    DIM digits AS STRING = "0123456789abcdef"
+    DIM table AS ARRAY = []
+    DIM i AS INTEGER
+    FOR i = 0 TO 255
+        table = APPEND(table, MID$(digits, INT(i / 16), 1) + MID$(digits, i MOD 16, 1))
+    NEXT
+    DIM parts AS ARRAY = []
+    DIM piece AS STRING = ""
+    FOR i = 0 TO LEN(b$) - 1
+        piece = piece + table[BYTEAT(b$, i)]
+        IF LEN(piece) >= 8192 THEN
+            parts = APPEND(parts, piece)
+            piece = ""
+        ENDIF
+    NEXT
+    parts = APPEND(parts, piece)
+    RETURN JOIN(parts, "")
+ENDFUNC
+
+' The picture as large as fits the page, with its name on top, printed
+' from a hidden RICHTEXT that holds it as an RTF picture.
+SUB PRINT_PICTURE()
+    IF NOT has_pic THEN RETURN
+    DIM full AS STRING = MKTEMP$("brc") + ".jpg"
+    DIM tmp AS STRING = MKTEMP$("brd") + ".jpg"
+    IF NOT FORM.SAVEIMAGE(pic, full) THEN RETURN
+    DIM rc AS INTEGER = 0
+    IF FORM.GET(pic, "IMAGEWIDTH") > PRINT_MAX_W THEN
+        rc = IMAGE.RESIZE(full, tmp, PRINT_MAX_W, 0)
+    ELSE
+        rc = IMAGE.CONVERT(full, tmp)
+    ENDIF
+    KILL full
+    IF rc <> 0 THEN
+        MSGBOX("Cannot prepare the picture for printing (error " + STR$(rc) + ").", 48, APP_NAME)
+        RETURN
+    ENDIF
+    DIM wh AS ARRAY = IMAGE.SIZE(tmp)
+    DIM area AS OBJECT = FORM.PRINTAREA()
+    ' 15 twips to a pixel at 96 dpi; the title line takes about 700 twips
+    DIM f AS DOUBLE = MIN([area{"width"} / (wh[0] * 15), (area{"height"} - 700) / (wh[1] * 15)])
+    DIM gw AS INTEGER = CINT(wh[0] * 15 * f)
+    DIM gh AS INTEGER = CINT(wh[1] * 15 * f)
+    DIM rtf AS STRING = "{\rtf1\ansi{\pard\qc{\pict\jpegblip\picw" + STR$(wh[0]) + "\pich" + STR$(wh[1]) + _
+        "\picwgoal" + STR$(gw) + "\pichgoal" + STR$(gh) + " " + HEX_OF$(BINREADER$(tmp)) + "}\par}}"
+    KILL tmp
+    FORM.SET(printer_rt, "TEXTRTF", rtf)
+    DIM done AS BOOLEAN = FORM.PRINTRICH(printer_rt, doc_name)
+    FORM.SET(printer_rt, "TEXT", "")
+ENDSUB
+
+' ── look and menus ─────────────────────────────────────────────
+
+SUB APPLY_COLORS()
+    FORM.SET(frm, "DARKMODE", dark_on = 1)
+    FORM.SET(pic, "BACKCOLOR", IIF(dark_on, DARK_PIC, LIGHT_PIC))
+    FORM.SET(hint, "BACKCOLOR", IIF(dark_on, DARK_PIC, LIGHT_PIC))
+    FORM.SET(hint, "FORECOLOR", IIF(dark_on, $D4D4D4, $303030))
+ENDSUB
+
+SUB CHECK_ITEM(item_name AS STRING, checked AS INTEGER)
+    FORM.SET(FORM.FIND(frm, item_name), "CHECKED", checked)
+ENDSUB
+
+SUB ENABLE_ITEM(item_name AS STRING, on_now AS INTEGER)
+    FORM.SET(FORM.FIND(frm, item_name), "ENABLED", on_now)
+ENDSUB
+
+SUB MENU_STATE()
+    CHECK_ITEM("mnuStatus", status_on)
+    CHECK_ITEM("mnuDark", dark_on)
+    DIM can_undo AS INTEGER = has_pic ANDALSO FORM.HISTORY(pic, "canundo")
+    DIM can_redo AS INTEGER = has_pic ANDALSO FORM.HISTORY(pic, "canredo")
+    ENABLE_ITEM("mnuUndo", can_undo)
+    ENABLE_ITEM("mnuRedo", can_redo)
+    FORM.SET(FORM.FIND(frm, "tbUndo"), "ENABLED", can_undo)
+    FORM.SET(FORM.FIND(frm, "tbRedo"), "ENABLED", can_redo)
+    DIM item_name AS STRING
+    FOR EACH item_name IN ["mnuSave", "mnuSaveAs", "mnuPrint", "mnuCopy", "mnuResize", "mnuTurnRight", "mnuTurnLeft", "mnuFit", "mnuActual", "mnuZoomIn", "mnuZoomOut"]
+        ENABLE_ITEM(item_name, has_pic)
+    NEXT
+ENDSUB
+
+FUNC RECENT_ITEMS()
+    DIM items AS ARRAY = []
+    DIM i AS INTEGER = 0
+    FOR i = 0 TO LEN(recent) - 1
+        items = APPEND(items, {"text": "&" + STR$(i + 1) + " " + REPLACE$(recent[i], "&", "&&"), "name": "mnuRecent" + STR$(i + 1)})
+    NEXT
+    IF LEN(recent) = 0 THEN items = APPEND(items, {"text": "(none)", "name": "mnuRecentNone"})
+    items = APPEND(items, "-")
+    items = APPEND(items, {"text": "&Clear Recent Pictures", "name": "mnuRecentClear"})
+    RETURN items
+ENDFUNC
+
+SUB BUILD_MENU()
+    FORM.MENU(frm, [ _
+        {"text": "&File", "items": [ _
+            {"text": "&New", "name": "mnuNew", "key": "Ctrl+N"}, _
+            {"text": "New &Screenshot", "name": "mnuShot", "key": "Ctrl+Shift+N"}, _
+            {"text": "New from &Clipboard", "name": "mnuFromClip", "key": "Ctrl+Shift+V"}, _
+            {"text": "&Open...", "name": "mnuOpen", "key": "Ctrl+O"}, _
+            {"text": "Open &Recent", "items": RECENT_ITEMS()}, _
+            "-", _
+            {"text": "&Save", "name": "mnuSave", "key": "Ctrl+S"}, _
+            {"text": "Save &As...", "name": "mnuSaveAs", "key": "Ctrl+Shift+S"}, _
+            "-", _
+            {"text": "Page Set&up...", "name": "mnuPageSetup"}, _
+            {"text": "&Print...", "name": "mnuPrint", "key": "Ctrl+P"}, _
+            "-", _
+            {"text": "E&xit", "name": "mnuExit"}]}, _
+        {"text": "&Edit", "items": [ _
+            {"text": "&Undo", "name": "mnuUndo", "key": "Ctrl+Z"}, _
+            {"text": "&Redo", "name": "mnuRedo", "key": "Ctrl+Y"}, _
+            "-", _
+            {"text": "&Copy Picture", "name": "mnuCopy", "key": "Ctrl+C"}]}, _
+        {"text": "&Image", "items": [ _
+            {"text": "&Resize...", "name": "mnuResize", "key": "Ctrl+W"}, _
+            {"text": "Turn &Right", "name": "mnuTurnRight", "key": "Ctrl+R"}, _
+            {"text": "Turn &Left", "name": "mnuTurnLeft", "key": "Ctrl+L"}]}, _
+        {"text": "&View", "items": [ _
+            {"text": "&Fit to Window", "name": "mnuFit", "key": "Ctrl+0"}, _
+            {"text": "&Actual Size (100%)", "name": "mnuActual", "key": "Ctrl+1"}, _
+            {"text": "Zoom &In", "name": "mnuZoomIn", "key": "Ctrl+Plus"}, _
+            {"text": "Zoom &Out", "name": "mnuZoomOut", "key": "Ctrl+Minus"}, _
+            "-", _
+            {"text": "&Status Bar", "name": "mnuStatus"}, _
+            {"text": "&Dark Mode", "name": "mnuDark"}]}, _
+        {"text": "&Help", "items": [ _
+            {"text": "Set as &Default App...", "name": "mnuRegister"}, _
+            {"text": "&Remove from Default Apps", "name": "mnuUnregister"}, _
+            "-", _
+            {"text": "&About " + APP_NAME, "name": "mnuAbout"}]}])
+    IF LEN(recent) = 0 THEN FORM.SET(FORM.FIND(frm, "mnuRecentNone"), "ENABLED", FALSE)
+    IF pic <> 0 THEN MENU_STATE()
+ENDSUB
+
+' ── layout ─────────────────────────────────────────────────────
+
+SUB LAYOUT()
+    FORM.SET(sb, "VISIBLE", status_on)
+    DIM w AS INTEGER = client_w - PANEL_W
+    DIM h AS INTEGER = client_h - tb_h
+    IF status_on THEN h = h - SB_HEIGHT
+    IF w < 50 THEN w = 50
+    IF h < 50 THEN h = 50
+    FORM.SET(pic, "X", PANEL_W)
+    FORM.SET(pic, "Y", tb_h)
+    FORM.SET(pic, "WIDTH", w)
+    FORM.SET(pic, "HEIGHT", h)
+    FORM.SET(hint, "X", PANEL_W)
+    FORM.SET(hint, "WIDTH", w)
+    FORM.SET(hint, "Y", tb_h + h / 2 - 12)
+    UPDATE_STATUS(-1, -1)
+ENDSUB
+
+' ── events: window ─────────────────────────────────────────────
+
+SUB MAIN_RESIZE(e)
+    client_w = CINT(e[0]{"width"})
+    client_h = CINT(e[0]{"height"})
+    LAYOUT()
+ENDSUB
+
+SUB MAIN_UNLOAD(e)
+    IF NOT CONFIRM_DISCARD() THEN
+        e[0]{"cancel"} = TRUE
+        RETURN
+    ENDIF
+    REG_PUT("Window", FORM.GET(frm, "PLACEMENT"))
+    SAVE_SETTINGS()
+ENDSUB
+
+SUB MAIN_DROPFILES(e)
+    IF CONFIRM_DISCARD() THEN OPEN_FILE(e[0]{"files"}[0])
+ENDSUB
+
+SUB pic_DROPFILES(e)
+    IF CONFIRM_DISCARD() THEN OPEN_FILE(e[0]{"files"}[0])
+ENDSUB
+
+' ── events: the picture ────────────────────────────────────────
+
+SUB pic_MOUSEDOWN(e)
+    IF NOT has_pic THEN RETURN
+    DIM ix AS DOUBLE = e[0]{"imagex"}
+    DIM iy AS DOUBLE = e[0]{"imagey"}
+    IF e[0]{"button"} = 2 THEN
+        IF FORM.GET(pic, "SCALEMODE") <> "zoom" THEN RETURN
+        pan_on = 1
+        grab_x = ix
+        grab_y = iy
+        FORM.SET(pic, "CURSOR", "SIZEALL")
+        RETURN
+    ENDIF
+    IF e[0]{"button"} <> 1 THEN RETURN
+    IF tool = "text" THEN
+        PLACE_TEXT(ix, iy)
+        RETURN
+    ENDIF
+    IF tool = "pen" ORELSE tool = "marker" THEN
+        stroke = [ix, iy, ix, iy]
+        FORM.PREVIEW(pic, "line", stroke, STYLE_OF("line"))
+        RETURN
+    ENDIF
+    drag_on = 1
+    start_x = ix
+    start_y = iy
+ENDSUB
+
+SUB pic_MOUSEMOVE(e)
+    IF NOT has_pic THEN RETURN
+    DIM ix AS DOUBLE = e[0]{"imagex"}
+    DIM iy AS DOUBLE = e[0]{"imagey"}
+    UPDATE_STATUS(ix, iy)
+    IF pan_on THEN
+        FORM.SET(pic, "SCROLLX", FORM.GET(pic, "SCROLLX") + grab_x - ix)
+        FORM.SET(pic, "SCROLLY", FORM.GET(pic, "SCROLLY") + grab_y - iy)
+        RETURN
+    ENDIF
+    IF LEN(stroke) > 0 THEN
+        DIM n AS INTEGER = LEN(stroke)
+        IF ABS(stroke[n - 2] - ix) + ABS(stroke[n - 1] - iy) < 0.5 THEN RETURN
+        PUSH(stroke, ix)
+        PUSH(stroke, iy)
+        FORM.PREVIEW(pic, "line", stroke, STYLE_OF("line"))
+        RETURN
+    ENDIF
+    IF drag_on THEN
+        DIM shape AS STRING = DRAG_SHAPE$()
+        IF shape = "rect" ANDALSO tool <> "rect" THEN
+            FORM.PREVIEW(pic, "rect", [start_x, start_y, ix, iy], SELECTION_STYLE())
+        ELSE
+            FORM.PREVIEW(pic, shape, [start_x, start_y, ix, iy], STYLE_OF(shape))
+        ENDIF
+    ENDIF
+ENDSUB
+
+SUB pic_MOUSEUP(e)
+    IF pan_on THEN
+        pan_on = 0
+        FORM.SET(pic, "CURSOR", IIF(tool = "text", "IBEAM", "CROSS"))
+        RETURN
+    ENDIF
+    IF LEN(stroke) > 0 THEN
+        FORM.HISTORY(pic, "checkpoint")
+        FORM.DRAW(pic, "line", stroke, STYLE_OF("line"))
+        FORM.PREVIEW(pic, "", [])
+        stroke = []
+        CHANGED()
+        RETURN
+    ENDIF
+    IF drag_on THEN
+        drag_on = 0
+        FINISH_DRAG(e[0]{"imagex"}, e[0]{"imagey"})
+    ENDIF
+ENDSUB
+
+SUB pic_MOUSEWHEEL(e)
+    IF NOT has_pic THEN RETURN
+    DIM f AS DOUBLE = ZOOM_STEP
+    IF e[0]{"delta"} < 0 THEN f = 1 / ZOOM_STEP
+    ZOOM_AT(FORM.GET(pic, "SCALE") * f, e[0]{"imagex"}, e[0]{"imagey"})
+ENDSUB
+
+SUB pic_KEYDOWN(e)
+    IF e[0]{"ctrl"} ORELSE e[0]{"alt"} THEN RETURN
+    DIM k AS INTEGER = CINT(e[0]{"key"})
+    IF k = 27 THEN
+        FORM.PREVIEW(pic, "", [])
+        stroke = []
+        drag_on = 0
+        RETURN
+    ENDIF
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(TOOLS) - 1
+        IF k = ASC(TOOLS[i][2]) THEN SELECT_TOOL(TOOLS[i][0])
+    NEXT
+ENDSUB
+
+' ── events: the panel ──────────────────────────────────────────
+
+SUB optpen_CLICK(e)
+    SELECT_TOOL("pen")
+ENDSUB
+SUB optmarker_CLICK(e)
+    SELECT_TOOL("marker")
+ENDSUB
+SUB optline_CLICK(e)
+    SELECT_TOOL("line")
+ENDSUB
+SUB optarrow_CLICK(e)
+    SELECT_TOOL("arrow")
+ENDSUB
+SUB optrect_CLICK(e)
+    SELECT_TOOL("rect")
+ENDSUB
+SUB optellipse_CLICK(e)
+    SELECT_TOOL("ellipse")
+ENDSUB
+SUB opttext_CLICK(e)
+    SELECT_TOOL("text")
+ENDSUB
+SUB optpixelate_CLICK(e)
+    SELECT_TOOL("pixelate")
+ENDSUB
+SUB optblur_CLICK(e)
+    SELECT_TOOL("blur")
+ENDSUB
+SUB optcrop_CLICK(e)
+    SELECT_TOOL("crop")
+ENDSUB
+
+SUB sw0_MOUSEDOWN(e)
+    PICK_SWATCH(0)
+ENDSUB
+SUB sw1_MOUSEDOWN(e)
+    PICK_SWATCH(1)
+ENDSUB
+SUB sw2_MOUSEDOWN(e)
+    PICK_SWATCH(2)
+ENDSUB
+SUB sw3_MOUSEDOWN(e)
+    PICK_SWATCH(3)
+ENDSUB
+SUB sw4_MOUSEDOWN(e)
+    PICK_SWATCH(4)
+ENDSUB
+SUB sw5_MOUSEDOWN(e)
+    PICK_SWATCH(5)
+ENDSUB
+SUB sw6_MOUSEDOWN(e)
+    PICK_SWATCH(6)
+ENDSUB
+SUB sw7_MOUSEDOWN(e)
+    PICK_SWATCH(7)
+ENDSUB
+SUB sw8_MOUSEDOWN(e)
+    PICK_SWATCH(8)
+ENDSUB
+SUB sw9_MOUSEDOWN(e)
+    PICK_SWATCH(9)
+ENDSUB
+SUB sw10_MOUSEDOWN(e)
+    PICK_SWATCH(10)
+ENDSUB
+SUB sw11_MOUSEDOWN(e)
+    PICK_SWATCH(11)
+ENDSUB
+SUB swCur_MOUSEDOWN(e)
+    MORE_COLORS()
+ENDSUB
+SUB btnMore_CLICK(e)
+    MORE_COLORS()
+ENDSUB
+
+SUB updWidth_CHANGE(e)
+    DIM v AS INTEGER = CINT(FORM.GET(upd_width, "VALUE"))
+    IF v >= 1 ANDALSO v <= 60 THEN pen_w = v
+ENDSUB
+
+SUB chkFill_CLICK(e)
+    fill_on = CINT(IIF(FORM.GET(chk_fill, "CHECKED"), 1, 0))
+ENDSUB
+
+' ── events: toolbar and menu ───────────────────────────────────
+
+SUB UNDO_STEP()
+    IF has_pic ANDALSO FORM.HISTORY(pic, "undo") THEN
+        CHANGED()
+        UPDATE_STATUS(-1, -1)
+    ENDIF
+ENDSUB
+
+SUB REDO_STEP()
+    IF has_pic ANDALSO FORM.HISTORY(pic, "redo") THEN
+        CHANGED()
+        UPDATE_STATUS(-1, -1)
+    ENDIF
+ENDSUB
+
+SUB tbNew_CLICK(e)
+    NEW_BLANK()
+ENDSUB
+SUB tbOpen_CLICK(e)
+    OPEN_DIALOG()
+ENDSUB
+SUB tbSave_CLICK(e)
+    DIM ok AS BOOLEAN = SAVE_DOC()
+ENDSUB
+SUB tbCopy_CLICK(e)
+    COPY_PICTURE()
+ENDSUB
+SUB tbPaste_CLICK(e)
+    NEW_FROM_CLIPBOARD()
+ENDSUB
+SUB tbUndo_CLICK(e)
+    UNDO_STEP()
+ENDSUB
+SUB tbRedo_CLICK(e)
+    REDO_STEP()
+ENDSUB
+SUB tbPrint_CLICK(e)
+    PRINT_PICTURE()
+ENDSUB
+
+SUB mnuNew_CLICK(e)
+    NEW_BLANK()
+ENDSUB
+SUB mnuShot_CLICK(e)
+    NEW_SCREENSHOT()
+ENDSUB
+SUB mnuFromClip_CLICK(e)
+    NEW_FROM_CLIPBOARD()
+ENDSUB
+SUB mnuOpen_CLICK(e)
+    OPEN_DIALOG()
+ENDSUB
+SUB mnuRecent1_CLICK(e)
+    OPEN_RECENT(1)
+ENDSUB
+SUB mnuRecent2_CLICK(e)
+    OPEN_RECENT(2)
+ENDSUB
+SUB mnuRecent3_CLICK(e)
+    OPEN_RECENT(3)
+ENDSUB
+SUB mnuRecent4_CLICK(e)
+    OPEN_RECENT(4)
+ENDSUB
+SUB mnuRecent5_CLICK(e)
+    OPEN_RECENT(5)
+ENDSUB
+SUB mnuRecent6_CLICK(e)
+    OPEN_RECENT(6)
+ENDSUB
+SUB mnuRecent7_CLICK(e)
+    OPEN_RECENT(7)
+ENDSUB
+SUB mnuRecent8_CLICK(e)
+    OPEN_RECENT(8)
+ENDSUB
+SUB mnuRecentClear_CLICK(e)
+    recent = []
+    SAVE_RECENT()
+    BUILD_MENU()
+ENDSUB
+SUB mnuSave_CLICK(e)
+    DIM ok AS BOOLEAN = SAVE_DOC()
+ENDSUB
+SUB mnuSaveAs_CLICK(e)
+    DIM ok AS BOOLEAN = SAVE_AS()
+ENDSUB
+SUB mnuPageSetup_CLICK(e)
+    DIM ok AS BOOLEAN = FORM.PAGESETUP()
+ENDSUB
+SUB mnuPrint_CLICK(e)
+    PRINT_PICTURE()
+ENDSUB
+SUB mnuExit_CLICK(e)
+    FORM.CLOSE(frm)
+ENDSUB
+SUB mnuUndo_CLICK(e)
+    UNDO_STEP()
+ENDSUB
+SUB mnuRedo_CLICK(e)
+    REDO_STEP()
+ENDSUB
+SUB mnuCopy_CLICK(e)
+    COPY_PICTURE()
+ENDSUB
+SUB mnuResize_CLICK(e)
+    RESIZE_DIALOG()
+ENDSUB
+SUB mnuTurnRight_CLICK(e)
+    IF has_pic THEN THROUGH_FILE("turn", 90, 0, 0, 0)
+ENDSUB
+SUB mnuTurnLeft_CLICK(e)
+    IF has_pic THEN THROUGH_FILE("turn", -90, 0, 0, 0)
+ENDSUB
+SUB mnuFit_CLICK(e)
+    FIT()
+ENDSUB
+SUB mnuActual_CLICK(e)
+    IF has_pic THEN ZOOM_AT(1, FORM.GET(pic, "CENTERX"), FORM.GET(pic, "CENTERY"))
+ENDSUB
+SUB mnuZoomIn_CLICK(e)
+    ZOOM_BY(ZOOM_STEP)
+ENDSUB
+SUB mnuZoomOut_CLICK(e)
+    ZOOM_BY(1 / ZOOM_STEP)
+ENDSUB
+SUB mnuStatus_CLICK(e)
+    status_on = 1 - status_on
+    MENU_STATE()
+    LAYOUT()
+ENDSUB
+SUB mnuDark_CLICK(e)
+    dark_on = 1 - dark_on
+    MENU_STATE()
+    APPLY_COLORS()
+ENDSUB
+SUB mnuAbout_CLICK(e)
+    MSGBOX(APP_NAME + " - paint and screenshot annotation written in jdBasic." + LF + LF + _
+        "No account, no cloud, no AI, no ads. Saved pictures carry no metadata.", 64, APP_NAME)
+ENDSUB
+
+' ── Open with and Default apps ─────────────────────────────────
+
+FUNC REGISTER_APP() AS INTEGER
+    RETURN APPREG.REGISTER(APP_NAME, PROG_ID, "Paint and screenshot annotation written in jdBasic.", APP_NAME + " Picture", PIC_EXTS)
+ENDFUNC
+
+SUB mnuRegister_CLICK(e)
+    IF REGISTER_APP() <> 0 THEN
+        MSGBOX("Windows did not take every entry of the registration.", 48, APP_NAME)
+        RETURN
+    ENDIF
+    MSGBOX(APP_NAME + " now shows under Open with and in Default apps." + CRLF + CRLF + _
+        "Windows lets only you make it the default: Settings opens on its page, " + _
+        "pick " + APP_NAME + " there for each type of picture.", 64, APP_NAME)
+    APPREG.OPEN_SETTINGS(APP_NAME)
+ENDSUB
+SUB mnuUnregister_CLICK(e)
+    DIM rc AS INTEGER = APPREG.UNREGISTER(APP_NAME, PROG_ID, PIC_EXTS)
+    MSGBOX(APP_NAME + " is no longer offered under Open with and in Default apps.", 64, APP_NAME)
+ENDSUB
+
+' ── build the window ───────────────────────────────────────────
+
+DIM args AS ARRAY = OS.ARGS()
+IF LEN(args) > 1 THEN
+    IF LCASE$(args[1]) = "--register" THEN END REGISTER_APP()
+    IF LCASE$(args[1]) = "--unregister" THEN END APPREG.UNREGISTER(APP_NAME, PROG_ID, PIC_EXTS)
+ENDIF
+
+LOAD_SETTINGS()
+LOAD_RECENT()
+
+frm = FORM.CREATE(APP_NAME, client_w, client_h, "MAIN")
+tb = FORM.TOOLBAR(frm, "tb", [ _
+    {"name": "tbNew", "text": "New (Ctrl+N)", "icon": "NEW"}, _
+    {"name": "tbOpen", "text": "Open (Ctrl+O)", "icon": "OPEN"}, _
+    {"name": "tbSave", "text": "Save (Ctrl+S)", "icon": "SAVE"}, _
+    "-", _
+    {"name": "tbCopy", "text": "Copy picture (Ctrl+C)", "icon": "COPY"}, _
+    {"name": "tbPaste", "text": "New from clipboard (Ctrl+Shift+V)", "icon": "PASTE"}, _
+    "-", _
+    {"name": "tbUndo", "text": "Undo (Ctrl+Z)", "icon": "UNDO"}, _
+    {"name": "tbRedo", "text": "Redo (Ctrl+Y)", "icon": "REDO"}, _
+    "-", _
+    {"name": "tbPrint", "text": "Print (Ctrl+P)", "icon": "PRINT"}])
+tb_h = CINT(FORM.GET(tb, "HEIGHT"))
+
+DIM y AS INTEGER = tb_h + 8
+FORM.FRAME(frm, "fraTool", "Tool", 6, y, PANEL_W - 12, LEN(TOOLS) * 24 + 26)
+DIM i AS INTEGER
+DIM sw AS DOUBLE = 0
+FOR i = 0 TO LEN(TOOLS) - 1
+    FORM.RADIO(frm, "opt" + TOOLS[i][0], TOOLS[i][1], 16, y + 20 + i * 24, PANEL_W - 30, 22, i = 0)
+NEXT
+y = y + LEN(TOOLS) * 24 + 34
+
+FORM.FRAME(frm, "fraColor", "Colour", 6, y, PANEL_W - 12, 4 * (SWATCH + 4) + 92)
+cur_swatch = FORM.SHAPE(frm, "swCur", 16, y + 22, PANEL_W - 32, 22, ink)
+FORM.SET(cur_swatch, "TOOLTIP", "The colour in use - click for more colours")
+FORM.SET(cur_swatch, "CURSOR", "HAND")
+FOR i = 0 TO LEN(PALETTE) - 1
+    sw = FORM.SHAPE(frm, "sw" + STR$(i), 16 + (i MOD 3) * (SWATCH + 4), y + 52 + INT(i / 3) * (SWATCH + 4), SWATCH, SWATCH, PALETTE[i])
+    FORM.SET(sw, "CURSOR", "HAND")
+NEXT
+y = y + 52 + 4 * (SWATCH + 4)
+FORM.BUTTON(frm, "btnMore", "&More...", 16, y, PANEL_W - 32, 24)
+y = y + 48
+
+FORM.LABEL(frm, "lblWidth", "&Width", 10, y + 3, 50, 20)
+upd_width = FORM.UPDOWN(frm, "updWidth", 62, y, PANEL_W - 72, 24, 1, 60)
+FORM.SET(upd_width, "VALUE", pen_w)
+y = y + 32
+chk_fill = FORM.CHECKBOX(frm, "chkFill", "&Fill shapes", 10, y, PANEL_W - 16, 22)
+FORM.SET(chk_fill, "CHECKED", fill_on)
+
+pic = FORM.PICTURE(frm, "pic", "", PANEL_W, tb_h, client_w - PANEL_W, client_h - tb_h - SB_HEIGHT)
+FORM.SET(pic, "SCALEMODE", "fit")
+FORM.SET(pic, "DROPFILES", TRUE)
+FORM.SET(frm, "DROPFILES", TRUE)
+hint = FORM.LABEL(frm, "hint", "New screenshot: Ctrl+Shift+N    From the clipboard: Ctrl+Shift+V    Open: Ctrl+O    Empty page: Ctrl+N", PANEL_W, 0, client_w - PANEL_W, 24)
+FORM.SET(hint, "ALIGN", "CENTER")
+sb = FORM.STATUSBAR(frm, "sb", [110, 110, 70, -1])
+printer_rt = FORM.RICHTEXT(frm, "printerRt", 0, 0, 10, 10)
+FORM.SET(printer_rt, "VISIBLE", FALSE)
+
+BUILD_MENU()
+APPLY_COLORS()
+LAYOUT()
+SELECT_TOOL(tool)
+MENU_STATE()
+UPDATE_TITLE()
+IF LEN(args) > 1 THEN OPEN_FILE(args[1])
+IF window_place <> "" THEN FORM.SET(frm, "PLACEMENT", window_place)
+FORM.RUN(frm)

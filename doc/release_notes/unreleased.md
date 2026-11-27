@@ -41,6 +41,11 @@ Range: `v1.3.0..HEAD`.
 - **jdPix** (#1120): `jdb/demos/forms/jdpix`, a picture viewer on native
   forms: steps through a folder, fits, zooms at the pointer and pans, turns
   a photo, shows what it gives away and saves a copy without it.
+- **jdBrush** (#1121): `jdb/demos/forms/jdbrush`, paint and screenshot
+  annotation: a screenshot, the clipboard, a file or an empty page, marked
+  up with pen, highlighter, line, arrow, rectangle, ellipse and text,
+  pixelated or blurred where nobody should read, cropped, resized and
+  turned, with undo, and saved without metadata.
 - **Drawing on a PICTURE** (#1123): `FORM.NEWIMAGE` starts an empty
   picture, `FORM.DRAW` draws lines through many points, arrows,
   rectangles, ellipses and text into it, smoothed, with a colour, width,

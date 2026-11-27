@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <rect x="34" y="38" width="190" height="178" rx="10" fill="#d9dce3"/>
+  <rect x="28" y="30" width="190" height="178" rx="10" fill="#f7f8fb" stroke="#3d4454" stroke-width="8"/>
+  <circle cx="58" cy="150" r="12" fill="#d02020"/>
+  <circle cx="68" cy="140" r="12" fill="#d02020"/>
+  <circle cx="79" cy="134" r="12" fill="#d02020"/>
+  <circle cx="90" cy="134" r="12" fill="#d02020"/>
+  <circle cx="100" cy="138" r="12" fill="#d02020"/>
+  <circle cx="108" cy="140" r="11" fill="#d02020"/>
+  <circle cx="116" cy="138" r="10" fill="#d02020"/>
+  <polygon points="200,36 220,56 152,124 132,104" fill="#8b5a2b"/>
+  <polygon points="132,104 152,124 142,134 122,114" fill="#b8bcc6"/>
+  <polygon points="122,114 142,134 124,148 106,150 110,132" fill="#d02020"/>
+  <rect x="104" y="160" width="116" height="62" rx="14" fill="#1565c8"/>
+  <text x="162" y="207" font-size="64" font-weight="bold" fill="#ffffff" text-anchor="middle">jd</text>
+</svg>

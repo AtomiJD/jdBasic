@@ -1,0 +1,9 @@
+# EXE properties for jdbrush.exe (jdbasic -c jdbrush.jdb)
+FileVersion      = 1.0.0.0
+ProductVersion   = 1.0.0.0
+FileDescription  = jdBrush paint and screenshot annotation
+ProductName      = jdBrush
+LegalCopyright   = Written in jdBasic
+OriginalFilename = jdbrush.exe
+Icon             = jdbrush.ico
+Subsystem        = Windows
