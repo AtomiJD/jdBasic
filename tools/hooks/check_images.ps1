@@ -9,8 +9,10 @@
 # Either way the commit is blocked, so it is run again knowingly. The report
 # names what was found, never the value.
 #
-# jdBasic is $env:JDBASIC_EXE, else build/jdBasic.exe of the repository this
-# script lives in, so another repository can wire the same file into its
+# jdBasic is $env:JDBASIC_EXE, else the one of the installed pack this script
+# came with (tools\ beside jdBasic.exe), else D:\usr\bin\jdbasic\current,
+# else build/jdBasic.exe of the repository this script lives in. Another
+# repository wires D:\usr\bin\jdbasic\current\tools\check_images.ps1 into its
 # own settings with its own $CLAUDE_PROJECT_DIR.
 
 $inp = [Console]::In.ReadToEnd() | ConvertFrom-Json
@@ -39,7 +41,14 @@ function Stop-Commit([string]$msg) {
 }
 
 $exe = $env:JDBASIC_EXE
-if (-not $exe) { $exe = Join-Path $PSScriptRoot "..\..\build\jdBasic.exe" }
+if (-not $exe) {
+  foreach ($c in @((Join-Path $PSScriptRoot "..\jdBasic.exe"),
+                   "D:\usr\bin\jdbasic\current\jdBasic.exe",
+                   (Join-Path $PSScriptRoot "..\..\build\jdBasic.exe"))) {
+    if (Test-Path -LiteralPath $c) { $exe = $c; break }
+  }
+  if (-not $exe) { $exe = "D:\usr\bin\jdbasic\current\jdBasic.exe" }
+}
 $checker = Join-Path $PSScriptRoot "image_privacy.jdb"
 if (-not (Test-Path -LiteralPath $exe) -or -not (Test-Path -LiteralPath $checker)) {
   Stop-Commit "Blocked: the commit takes images, and the image privacy check cannot run (no jdBasic at $exe). Build jdBasic or set JDBASIC_EXE, then commit again."
