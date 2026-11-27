@@ -19,6 +19,14 @@ if ($null -eq $cmd -or $cmd -notmatch 'git\s+commit') { exit 0 }
 $proj = $env:CLAUDE_PROJECT_DIR
 if (-not $proj) { exit 0 }
 
+# Names with letters beyond ASCII come from git as they are, and git and
+# jdBasic are read as UTF-8.
+$env:GIT_CONFIG_COUNT = "1"
+$env:GIT_CONFIG_KEY_0 = "core.quotePath"
+$env:GIT_CONFIG_VALUE_0 = "false"
+[Console]::OutputEncoding = New-Object Text.UTF8Encoding $false
+$OutputEncoding = [Console]::OutputEncoding
+
 . (Join-Path $PSScriptRoot "commit_files.ps1")
 $files = @(Get-CommitFiles $cmd $proj)
 $imageExt = '(?i)\.(jpe?g|png|gif|bmp|ico|svg|heic|heif|webp|tiff?|dng|avif|jxl|cr2|nef|arw)$'
@@ -37,13 +45,27 @@ if (-not (Test-Path -LiteralPath $exe) -or -not (Test-Path -LiteralPath $checker
   Stop-Commit "Blocked: the commit takes images, and the image privacy check cannot run (no jdBasic at $exe). Build jdBasic or set JDBASIC_EXE, then commit again."
 }
 
+# An image that goes in as it stands in the index is checked in that form:
+# the working copy may differ from what the commit takes, or be gone.
 $list = [IO.Path]::GetTempFileName()
+$staged = Join-Path ([IO.Path]::GetTempPath()) ("jdb_images_" + [Guid]::NewGuid().ToString("N"))
 try {
-  [IO.File]::WriteAllLines($list, [string[]]$images, (New-Object Text.UTF8Encoding $false))
+  $lines = @()
+  foreach ($img in $images) {
+    if ($script:CommitFromIndex -contains $img) {
+      New-Item -ItemType Directory -Force -Path $staged | Out-Null
+      git -C $proj checkout-index -f "--prefix=$($staged.Replace('\', '/'))/" -- $img 2>$null | Out-Null
+      $copy = Join-Path $staged $img
+      if (Test-Path -LiteralPath $copy) { $lines += "$img`t$copy"; continue }
+    }
+    $lines += $img
+  }
+  [IO.File]::WriteAllLines($list, [string[]]$lines, (New-Object Text.UTF8Encoding $false))
   $out = @(& $exe $checker $proj $list 2>&1 | ForEach-Object { "$_" })
   $code = $LASTEXITCODE
 } finally {
   Remove-Item -LiteralPath $list -ErrorAction SilentlyContinue
+  if (Test-Path -LiteralPath $staged) { Remove-Item -LiteralPath $staged -Recurse -Force -ErrorAction SilentlyContinue }
 }
 $bad = @($out | Where-Object { $_ -and $_ -notmatch "^(OK|FLAG)`t" })
 if ($code -ne 0 -or $bad.Count -gt 0) {
@@ -63,7 +85,7 @@ foreach ($line in $flagged) {
   if ($LASTEXITCODE -eq 0) {
     $git_head = git -C $proj ls-tree --name-only HEAD -- $path 2>$null
     if ($git_head) { $tracked += "  $path ($why)"; continue }
-    git -C $proj rm --cached -q -- $path 2>$null | Out-Null
+    git -C $proj rm --cached -f -q -- $path 2>$null | Out-Null
   }
   git -C $proj check-ignore -q -- $path 2>$null
   if ($LASTEXITCODE -ne 0) {

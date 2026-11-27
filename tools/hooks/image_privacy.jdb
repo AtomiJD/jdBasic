@@ -2,7 +2,9 @@
 '
 '   jdBasic image_privacy.jdb <repo> <list-file>
 '
-' <list-file> holds one path per line, relative to <repo>. For every image
+' <list-file> holds one path per line, relative to <repo>; a line may add a
+' TAB and the file to read in its place (a copy of the version a commit
+' takes from the index). For every image
 ' among them one line is printed:
 '
 '   FLAG<TAB>path<TAB>reasons      the image is not to go into the repository
@@ -97,13 +99,21 @@ FOR EACH term$ IN more
 NEXT
 
 DIM paths = SPLIT(REPLACE$(TXTREADER$(argv[2]), CHR$(13), ""), CHR$(10))
-DIM rel$ = ""
-FOR EACH rel$ IN paths
-    rel$ = TRIM$(rel$)
-    IF rel$ = "" THEN CONTINUEFOR
+DIM entry$ = ""
+FOR EACH entry$ IN paths
+    entry$ = TRIM$(entry$)
+    IF entry$ = "" THEN CONTINUEFOR
+    DIM rel$ = entry$
+    DIM full$ = ""
+    DIM tab AS INTEGER = INSTR(entry$, VBTAB)
+    IF tab >= 0 THEN
+        rel$ = LEFT$(entry$, tab)
+        full$ = MID$(entry$, tab + 1)
+    ELSE
+        full$ = PATH.JOIN$(repo$, rel$)
+    ENDIF
     DIM kind$ = KindOf$(rel$)
     IF kind$ = "" THEN CONTINUEFOR
-    DIM full$ = PATH.JOIN$(repo$, rel$)
     DIM why$ = ""
     IF NOT FILE.EXISTS(full$) THEN CONTINUEFOR
     IF kind$ = "unreadable" THEN why$ = "format not checked"
