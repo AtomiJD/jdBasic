@@ -1,0 +1,116 @@
+' image_privacy.jdb - which images would give personal data away.
+'
+'   jdBasic image_privacy.jdb <repo> <list-file>
+'
+' <list-file> holds one path per line, relative to <repo>. For every image
+' among them one line is printed:
+'
+'   FLAG<TAB>path<TAB>reasons      the image is not to go into the repository
+'   OK<TAB>path
+'
+' The reasons name what was found (gps, artist, serial, private term ...),
+' never the value. Flagged are a GPS position, a name of the photographer,
+' author or camera owner, a camera or lens serial number, a text that holds
+' one of the names or terms in <repo>/.claude/private_names.txt and
+' private_terms.txt, and every image whose format this check cannot read.
+' Make, model, software and dates are not flagged, or every screenshot
+' would be. Files that are no images are left out of the answer.
+
+OPTION "EXPLICIT"
+
+FUNC ReadTerms(path$)
+    DIM terms = []
+    IF NOT FILE.EXISTS(path$) THEN RETURN terms
+    DIM lines = SPLIT(REPLACE$(TXTREADER$(path$), CHR$(13), ""), CHR$(10))
+    DIM ln$ = ""
+    FOR EACH ln$ IN lines
+        ln$ = TRIM$(ln$)
+        IF ln$ <> "" ANDALSO LEFT$(ln$, 1) <> "#" THEN terms = APPEND(terms, LCASE$(ln$))
+    NEXT
+    RETURN terms
+ENDFUNC
+
+FUNC HasTerm(text$, terms) AS BOOLEAN
+    DIM low$ = LCASE$(text$)
+    DIM t$ = ""
+    FOR EACH t$ IN terms
+        IF INSTR(low$, t$) >= 0 THEN RETURN TRUE
+    NEXT
+    RETURN FALSE
+ENDFUNC
+
+' The kind of check an extension gets: "meta" for JPEG and PNG, "none" for
+' formats that carry no personal fields here, "unreadable" for photo formats
+' this check cannot look into, "" for files that are no images.
+FUNC KindOf$(path$)
+    DIM ext$ = LCASE$(PATH.EXT$(path$))
+    IF ext$ = ".jpg" ORELSE ext$ = ".jpeg" ORELSE ext$ = ".png" THEN RETURN "meta"
+    IF ext$ = ".gif" ORELSE ext$ = ".bmp" ORELSE ext$ = ".ico" ORELSE ext$ = ".svg" THEN RETURN "none"
+    IF ext$ = ".heic" ORELSE ext$ = ".heif" ORELSE ext$ = ".webp" ORELSE ext$ = ".tif" ORELSE ext$ = ".tiff" THEN RETURN "unreadable"
+    IF ext$ = ".dng" ORELSE ext$ = ".avif" ORELSE ext$ = ".jxl" ORELSE ext$ = ".cr2" ORELSE ext$ = ".nef" ORELSE ext$ = ".arw" THEN RETURN "unreadable"
+    RETURN ""
+ENDFUNC
+
+FUNC Reasons$(file$, terms)
+    DIM m = IMAGE.META(file$)
+    IF MAP.SIZE(m) = 0 THEN RETURN "unreadable"
+    DIM found = []
+    IF MAP.EXISTS(m, "gps_latitude") ORELSE MAP.EXISTS(m, "gps_altitude") THEN found = APPEND(found, "gps")
+    DIM personal = ["artist", "owner", "serial", "lens_serial", "xp_author"]
+    DIM k$ = ""
+    FOR EACH k$ IN personal
+        IF MAP.EXISTS(m, k$) THEN found = APPEND(found, k$)
+    NEXT
+    IF MAP.EXISTS(m, "xmp") THEN
+        DIM x$ = m{"xmp"}
+        IF INSTR(x$, "GPS") >= 0 THEN found = APPEND(found, "xmp gps")
+        IF INSTR(x$, "dc:creator") >= 0 ORELSE INSTR(x$, "Author") >= 0 THEN found = APPEND(found, "xmp creator")
+    ENDIF
+    IF MAP.EXISTS(m, "iptc") THEN found = APPEND(found, "iptc")
+    DIM texts$ = ""
+    FOR EACH k$ IN MAP.KEYS(m)
+        IF ISSTR(m{k$}) THEN texts$ = texts$ + " " + m{k$}
+    NEXT
+    IF MAP.EXISTS(m, "text") THEN
+        DIM t = m{"text"}
+        FOR EACH k$ IN MAP.KEYS(t)
+            DIM key$ = LCASE$(k$)
+            IF key$ = "author" ORELSE key$ = "artist" ORELSE key$ = "creator" ORELSE key$ = "owner" THEN found = APPEND(found, "png " + key$)
+            texts$ = texts$ + " " + k$ + " " + t{k$}
+        NEXT
+    ENDIF
+    IF HasTerm(texts$, terms) THEN found = APPEND(found, "private term")
+    RETURN JOIN(found, ", ")
+ENDFUNC
+
+DIM argv = OS.ARGS()
+IF LEN(argv) < 3 THEN
+    PRINT "usage: image_privacy.jdb <repo> <list-file>"
+    END 2
+ENDIF
+DIM repo$ = argv[1]
+DIM terms = ReadTerms(PATH.JOIN$(repo$, ".claude", "private_names.txt"))
+DIM more = ReadTerms(PATH.JOIN$(repo$, ".claude", "private_terms.txt"))
+DIM term$ = ""
+FOR EACH term$ IN more
+    terms = APPEND(terms, term$)
+NEXT
+
+DIM paths = SPLIT(REPLACE$(TXTREADER$(argv[2]), CHR$(13), ""), CHR$(10))
+DIM rel$ = ""
+FOR EACH rel$ IN paths
+    rel$ = TRIM$(rel$)
+    IF rel$ = "" THEN CONTINUEFOR
+    DIM kind$ = KindOf$(rel$)
+    IF kind$ = "" THEN CONTINUEFOR
+    DIM full$ = PATH.JOIN$(repo$, rel$)
+    DIM why$ = ""
+    IF NOT FILE.EXISTS(full$) THEN CONTINUEFOR
+    IF kind$ = "unreadable" THEN why$ = "format not checked"
+    IF kind$ = "meta" THEN why$ = Reasons$(full$, terms)
+    IF why$ = "" THEN
+        PRINT "OK" + VBTAB + rel$
+    ELSE
+        PRINT "FLAG" + VBTAB + rel$ + VBTAB + why$
+    ENDIF
+NEXT
