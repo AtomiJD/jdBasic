@@ -16,7 +16,7 @@ is shown at its own size. A phone photo stands the way it was taken.
 
 | Do | How |
 |---|---|
-| Next / previous picture in the folder | Right / Left, Page Down / Page Up, Space |
+| Next / previous picture in the folder | Right / Left, Page Down / Page Up, Space, or the arrows that show at the sides while the mouse moves over the picture |
 | First / last picture | Home / End |
 | Zoom at the pointer | Mouse wheel |
 | Zoom in / out at the middle | Ctrl+Plus / Ctrl+Minus, or + / - |
@@ -24,7 +24,8 @@ is shown at its own size. A phone photo stands the way it was taken.
 | Actual size (100%) | Ctrl+1 |
 | Fit, or 100% at the pointer | Double click |
 | Pan | Drag while zoomed in |
-| Open a picture or a folder | Ctrl+O, or drop it on the window |
+| Open a picture or a folder | Ctrl+O, File > Open Recent, or drop it on the window |
+| Slideshow (whole screen, a picture every 3 seconds) | F5; any key or click stops it |
 
 The status bar shows the name, where it is in the folder, its size in
 pixels and the zoom.
@@ -49,9 +50,18 @@ orientation, so it still stands upright.
   be put back, and the next one is shown.
 - **Copy Picture** (Ctrl+C): onto the clipboard, transparency kept, for
   Paint, Word or a browser.
+- **Print** (Ctrl+P): the picture as large as fits the page, upright, with
+  its name on top; **Page Setup** sets paper and margins.
 
-The window opens where it was closed, and the Info panel as it was left.
+## Like every jd tool
 
-Built on the jdBasic `FORM.PICTURE` control (`SCALEMODE`, `ZOOM`, `SCROLLX`,
-`MOUSEWHEEL`) and the `IMAGE.*`, `FILE.RECYCLE` and `CLIPBOARD.SETIMAGE`
-builtins.
+- The window opens where and as large as it was closed, maximized if it
+  was; a monitor that is gone or smaller does not put it out of reach.
+- **Dark Mode** and the **Status Bar** (View menu) are kept for the next
+  start, and so is the Info panel.
+- **Open Recent** lists the last eight pictures.
+- Settings live in `HKEY_CURRENT_USER\Software\jdPix`, the recent list in
+  `%APPDATA%\jdPix\recent.txt`; nothing leaves the computer.
+
+The icon is drawn in `jdpix_icon.svg` and made into `jdpix.ico` by
+`tools/make_icon.jdb`.

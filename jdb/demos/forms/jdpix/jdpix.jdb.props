@@ -5,4 +5,5 @@ FileDescription  = jdPix picture viewer
 ProductName      = jdPix
 LegalCopyright   = Written in jdBasic
 OriginalFilename = jdpix.exe
+Icon             = jdpix.ico
 Subsystem        = Windows

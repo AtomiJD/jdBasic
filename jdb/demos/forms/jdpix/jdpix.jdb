@@ -4,19 +4,32 @@
 '   jdbasic -c jdpix.jdb            (jdpix.jdb.props gives the .exe its icon)
 '
 ' Opens a picture and steps through the pictures of its folder. Fit to the
-' window or zoom with the wheel at the pointer, drag to pan, turn a photo
-' without losing quality, see what it gives away (camera, date, GPS
-' position) and save a copy without any of it. No library, no account.
+' window or zoom with the wheel at the pointer, drag to pan, a slideshow,
+' turn a photo without losing quality, print it, see what it gives away
+' (camera, date, GPS position) and save a copy without any of it. No
+' library, no account.
 
 OPTION "EXPLICIT"
 
 DIM APP_NAME AS STRING = "jdPix"
 DIM PIC_EXTS AS ARRAY = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tif", ".tiff", ".ico", ".webp", ".heic", ".jxr"]
 DIM PIC_FILTER AS STRING = "Pictures|*.jpg;*.jpeg;*.png;*.gif;*.bmp;*.tif;*.tiff;*.ico;*.webp;*.heic|All files (*.*)|*.*"
+DIM CR AS STRING = CHR$(13)
+DIM LF AS STRING = CHR$(10)
+DIM CRLF AS STRING = CR + LF
 DIM SB_HEIGHT AS INTEGER = 22
 DIM INFO_W AS INTEGER = 300
-DIM BACK AS INTEGER = $202020
+DIM ARROW_W AS INTEGER = 44
+DIM ARROW_H AS INTEGER = 80
+DIM ARROW_MS AS INTEGER = 3000
+DIM SLIDE_MS AS INTEGER = 3000
+DIM PRINT_MAX_W AS INTEGER = 2400
+DIM DARK_BACK AS INTEGER = $1E1E1E
+DIM DARK_FORE AS INTEGER = $D4D4D4
+DIM DARK_PIC AS INTEGER = $202020
+DIM LIGHT_PIC AS INTEGER = $F0F0F0
 DIM ZOOM_STEP AS DOUBLE = 1.25
+DIM MAX_RECENT AS INTEGER = 8
 DIM REG_KEY AS STRING = "Software\jdPix"
 DIM HKEY_CURRENT_USER AS INTEGER = -2147483647
 DIM REG_SZ AS INTEGER = 1
@@ -26,10 +39,20 @@ DIM pic AS DOUBLE = 0
 DIM info AS DOUBLE = 0
 DIM sb AS DOUBLE = 0
 DIM hint AS DOUBLE = 0
+DIM btn_prev AS DOUBLE = 0
+DIM btn_next AS DOUBLE = 0
+DIM tmr_arrows AS DOUBLE = 0
+DIM tmr_slide AS DOUBLE = 0
+DIM printer_rt AS DOUBLE = 0
 DIM client_w AS INTEGER = 1100
 DIM client_h AS INTEGER = 760
-DIM info_on AS INTEGER = 0
+
+' Kept across runs.
 DIM window_place AS STRING = ""
+DIM info_on AS INTEGER = 0
+DIM dark_on AS INTEGER = 0
+DIM status_on AS INTEGER = 1
+DIM recent AS ARRAY = []
 
 ' The folder being looked through and where in it we are.
 DIM folder AS STRING = ""
@@ -42,6 +65,10 @@ DIM dragging AS INTEGER = 0
 DIM grab_x AS DOUBLE = 0
 DIM grab_y AS DOUBLE = 0
 
+DIM arrows_on AS INTEGER = 0
+DIM slide_on AS INTEGER = 0
+DIM slide_place AS STRING = ""
+
 ' ── settings (registry) ─────────────────────────────────────────
 
 DECLARE FUNC RegSetKeyValueA LIB "advapi32.dll" ALIAS "RegSetKeyValueA" (hkey AS INTEGER, subkey AS STRING, value_name AS STRING, kind AS INTEGER, data AS STRING, n_bytes AS INTEGER) AS INTEGER
@@ -53,8 +80,69 @@ FUNC REG_GET$(item_name AS STRING, fallback AS STRING)
     RETURN got[1]
 ENDFUNC
 
+FUNC REG_GET_INT(item_name AS STRING, fallback AS INTEGER) AS INTEGER
+    RETURN CINT(VAL(REG_GET$(item_name, STR$(fallback))))
+ENDFUNC
+
 SUB REG_PUT(item_name AS STRING, v AS STRING)
     DIM rc AS INTEGER = RegSetKeyValueA(HKEY_CURRENT_USER, REG_KEY, item_name, REG_SZ, v, LEN(v) + 1)
+ENDSUB
+
+SUB LOAD_SETTINGS()
+    window_place = REG_GET$("Window", "")
+    info_on = REG_GET_INT("Info", info_on)
+    dark_on = REG_GET_INT("DarkMode", dark_on)
+    status_on = REG_GET_INT("StatusBar", status_on)
+ENDSUB
+
+SUB SAVE_SETTINGS()
+    REG_PUT("Info", STR$(info_on))
+    REG_PUT("DarkMode", STR$(dark_on))
+    REG_PUT("StatusBar", STR$(status_on))
+ENDSUB
+
+' ── recent pictures ────────────────────────────────────────────
+
+FUNC RECENT_FILE$()
+    RETURN GETENV$("APPDATA") + "\jdPix\recent.txt"
+ENDFUNC
+
+SUB LOAD_RECENT()
+    recent = []
+    IF NOT FILE.EXISTS(RECENT_FILE$()) THEN RETURN
+    DIM entries AS ARRAY = SPLIT(REPLACE$(TXTREADER$(RECENT_FILE$()), CR, ""), LF)
+    DIM i AS INTEGER = 0
+    FOR i = 0 TO LEN(entries) - 1
+        IF entries[i] <> "" ANDALSO LEN(recent) < MAX_RECENT THEN recent = APPEND(recent, entries[i])
+    NEXT
+ENDSUB
+
+SUB SAVE_RECENT()
+    TRY
+        MKDIR PATH.DIRNAME$(RECENT_FILE$())
+        TXTWRITER RECENT_FILE$(), JOIN(recent, CRLF)
+    CATCH
+    ENDTRY
+ENDSUB
+
+SUB ADD_RECENT(path AS STRING)
+    DIM kept AS ARRAY = [path]
+    DIM i AS INTEGER = 0
+    FOR i = 0 TO LEN(recent) - 1
+        IF UCASE$(recent[i]) <> UCASE$(path) ANDALSO LEN(kept) < MAX_RECENT THEN kept = APPEND(kept, recent[i])
+    NEXT
+    recent = kept
+    SAVE_RECENT()
+    BUILD_MENU()
+ENDSUB
+
+SUB OPEN_RECENT(n AS INTEGER)
+    IF n > LEN(recent) THEN RETURN
+    IF NOT FILE.EXISTS(recent[n - 1]) THEN
+        MSGBOX(recent[n - 1] + " is not there any more.", 48, APP_NAME)
+        RETURN
+    ENDIF
+    OPEN_PATH(recent[n - 1])
 ENDSUB
 
 ' ── the folder ─────────────────────────────────────────────────
@@ -92,6 +180,7 @@ SUB UPDATE_STATUS()
     DIM dims AS STRING = STR$(FORM.GET(pic, "IMAGEWIDTH")) + " x " + STR$(FORM.GET(pic, "IMAGEHEIGHT"))
     DIM pct AS STRING = STR$(CINT(FORM.GET(pic, "SCALE") * 100)) + "%"
     IF FORM.GET(pic, "SCALEMODE") = "fit" THEN pct = pct + " (fit)"
+    IF slide_on THEN pct = pct + "   Slideshow - any key stops it"
     FORM.SET(sb, "TEXT", [names[cur], where, dims, pct])
     FORM.SET(frm, "TEXT", names[cur] + " - " + APP_NAME)
 ENDSUB
@@ -148,6 +237,7 @@ SUB SHOW_AT(i AS INTEGER)
         cur = -1
         cur_path = ""
         SHOW_HINT(1)
+        HIDE_ARROWS()
         UPDATE_STATUS()
         UPDATE_INFO()
         RETURN
@@ -165,6 +255,7 @@ SUB SHOW_AT(i AS INTEGER)
     cur_path = path
     FORM.SET(pic, "SCALEMODE", "fit")
     SHOW_HINT(0)
+    IF arrows_on THEN PLACE_ARROWS()
     UPDATE_STATUS()
     UPDATE_INFO()
 ENDSUB
@@ -177,6 +268,7 @@ SUB OPEN_PATH(p AS STRING)
         folder = p
         names = PICTURES_IN(folder)
         SHOW_AT(0)
+        IF LEN(names) > 0 THEN ADD_RECENT(cur_path)
         RETURN
     ENDIF
     folder = PATH.DIRNAME$(p)
@@ -191,6 +283,7 @@ SUB OPEN_PATH(p AS STRING)
         at = LEN(names) - 1
     ENDIF
     SHOW_AT(at)
+    IF cur >= 0 THEN ADD_RECENT(cur_path)
 ENDSUB
 
 ' ── zoom and pan ───────────────────────────────────────────────
@@ -224,6 +317,82 @@ ENDSUB
 SUB ACTUAL_SIZE()
     IF cur < 0 THEN RETURN
     ZOOM_AT(1, FORM.GET(pic, "IMAGEWIDTH") / 2, FORM.GET(pic, "IMAGEHEIGHT") / 2)
+ENDSUB
+
+' ── the arrows over the picture ────────────────────────────────
+
+' Previous and next show while the mouse moves over the picture and go
+' again ARROW_MS after it stopped; at the first or last picture only the
+' one that leads somewhere shows.
+SUB PLACE_ARROWS()
+    FORM.SET(btn_prev, "VISIBLE", arrows_on ANDALSO cur > 0)
+    FORM.SET(btn_next, "VISIBLE", arrows_on ANDALSO cur >= 0 ANDALSO cur < LEN(names) - 1)
+ENDSUB
+
+SUB SHOW_ARROWS()
+    IF slide_on ORELSE LEN(names) < 2 THEN RETURN
+    arrows_on = 1
+    PLACE_ARROWS()
+    FORM.SET(tmr_arrows, "INTERVAL", 0)
+    FORM.SET(tmr_arrows, "INTERVAL", ARROW_MS)
+ENDSUB
+
+SUB HIDE_ARROWS()
+    arrows_on = 0
+    FORM.SET(tmr_arrows, "INTERVAL", 0)
+    PLACE_ARROWS()
+ENDSUB
+
+SUB tmrArrows_TICK(e)
+    HIDE_ARROWS()
+ENDSUB
+
+SUB btnPrev_CLICK(e)
+    STEP_BY(-1)
+    SHOW_ARROWS()
+    FORM.SET(pic, "FOCUS", TRUE)
+ENDSUB
+
+SUB btnNext_CLICK(e)
+    STEP_BY(1)
+    SHOW_ARROWS()
+    FORM.SET(pic, "FOCUS", TRUE)
+ENDSUB
+
+' ── slideshow ──────────────────────────────────────────────────
+
+' The pictures one after the other, SLIDE_MS each, on the whole screen;
+' any key or click stops it.
+SUB SLIDE_START()
+    IF LEN(names) < 2 ORELSE slide_on THEN RETURN
+    slide_on = 1
+    slide_place = FORM.GET(frm, "PLACEMENT")
+    HIDE_ARROWS()
+    FORM.MENU(frm, [])
+    FORM.SET(frm, "BORDERSTYLE", 0)
+    FORM.SET(frm, "MAXIMIZED", TRUE)
+    LAYOUT()
+    FIT()
+    FORM.SET(tmr_slide, "INTERVAL", SLIDE_MS)
+    FORM.SET(pic, "FOCUS", TRUE)
+ENDSUB
+
+SUB SLIDE_STOP()
+    IF NOT slide_on THEN RETURN
+    slide_on = 0
+    FORM.SET(tmr_slide, "INTERVAL", 0)
+    FORM.SET(frm, "BORDERSTYLE", 2)
+    FORM.SET(frm, "MAXIMIZED", FALSE)
+    IF slide_place <> "" THEN FORM.SET(frm, "PLACEMENT", slide_place)
+    BUILD_MENU()
+    LAYOUT()
+ENDSUB
+
+SUB tmrSlide_TICK(e)
+    IF cur < 0 THEN RETURN
+    DIM nxt AS INTEGER = cur + 1
+    IF nxt >= LEN(names) THEN nxt = 0
+    SHOW_AT(nxt)
 ENDSUB
 
 ' ── the actions ────────────────────────────────────────────────
@@ -291,20 +460,140 @@ SUB OPEN_DIALOG()
     IF p <> "" THEN OPEN_PATH(p)
 ENDSUB
 
-SUB TOGGLE_INFO()
-    info_on = 1 - info_on
-    FORM.SET(info, "VISIBLE", info_on)
-    FORM.SET(FORM.FIND(frm, "mnuInfo"), "CHECKED", info_on)
-    LAYOUT()
-    UPDATE_INFO()
+' ── printing ───────────────────────────────────────────────────
+
+' The bytes of b$ as hexadecimal digits, the way RTF carries a picture.
+FUNC HEX_OF$(b$)
+    DIM digits AS STRING = "0123456789abcdef"
+    DIM table AS ARRAY = []
+    DIM i AS INTEGER
+    FOR i = 0 TO 255
+        table = APPEND(table, MID$(digits, INT(i / 16), 1) + MID$(digits, i MOD 16, 1))
+    NEXT
+    DIM parts AS ARRAY = []
+    DIM piece AS STRING = ""
+    FOR i = 0 TO LEN(b$) - 1
+        piece = piece + table[BYTEAT(b$, i)]
+        IF LEN(piece) >= 8192 THEN
+            parts = APPEND(parts, piece)
+            piece = ""
+        ENDIF
+    NEXT
+    parts = APPEND(parts, piece)
+    RETURN JOIN(parts, "")
+ENDFUNC
+
+' The picture, as displayed, as large as fits the page, with its name on
+' top: it goes into a hidden RICHTEXT as an RTF picture and is printed from
+' there.
+SUB PRINT_PICTURE()
+    IF cur < 0 THEN RETURN
+    DIM tmp AS STRING = MKTEMP$("jdpix") + ".jpg"
+    DIM rc AS INTEGER = 0
+    IF FORM.GET(pic, "IMAGEWIDTH") > PRINT_MAX_W THEN
+        rc = IMAGE.RESIZE(cur_path, tmp, PRINT_MAX_W, 0)
+    ELSE
+        rc = IMAGE.CONVERT(cur_path, tmp)
+    ENDIF
+    IF rc <> 0 THEN
+        MSGBOX("Cannot prepare the picture for printing (error " + STR$(rc) + ").", 48, APP_NAME)
+        RETURN
+    ENDIF
+    DIM wh AS ARRAY = IMAGE.SIZE(tmp)
+    DIM area AS OBJECT = FORM.PRINTAREA()
+    ' 15 twips to a pixel at 96 dpi; the title line takes about 700 twips
+    DIM f AS DOUBLE = MIN([area{"width"} / (wh[0] * 15), (area{"height"} - 700) / (wh[1] * 15)])
+    DIM gw AS INTEGER = CINT(wh[0] * 15 * f)
+    DIM gh AS INTEGER = CINT(wh[1] * 15 * f)
+    DIM rtf AS STRING = "{\rtf1\ansi{\pard\qc{\pict\jpegblip\picw" + STR$(wh[0]) + "\pich" + STR$(wh[1]) + _
+        "\picwgoal" + STR$(gw) + "\pichgoal" + STR$(gh) + " " + HEX_OF$(BINREADER$(tmp)) + "}\par}}"
+    KILL tmp
+    FORM.SET(printer_rt, "TEXTRTF", rtf)
+    DIM done AS BOOLEAN = FORM.PRINTRICH(printer_rt, names[cur])
+    FORM.SET(printer_rt, "TEXT", "")
+ENDSUB
+
+' ── look ───────────────────────────────────────────────────────
+
+SUB APPLY_COLORS()
+    FORM.SET(frm, "DARKMODE", dark_on = 1)
+    FORM.SET(pic, "BACKCOLOR", IIF(dark_on, DARK_PIC, LIGHT_PIC))
+    FORM.SET(info, "BACKCOLOR", IIF(dark_on, DARK_BACK, $FFFFFF))
+    FORM.SET(info, "FORECOLOR", IIF(dark_on, DARK_FORE, $000000))
+    FORM.SET(hint, "BACKCOLOR", IIF(dark_on, DARK_PIC, LIGHT_PIC))
+    FORM.SET(hint, "FORECOLOR", IIF(dark_on, DARK_FORE, $404040))
+ENDSUB
+
+SUB CHECK_ITEM(item_name AS STRING, checked AS INTEGER)
+    FORM.SET(FORM.FIND(frm, item_name), "CHECKED", checked)
+ENDSUB
+
+SUB MENU_CHECKS()
+    CHECK_ITEM("mnuInfo", info_on)
+    CHECK_ITEM("mnuStatus", status_on)
+    CHECK_ITEM("mnuDark", dark_on)
+ENDSUB
+
+FUNC RECENT_ITEMS()
+    DIM items AS ARRAY = []
+    DIM i AS INTEGER = 0
+    FOR i = 0 TO LEN(recent) - 1
+        items = APPEND(items, {"text": "&" + STR$(i + 1) + " " + REPLACE$(recent[i], "&", "&&"), "name": "mnuRecent" + STR$(i + 1)})
+    NEXT
+    IF LEN(recent) = 0 THEN items = APPEND(items, {"text": "(none)", "name": "mnuRecentNone"})
+    items = APPEND(items, "-")
+    items = APPEND(items, {"text": "&Clear Recent Pictures", "name": "mnuRecentClear"})
+    RETURN items
+ENDFUNC
+
+SUB BUILD_MENU()
+    IF slide_on THEN RETURN
+    FORM.MENU(frm, [ _
+        {"text": "&File", "items": [ _
+            {"text": "&Open...", "name": "mnuOpen", "key": "Ctrl+O"}, _
+            {"text": "Open &Recent", "items": RECENT_ITEMS()}, _
+            {"text": "&Save a Copy without Metadata...", "name": "mnuSaveClean", "key": "Ctrl+Shift+S"}, _
+            "-", _
+            {"text": "Page Set&up...", "name": "mnuPageSetup"}, _
+            {"text": "&Print...", "name": "mnuPrint", "key": "Ctrl+P"}, _
+            "-", _
+            {"text": "E&xit", "name": "mnuExit"}]}, _
+        {"text": "&Edit", "items": [ _
+            {"text": "&Copy Picture", "name": "mnuCopy", "key": "Ctrl+C"}, _
+            {"text": "&Delete to Recycle Bin" + CHR$(9) + "Del", "name": "mnuDelete"}, _
+            "-", _
+            {"text": "Turn &Right", "name": "mnuRotRight", "key": "Ctrl+R"}, _
+            {"text": "Turn &Left", "name": "mnuRotLeft", "key": "Ctrl+L"}]}, _
+        {"text": "&View", "items": [ _
+            {"text": "&Previous" + CHR$(9) + "Left", "name": "mnuPrev"}, _
+            {"text": "&Next" + CHR$(9) + "Right", "name": "mnuNext"}, _
+            {"text": "S&lideshow", "name": "mnuSlide", "key": "F5"}, _
+            "-", _
+            {"text": "&Fit to Window", "name": "mnuFit", "key": "Ctrl+0"}, _
+            {"text": "&Actual Size (100%)", "name": "mnuActual", "key": "Ctrl+1"}, _
+            {"text": "Zoom &In", "name": "mnuZoomIn", "key": "Ctrl+Plus"}, _
+            {"text": "Zoom &Out", "name": "mnuZoomOut", "key": "Ctrl+Minus"}, _
+            "-", _
+            {"text": "&Info", "name": "mnuInfo", "key": "Ctrl+I"}, _
+            {"text": "&Status Bar", "name": "mnuStatus"}, _
+            {"text": "&Dark Mode", "name": "mnuDark"}]}, _
+        {"text": "&Help", "items": [ _
+            {"text": "&About " + APP_NAME, "name": "mnuAbout"}]}])
+    IF LEN(recent) = 0 THEN FORM.SET(FORM.FIND(frm, "mnuRecentNone"), "ENABLED", FALSE)
+    MENU_CHECKS()
 ENDSUB
 
 ' ── layout ─────────────────────────────────────────────────────
 
 SUB LAYOUT()
+    DIM show_status AS INTEGER = status_on ANDALSO NOT slide_on
+    DIM show_info AS INTEGER = info_on ANDALSO NOT slide_on
+    FORM.SET(sb, "VISIBLE", show_status)
+    FORM.SET(info, "VISIBLE", show_info)
     DIM w AS INTEGER = client_w
-    DIM h AS INTEGER = client_h - SB_HEIGHT
-    IF info_on THEN w = w - INFO_W
+    DIM h AS INTEGER = client_h
+    IF show_status THEN h = h - SB_HEIGHT
+    IF show_info THEN w = w - INFO_W
     IF w < 50 THEN w = 50
     IF h < 50 THEN h = 50
     FORM.SET(pic, "WIDTH", w)
@@ -313,6 +602,10 @@ SUB LAYOUT()
     FORM.SET(hint, "Y", h / 2 - 12)
     FORM.SET(info, "X", w)
     FORM.SET(info, "HEIGHT", h)
+    FORM.SET(btn_prev, "X", 10)
+    FORM.SET(btn_prev, "Y", (h - ARROW_H) / 2)
+    FORM.SET(btn_next, "X", w - ARROW_W - 10)
+    FORM.SET(btn_next, "Y", (h - ARROW_H) / 2)
     UPDATE_STATUS()
 ENDSUB
 
@@ -325,8 +618,12 @@ SUB MAIN_RESIZE(e)
 ENDSUB
 
 SUB MAIN_UNLOAD(e)
-    REG_PUT("Window", FORM.GET(frm, "PLACEMENT"))
-    REG_PUT("Info", STR$(info_on))
+    IF slide_on THEN
+        IF slide_place <> "" THEN REG_PUT("Window", slide_place)
+    ELSE
+        REG_PUT("Window", FORM.GET(frm, "PLACEMENT"))
+    ENDIF
+    SAVE_SETTINGS()
 ENDSUB
 
 SUB MAIN_DROPFILES(e)
@@ -339,6 +636,10 @@ ENDSUB
 
 SUB pic_KEYDOWN(e)
     DIM k AS INTEGER = CINT(e[0]{"key"})
+    IF slide_on THEN
+        SLIDE_STOP()
+        RETURN
+    ENDIF
     IF e[0]{"ctrl"} THEN RETURN
     SWITCH k
         CASE 37, 33
@@ -359,13 +660,17 @@ SUB pic_KEYDOWN(e)
 ENDSUB
 
 SUB pic_MOUSEWHEEL(e)
-    IF cur < 0 THEN RETURN
+    IF cur < 0 ORELSE slide_on THEN RETURN
     DIM f AS DOUBLE = ZOOM_STEP
     IF e[0]{"delta"} < 0 THEN f = 1 / ZOOM_STEP
     ZOOM_AT(FORM.GET(pic, "SCALE") * f, e[0]{"imagex"}, e[0]{"imagey"})
 ENDSUB
 
 SUB pic_MOUSEDOWN(e)
+    IF slide_on THEN
+        SLIDE_STOP()
+        RETURN
+    ENDIF
     IF cur < 0 ORELSE e[0]{"button"} <> 1 THEN RETURN
     IF FORM.GET(pic, "SCALEMODE") <> "zoom" THEN RETURN
     dragging = 1
@@ -375,7 +680,10 @@ SUB pic_MOUSEDOWN(e)
 ENDSUB
 
 SUB pic_MOUSEMOVE(e)
-    IF NOT dragging THEN RETURN
+    IF NOT dragging THEN
+        SHOW_ARROWS()
+        RETURN
+    ENDIF
     FORM.SET(pic, "SCROLLX", FORM.GET(pic, "SCROLLX") + grab_x - e[0]{"imagex"})
     FORM.SET(pic, "SCROLLY", FORM.GET(pic, "SCROLLY") + grab_y - e[0]{"imagey"})
 ENDSUB
@@ -388,7 +696,7 @@ ENDSUB
 
 ' A double click switches between the whole picture and 100% at the pointer.
 SUB pic_DBLCLICK(e)
-    IF cur < 0 THEN RETURN
+    IF cur < 0 ORELSE slide_on THEN RETURN
     IF FORM.GET(pic, "SCALEMODE") = "fit" THEN
         ZOOM_AT(1, e[0]{"imagex"}, e[0]{"imagey"})
     ELSE
@@ -399,8 +707,43 @@ ENDSUB
 SUB mnuOpen_CLICK(e)
     OPEN_DIALOG()
 ENDSUB
+SUB mnuRecent1_CLICK(e)
+    OPEN_RECENT(1)
+ENDSUB
+SUB mnuRecent2_CLICK(e)
+    OPEN_RECENT(2)
+ENDSUB
+SUB mnuRecent3_CLICK(e)
+    OPEN_RECENT(3)
+ENDSUB
+SUB mnuRecent4_CLICK(e)
+    OPEN_RECENT(4)
+ENDSUB
+SUB mnuRecent5_CLICK(e)
+    OPEN_RECENT(5)
+ENDSUB
+SUB mnuRecent6_CLICK(e)
+    OPEN_RECENT(6)
+ENDSUB
+SUB mnuRecent7_CLICK(e)
+    OPEN_RECENT(7)
+ENDSUB
+SUB mnuRecent8_CLICK(e)
+    OPEN_RECENT(8)
+ENDSUB
+SUB mnuRecentClear_CLICK(e)
+    recent = []
+    SAVE_RECENT()
+    BUILD_MENU()
+ENDSUB
 SUB mnuSaveClean_CLICK(e)
     SAVE_CLEAN()
+ENDSUB
+SUB mnuPageSetup_CLICK(e)
+    DIM ok AS BOOLEAN = FORM.PAGESETUP()
+ENDSUB
+SUB mnuPrint_CLICK(e)
+    PRINT_PICTURE()
 ENDSUB
 SUB mnuExit_CLICK(e)
     FORM.CLOSE(frm)
@@ -423,6 +766,9 @@ ENDSUB
 SUB mnuNext_CLICK(e)
     STEP_BY(1)
 ENDSUB
+SUB mnuSlide_CLICK(e)
+    SLIDE_START()
+ENDSUB
 SUB mnuFit_CLICK(e)
     FIT()
 ENDSUB
@@ -436,7 +782,20 @@ SUB mnuZoomOut_CLICK(e)
     ZOOM_BY(1 / ZOOM_STEP)
 ENDSUB
 SUB mnuInfo_CLICK(e)
-    TOGGLE_INFO()
+    info_on = 1 - info_on
+    MENU_CHECKS()
+    LAYOUT()
+    UPDATE_INFO()
+ENDSUB
+SUB mnuStatus_CLICK(e)
+    status_on = 1 - status_on
+    MENU_CHECKS()
+    LAYOUT()
+ENDSUB
+SUB mnuDark_CLICK(e)
+    dark_on = 1 - dark_on
+    MENU_CHECKS()
+    APPLY_COLORS()
 ENDSUB
 SUB mnuAbout_CLICK(e)
     MSGBOX(APP_NAME + " - a picture viewer written in jdBasic." + CHR$(10) + CHR$(10) + _
@@ -445,48 +804,36 @@ ENDSUB
 
 ' ── build the window ───────────────────────────────────────────
 
-window_place = REG_GET$("Window", "")
-info_on = CINT(VAL(REG_GET$("Info", "0")))
+LOAD_SETTINGS()
+LOAD_RECENT()
 
 frm = FORM.CREATE(APP_NAME, client_w, client_h, "MAIN")
 pic = FORM.PICTURE(frm, "pic", "", 0, 0, client_w, client_h - SB_HEIGHT)
-FORM.SET(pic, "BACKCOLOR", BACK)
 FORM.SET(pic, "SCALEMODE", "fit")
 FORM.SET(pic, "DROPFILES", TRUE)
 FORM.SET(frm, "DROPFILES", TRUE)
 hint = FORM.LABEL(frm, "hint", "Open a picture with Ctrl+O, or drop one here.", 0, 0, client_w, 24)
 FORM.SET(hint, "ALIGN", "CENTER")
+btn_prev = FORM.BUTTON(frm, "btnPrev", "<", 10, 0, ARROW_W, ARROW_H)
+btn_next = FORM.BUTTON(frm, "btnNext", ">", 0, 0, ARROW_W, ARROW_H)
+FORM.SET(btn_prev, "FONT", {"name": "Segoe UI", "size": 20, "bold": TRUE})
+FORM.SET(btn_next, "FONT", {"name": "Segoe UI", "size": 20, "bold": TRUE})
+FORM.SET(btn_prev, "TOOLTIP", "Previous picture (Left)")
+FORM.SET(btn_next, "TOOLTIP", "Next picture (Right)")
+FORM.SET(btn_prev, "TABINDEX", 0)
+FORM.SET(btn_next, "TABINDEX", 0)
+FORM.SET(btn_prev, "VISIBLE", FALSE)
+FORM.SET(btn_next, "VISIBLE", FALSE)
 info = FORM.LISTVIEW(frm, "info", client_w - INFO_W, 0, INFO_W, client_h - SB_HEIGHT)
 FORM.SET(info, "COLUMNS", [{"text": "Property", "width": 100}, {"text": "Value", "width": INFO_W - 104}])
-FORM.SET(info, "VISIBLE", info_on)
 sb = FORM.STATUSBAR(frm, "sb", [300, 90, 120, -1])
+printer_rt = FORM.RICHTEXT(frm, "printerRt", 0, 0, 10, 10)
+FORM.SET(printer_rt, "VISIBLE", FALSE)
+tmr_arrows = FORM.TIMER(frm, "tmrArrows", 0)
+tmr_slide = FORM.TIMER(frm, "tmrSlide", 0)
 
-FORM.MENU(frm, [ _
-    {"text": "&File", "items": [ _
-        {"text": "&Open...", "name": "mnuOpen", "key": "Ctrl+O"}, _
-        {"text": "&Save a Copy without Metadata...", "name": "mnuSaveClean", "key": "Ctrl+Shift+S"}, _
-        "-", _
-        {"text": "E&xit", "name": "mnuExit"}]}, _
-    {"text": "&Edit", "items": [ _
-        {"text": "&Copy Picture", "name": "mnuCopy", "key": "Ctrl+C"}, _
-        {"text": "&Delete to Recycle Bin" + CHR$(9) + "Del", "name": "mnuDelete"}, _
-        "-", _
-        {"text": "Turn &Right", "name": "mnuRotRight", "key": "Ctrl+R"}, _
-        {"text": "Turn &Left", "name": "mnuRotLeft", "key": "Ctrl+L"}]}, _
-    {"text": "&View", "items": [ _
-        {"text": "&Previous" + CHR$(9) + "Left", "name": "mnuPrev"}, _
-        {"text": "&Next" + CHR$(9) + "Right", "name": "mnuNext"}, _
-        "-", _
-        {"text": "&Fit to Window", "name": "mnuFit", "key": "Ctrl+0"}, _
-        {"text": "&Actual Size (100%)", "name": "mnuActual", "key": "Ctrl+1"}, _
-        {"text": "Zoom &In", "name": "mnuZoomIn", "key": "Ctrl+Plus"}, _
-        {"text": "Zoom &Out", "name": "mnuZoomOut", "key": "Ctrl+Minus"}, _
-        "-", _
-        {"text": "&Info", "name": "mnuInfo", "key": "Ctrl+I"}]}, _
-    {"text": "&Help", "items": [ _
-        {"text": "&About jdPix", "name": "mnuAbout"}]}])
-FORM.SET(FORM.FIND(frm, "mnuInfo"), "CHECKED", info_on)
-
+BUILD_MENU()
+APPLY_COLORS()
 LAYOUT()
 DIM args AS ARRAY = OS.ARGS()
 IF LEN(args) > 1 THEN

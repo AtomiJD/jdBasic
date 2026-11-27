@@ -1,0 +1,54 @@
+' make_icon.jdb - a Windows icon from an SVG drawing.
+'
+'   jdbasic tools/make_icon.jdb <drawing.svg> <app.ico> [font.ttf]
+'
+' The drawing is rendered at 16, 24, 32, 48, 64, 128 and 256 pixels by
+' lib/raster.jdb and the seven pictures go into one .ico as PNG entries,
+' the form Windows reads since Vista. The SVG should use a square viewBox;
+' text in it is drawn with font.ttf (default: Segoe UI Bold).
+
+OPTION "EXPLICIT"
+IMPORT RASTER
+
+DIM argv = OS.ARGS()
+IF LEN(argv) < 3 THEN
+    PRINT "usage: make_icon.jdb <drawing.svg> <app.ico> [font.ttf]"
+    END 2
+ENDIF
+DIM svg$ = TXTREADER$(argv[1])
+DIM font$ = "C:/Windows/Fonts/segoeuib.ttf"
+IF LEN(argv) > 3 THEN font$ = argv[3]
+
+DIM sizes = [16, 24, 32, 48, 64, 128, 256]
+DIM tmp$ = MKTEMP$("make_icon")
+MKDIR tmp$
+DIM pngs = []
+DIM size = 0
+FOR EACH size IN sizes
+    DIM part$ = PATH.JOIN$(tmp$, STR$(size) + ".png")
+    ' The drawing is laid out on 256; the scale brings it to this size.
+    RASTER.WRITEPNG(svg$, part$, {"scale": size / 256, "background": "none", "font": font$})
+    DIM wh = IMAGE.SIZE(part$)
+    IF wh[0] <> size ORELSE wh[1] <> size THEN
+        PRINT "make_icon: the drawing rendered at " + STR$(wh[0]) + "x" + STR$(wh[1]) + " for " + STR$(size) + "; give it a 256x256 viewBox"
+        END 1
+    ENDIF
+    pngs = APPEND(pngs, BINREADER$(part$))
+    KILL part$
+NEXT
+RMDIR tmp$
+
+' ICONDIR, one ICONDIRENTRY per picture, then the pictures.
+DIM ico$ = PACK$("<HHH", 0, 1, LEN(sizes))
+DIM offset = 6 + 16 * LEN(sizes)
+DIM i AS INTEGER
+FOR i = 0 TO LEN(sizes) - 1
+    DIM side = sizes[i] MOD 256
+    ico$ = ico$ + PACK$("<BBBBHHII", side, side, 0, 0, 1, 32, LEN(pngs[i]), offset)
+    offset = offset + LEN(pngs[i])
+NEXT
+FOR i = 0 TO LEN(sizes) - 1
+    ico$ = ico$ + pngs[i]
+NEXT
+BINWRITER argv[2], ico$
+PRINT "wrote " + argv[2] + " (" + STR$(LEN(ico$)) + " bytes, " + STR$(LEN(sizes)) + " sizes)"
