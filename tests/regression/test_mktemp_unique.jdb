@@ -1,0 +1,55 @@
+' MKTEMP$ called many times in a row answers a different path each time,
+' none of them an existing file, each starting with the prefix in the temp
+' directory. Calls within one millisecond used to answer the same path.
+
+DIM failed AS INTEGER = 0
+
+SUB Check(ok, what$)
+    IF NOT ok THEN
+        PRINT "FAIL "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+DIM seen AS MAP
+DIM dupes AS INTEGER = 0
+DIM existing AS INTEGER = 0
+DIM empty AS INTEGER = 0
+DIM i AS INTEGER
+FOR i = 1 TO 500
+    DIM p$ = MKTEMP$("jmk")
+    IF p$ = "" THEN empty = empty + 1
+    IF MAP.EXISTS(seen, p$) THEN dupes = dupes + 1
+    seen{p$} = 1
+    IF FILE.EXISTS(p$) THEN existing = existing + 1
+NEXT
+Check(empty = 0, "MKTEMP$ answered an empty path")
+Check(dupes = 0, "MKTEMP$ answered " + STR$(dupes) + " paths twice")
+Check(existing = 0, "MKTEMP$ answered " + STR$(existing) + " paths of files that exist")
+
+' Two paths taken one right after the other, with nothing in between, the
+' way a program asks for a source and a target file.
+DIM same AS INTEGER = 0
+DIM a$ = ""
+DIM b$ = ""
+FOR i = 1 TO 300
+    a$ = MKTEMP$()
+    b$ = MKTEMP$()
+    IF a$ = b$ THEN same = same + 1
+NEXT
+Check(same = 0, "two calls in a row answered the same path " + STR$(same) + " times in 300")
+a$ = MKTEMP$("jmk")
+b$ = MKTEMP$("jmk")
+TXTWRITER a$, "first"
+TXTWRITER b$, "second"
+Check(TXTREADER$(a$) = "first", "the first file kept its content")
+KILL a$
+KILL b$
+
+DIM c$ = MKTEMP$("jmk")
+DIM base$ = PATH.BASENAME$(c$)
+Check(LCASE$(LEFT$(base$, 3)) = "jmk", "the name starts with the prefix: " + base$)
+Check(LEN(PATH.DIRNAME$(c$)) > 0, "the path has a directory")
+
+IF failed > 0 THEN END 1
+PRINT "OK"

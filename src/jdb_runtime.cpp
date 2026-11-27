@@ -6219,9 +6219,15 @@ char* jdb_mktemp(const char* prefix) {
     DWORD n = GetTempPathA(MAX_PATH, tmp);
     if (n == 0) tmp[0] = '\0';
     char name[MAX_PATH];
-    if (GetTempFileNameA(tmp, pfx, 0, name)) {
-        DeleteFileA(name);
-        return _strdup(name);
+    // A nonzero number makes GetTempFileNameA only build the name, so no
+    // file is made. The number counts up within the process, so two calls
+    // never answer the same path; a name another process holds is skipped.
+    static std::atomic<unsigned> next{(unsigned)(GetTickCount() ^ (GetCurrentProcessId() << 7))};
+    for (int tries = 0; tries < 65536; tries++) {
+        UINT unique = next.fetch_add(1) & 0xFFFF;
+        if (unique == 0) continue;
+        if (!GetTempFileNameA(tmp, pfx, unique, name)) break;
+        if (GetFileAttributesA(name) == INVALID_FILE_ATTRIBUTES) return _strdup(name);
     }
     return _strdup("");
 #else

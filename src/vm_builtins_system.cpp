@@ -5,6 +5,7 @@
 #include "os_spawn.h"
 #include "image_meta.h"
 #include <algorithm>
+#include <atomic>
 #include <climits>
 #include <fstream>
 #include <mutex>
@@ -159,11 +160,16 @@ void VM::register_system_builtins() {
         DWORD len = GetTempPathA(MAX_PATH, tmp);
         if (len == 0) tmp[0] = '\0';
         char name[MAX_PATH];
-        // GetTempFileNameA creates a 0-byte file; delete it so callers can
-        // open the path with whatever flags they need (append, binary, …).
-        if (GetTempFileNameA(tmp, prefix.c_str(), 0, name)) {
-            DeleteFileA(name);
-            return Value::make_string(name);
+        // A nonzero number makes GetTempFileNameA only build the name, so
+        // no file is made. The number counts up within the process, so
+        // two calls never answer the same path; a name another process
+        // holds is skipped.
+        static std::atomic<unsigned> next{(unsigned)(GetTickCount() ^ (GetCurrentProcessId() << 7))};
+        for (int tries = 0; tries < 65536; tries++) {
+            UINT unique = next.fetch_add(1) & 0xFFFF;
+            if (unique == 0) continue;
+            if (!GetTempFileNameA(tmp, prefix.c_str(), unique, name)) break;
+            if (GetFileAttributesA(name) == INVALID_FILE_ATTRIBUTES) return Value::make_string(name);
         }
         return Value::make_string("");
 #else

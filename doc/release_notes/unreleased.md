@@ -114,6 +114,11 @@ Range: `v1.3.0..HEAD`.
 
 ## Fixed
 
+- **`MKTEMP$` never answers the same path twice** (#1131): on Windows two
+  calls right after each other could answer one path, so a program that
+  asked for a source and a target file wrote both into one file. The name
+  now carries a number that counts up within the process; interpreter and
+  `-c` alike.
 - **A module FUNC or SUB keeps an undeclared assignment local** (#966): a
   module function that assigns a name it never declared (`h = OPEN(...)`)
   gets a local of that name and no longer writes the importing program's
