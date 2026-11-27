@@ -1,0 +1,548 @@
+' IMAGE.ROTATE, FILE.RECYCLE, CLIPBOARD.SETIMAGE and CLIPBOARD.GETIMAGE on
+' files built byte for byte at run time. Every name in the fixtures is invented.
+' The text on the clipboard is saved first and put back at the end.
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+DIM made AS ARRAY = []
+DIM base$ = MKTEMP$("irc")
+DIM PNGSIG$ = CHR$(137) + "PNG" + CHR$(13) + CHR$(10) + CHR$(26) + CHR$(10)
+DIM onWindows AS BOOLEAN = OS.GETOS$() = "WINDOWS"
+
+SUB Check(label$, ok)
+    IF ok THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL: " + label$
+    ENDIF
+ENDSUB
+
+FUNC Has(m AS MAP, key$)
+    RETURN MAP.EXISTS(m, key$)
+ENDFUNC
+
+FUNC Txt$(m AS MAP, key$)
+    IF MAP.EXISTS(m, key$) THEN RETURN m{key$}
+    RETURN "<absent>"
+ENDFUNC
+
+FUNC Num(m AS MAP, key$)
+    IF MAP.EXISTS(m, key$) THEN RETURN m{key$}
+    RETURN -99999
+ENDFUNC
+
+' Orientation 1 and no orientation both mean upright.
+FUNC Upright(path$)
+    DIM m AS MAP = IMAGE.META(path$)
+    IF NOT MAP.EXISTS(m, "orientation") THEN RETURN TRUE
+    RETURN m{"orientation"} = 1
+ENDFUNC
+
+FUNC Orient(path$)
+    RETURN Num(IMAGE.META(path$), "orientation")
+ENDFUNC
+
+FUNC P$(suffix$)
+    DIM path$ = base$ + suffix$
+    made = APPEND(made, path$)
+    RETURN path$
+ENDFUNC
+
+SUB CopyFile(src$, dst$)
+    BINWRITER dst$, BINREADER$(src$)
+ENDSUB
+
+FUNC SameSize(wh, w AS INTEGER, h AS INTEGER)
+    IF LEN(wh) <> 2 THEN RETURN FALSE
+    RETURN wh[0] = w ANDALSO wh[1] = h
+ENDFUNC
+
+' ---------------------------------------------------------------- JPEG bytes
+
+FUNC Seg$(marker AS INTEGER, payload$)
+    RETURN CHR$(255) + CHR$(marker) + PACK$(">s", LEN(payload$) + 2) + payload$
+ENDFUNC
+
+' Minimal EXIF (little endian) holding only an Artist tag.
+FUNC ArtistExif$(who$)
+    DIM v$ = who$ + CHR$(0)
+    IF LEN(v$) MOD 2 = 1 THEN v$ = v$ + CHR$(0)
+    DIM ifd$ = PACK$("<s", 1) + PACK$("<ssii", 315, 2, LEN(who$) + 1, 8 + 2 + 12 + 4) + PACK$("<i", 0)
+    RETURN Seg$(225, "Exif" + CHR$(0) + CHR$(0) + "II" + PACK$("<si", 42, 8) + ifd$ + v$)
+ENDFUNC
+
+FUNC JpegTail$(w AS INTEGER, h AS INTEGER)
+    DIM sof$ = CHR$(8) + PACK$(">ss", h, w) + CHR$(3) + CHR$(1) + CHR$(17) + CHR$(0) + CHR$(2) + CHR$(17) + CHR$(1) + CHR$(3) + CHR$(17) + CHR$(1)
+    DIM sos$ = CHR$(3) + CHR$(1) + CHR$(0) + CHR$(2) + CHR$(17) + CHR$(3) + CHR$(17) + CHR$(0) + CHR$(63) + CHR$(0)
+    RETURN Seg$(192, sof$) + Seg$(218, sos$) + "SCANDATA-0123456789" + CHR$(255) + CHR$(217)
+ENDFUNC
+
+' The bytes of a JPEG from its SOF marker on; "" when there is none.
+FUNC FromSof$(b$)
+    DIM p AS INTEGER = 2
+    DIM mk AS INTEGER
+    DIM u AS ARRAY
+    DO WHILE p + 4 <= LEN(b$)
+        IF BYTEAT(b$, p) <> 255 THEN RETURN ""
+        mk = BYTEAT(b$, p + 1)
+        IF mk >= 192 ANDALSO mk <= 207 ANDALSO mk <> 196 ANDALSO mk <> 200 ANDALSO mk <> 204 THEN
+            RETURN MID$(b$, p, LEN(b$) - p)
+        ENDIF
+        IF mk = 218 THEN RETURN ""
+        u = UNPACK(">s", b$, p + 2)
+        p = p + 2 + u[0]
+    LOOP
+    RETURN ""
+ENDFUNC
+
+' ---------------------------------------------------------------- PNG / BMP
+
+FUNC Chunk$(kind$, data$)
+    RETURN PACK$(">i", LEN(data$)) + kind$ + data$ + PACK$(">i", CODEC.CRC32(kind$ + data$))
+ENDFUNC
+
+' 400 x 300 RGB: top-left red, top-right blue, bottom-left green, bottom-right white.
+FUNC MakePng$()
+    DIM red$ = CHR$(255) + CHR$(0) + CHR$(0)
+    DIM blue$ = CHR$(0) + CHR$(0) + CHR$(255)
+    DIM green$ = CHR$(0) + CHR$(255) + CHR$(0)
+    DIM white$ = CHR$(255) + CHR$(255) + CHR$(255)
+    DIM top$ = CHR$(0) + REPEAT$(red$, 200) + REPEAT$(blue$, 200)
+    DIM bottom$ = CHR$(0) + REPEAT$(green$, 200) + REPEAT$(white$, 200)
+    DIM raw$ = REPEAT$(top$, 150) + REPEAT$(bottom$, 150)
+    DIM b$ = PNGSIG$ + Chunk$("IHDR", PACK$(">iibbbbb", 400, 300, 8, 2, 0, 0, 0))
+    RETURN b$ + Chunk$("IDAT", CODEC.DEFLATE$(raw$, 6, "zlib")) + Chunk$("IEND", "")
+ENDFUNC
+
+FUNC ColorOf(ch$)
+    IF ch$ = "r" THEN RETURN [255, 0, 0]
+    IF ch$ = "g" THEN RETURN [0, 255, 0]
+    IF ch$ = "b" THEN RETURN [0, 0, 255]
+    RETURN [255, 255, 255]
+ENDFUNC
+
+' [r, g, b] of the pixel x, y (from the top) of a BMP.
+FUNC BmpAt(b$, x AS INTEGER, y AS INTEGER)
+    DIM off AS ARRAY = UNPACK("<i", b$, 10)
+    DIM wu AS ARRAY = UNPACK("<i", b$, 18)
+    DIM hu AS ARRAY = UNPACK("<i", b$, 22)
+    DIM bu AS ARRAY = UNPACK("<s", b$, 28)
+    DIM bpp AS INTEGER = bu[0]
+    DIM rowBytes AS INTEGER = ((wu[0] * bpp + 31) \ 32) * 4
+    DIM row AS INTEGER = y
+    IF hu[0] > 0 THEN row = hu[0] - 1 - y
+    DIM p AS INTEGER = off[0] + row * rowBytes + x * (bpp \ 8)
+    RETURN [BYTEAT(b$, p + 2), BYTEAT(b$, p + 1), BYTEAT(b$, p)]
+ENDFUNC
+
+FUNC Near3(px, want, slack AS INTEGER)
+    RETURN ABS(px[0] - want[0]) <= slack ANDALSO ABS(px[1] - want[1]) <= slack ANDALSO ABS(px[2] - want[2]) <= slack
+ENDFUNC
+
+' TRUE when the picture, as displayed, shows the colours quads$ (letters for
+' top-left, top-right, bottom-left, bottom-right) at the quadrant centres.
+FUNC Quads(path$, quads$, slack AS INTEGER)
+    DIM bmp$ = P$("_q" + STR$(LEN(made)) + ".bmp")
+    IF IMAGE.CONVERT(path$, bmp$) <> 0 THEN RETURN FALSE
+    DIM b$ = BINREADER$(bmp$)
+    DIM wu AS ARRAY = UNPACK("<i", b$, 18)
+    DIM hu AS ARRAY = UNPACK("<i", b$, 22)
+    DIM w AS INTEGER = wu[0]
+    DIM h AS INTEGER = ABS(hu[0])
+    DIM ok AS BOOLEAN = TRUE
+    IF NOT Near3(BmpAt(b$, w \ 4, h \ 4), ColorOf(MID$(quads$, 0, 1)), slack) THEN ok = FALSE
+    IF NOT Near3(BmpAt(b$, (3 * w) \ 4, h \ 4), ColorOf(MID$(quads$, 1, 1)), slack) THEN ok = FALSE
+    IF NOT Near3(BmpAt(b$, w \ 4, (3 * h) \ 4), ColorOf(MID$(quads$, 2, 1)), slack) THEN ok = FALSE
+    IF NOT Near3(BmpAt(b$, (3 * w) \ 4, (3 * h) \ 4), ColorOf(MID$(quads$, 3, 1)), slack) THEN ok = FALSE
+    RETURN ok
+ENDFUNC
+
+' ---------------------------------------------------------------- fixtures
+
+DIM bytesJpg$ = CHR$(255) + CHR$(216) + ArtistExif$("Byte Artist") + JpegTail$(400, 300)
+DIM bytesTail$ = JpegTail$(400, 300)
+DIM files AS MAP
+files{"bytes"} = P$("_bytes.jpg")
+files{"png"} = P$("_quad.png")
+files{"text"} = P$("_notes.txt")
+files{"real"} = P$("_real.jpg")
+DIM missing$ = base$ + "_never_written.jpg"
+DIM nodir$ = base$ + "_nodir/out.jpg"
+
+BINWRITER files{"bytes"}, bytesJpg$
+BINWRITER files{"png"}, MakePng$()
+BINWRITER files{"text"}, "plain text, not an image" + CHR$(10)
+
+DIM sane AS BOOLEAN = TRUE
+IF FromSof$(BINREADER$(files{"bytes"})) <> bytesTail$ THEN sane = FALSE
+IF Txt$(IMAGE.META(files{"bytes"}), "artist") <> "Byte Artist" THEN sane = FALSE
+IF Has(IMAGE.META(files{"bytes"}), "orientation") THEN sane = FALSE
+IF NOT SameSize(IMAGE.SIZE(files{"bytes"}), 400, 300) THEN sane = FALSE
+IF NOT SameSize(IMAGE.SIZE(files{"png"}), 400, 300) THEN sane = FALSE
+IF onWindows THEN
+    IF IMAGE.CONVERT(files{"png"}, files{"real"}) <> 0 THEN sane = FALSE
+    IF IMAGE.SETMETA(files{"real"}, files{"real"}, {"artist": "Real Artist"}) <> 0 THEN sane = FALSE
+    IF Txt$(IMAGE.META(files{"real"}), "artist") <> "Real Artist" THEN sane = FALSE
+    IF NOT Upright(files{"real"}) THEN sane = FALSE
+    IF NOT SameSize(IMAGE.SIZE(files{"real"}), 400, 300) THEN sane = FALSE
+    IF FromSof$(BINREADER$(files{"real"})) = "" THEN sane = FALSE
+    IF NOT Quads(files{"png"}, "rbgw", 2) THEN sane = FALSE
+    IF NOT Quads(files{"real"}, "rbgw", 40) THEN sane = FALSE
+ENDIF
+IF NOT sane THEN
+    PRINT "FIXTURE BROKEN"
+    END 2
+ENDIF
+
+' ---------------------------------------------------------------- IMAGE.ROTATE, lossless JPEG
+
+FUNC RotateInFunc(src$, dst$, deg AS INTEGER)
+    RETURN IMAGE.ROTATE(src$, dst$, deg)
+ENDFUNC
+
+FUNC Ninety()
+    RETURN 90
+ENDFUNC
+
+FUNC JpegPath$()
+    RETURN files{"bytes"}
+ENDFUNC
+
+' One JPEG turned by every degree in the table, written to .jpg.
+SUB TurnJpeg(src$, tag$, w AS INTEGER, h AS INTEGER, who$)
+    DIM tail$ = FromSof$(BINREADER$(src$))
+    DIM degs AS ARRAY = [90, 180, 270, -90, 360, 450]
+    DIM wantO AS ARRAY = [6, 3, 8, 8, 1, 6]
+    DIM swaps AS ARRAY = [1, 0, 1, 1, 0, 1]
+    DIM k AS INTEGER
+    DIM out$ = ""
+    DIM what$ = ""
+    DIM rc AS INTEGER
+    FOR k = 0 TO LEN(degs) - 1
+        out$ = P$("_" + tag$ + "_rot" + STR$(k) + ".jpg")
+        what$ = tag$ + " JPEG turned " + STR$(degs[k]) + " to .jpg"
+        rc = IMAGE.ROTATE(src$, out$, degs[k])
+        Check(what$ + " returns 0", rc = 0)
+        IF wantO[k] = 1 THEN
+            Check(what$ + " is upright (orientation 1 or none)", Upright(out$))
+        ELSE
+            Check(what$ + " has EXIF orientation " + STR$(wantO[k]), Orient(out$) = wantO[k])
+        ENDIF
+        IF swaps[k] = 1 THEN
+            Check(what$ + ": IMAGE.SIZE swaps width and height", SameSize(IMAGE.SIZE(out$), h, w))
+        ELSE
+            Check(what$ + ": IMAGE.SIZE keeps width and height", SameSize(IMAGE.SIZE(out$), w, h))
+        ENDIF
+        Check(what$ + ": the pixel data from SOF on is unchanged", FromSof$(BINREADER$(out$)) = tail$)
+        Check(what$ + ": the artist is kept", Txt$(IMAGE.META(out$), "artist") = who$)
+        Check(what$ + ": still a JPEG", Txt$(IMAGE.META(out$), "format") = "jpeg")
+    NEXT
+    Check(tag$ + " JPEG: the source is left unchanged by the turns", Upright(src$) ANDALSO FromSof$(BINREADER$(src$)) = tail$)
+
+    ' Four turns of 90 on the same file come back upright.
+    DIM work$ = P$("_" + tag$ + "_four.jpg")
+    CopyFile(src$, work$)
+    DIM steps AS ARRAY = [6, 3, 8, 1]
+    FOR k = 0 TO 3
+        rc = IMAGE.ROTATE(work$, work$, 90)
+        Check(tag$ + " JPEG src = dst turn " + STR$(k + 1) + " of 90 returns 0", rc = 0)
+        IF steps[k] = 1 THEN
+            Check(tag$ + " JPEG: four turns of 90 come back upright", Upright(work$))
+        ELSE
+            Check(tag$ + " JPEG src = dst turn " + STR$(k + 1) + " has orientation " + STR$(steps[k]), Orient(work$) = steps[k])
+        ENDIF
+    NEXT
+    Check(tag$ + " JPEG: four turns of 90 keep the size", SameSize(IMAGE.SIZE(work$), w, h))
+    Check(tag$ + " JPEG: four turns of 90 keep the pixel data", FromSof$(BINREADER$(work$)) = tail$)
+    Check(tag$ + " JPEG: four turns of 90 keep the artist", Txt$(IMAGE.META(work$), "artist") = who$)
+
+    ' A turned file turned again adds the turns.
+    DIM t1$ = P$("_" + tag$ + "_t1.jpg")
+    DIM t2$ = P$("_" + tag$ + "_t2.jpg")
+    rc = IMAGE.ROTATE(src$, t1$, 90)
+    Check(tag$ + " JPEG turned 90 then 90 again returns 0", IMAGE.ROTATE(t1$, t2$, 90) = 0)
+    Check(tag$ + " JPEG turned 90 then 90 again has orientation 3", Orient(t2$) = 3)
+    Check(tag$ + " JPEG turned 90 then -90 returns 0", IMAGE.ROTATE(t1$, t2$, -90) = 0)
+    Check(tag$ + " JPEG turned 90 then -90 is upright", Upright(t2$))
+    Check(tag$ + " JPEG turned 90 then 180 returns 0", IMAGE.ROTATE(t1$, t2$, 180) = 0)
+    Check(tag$ + " JPEG turned 90 then 180 has orientation 8", Orient(t2$) = 8)
+
+    Check(tag$ + " JPEG turned 45 returns -2", IMAGE.ROTATE(src$, P$("_" + tag$ + "_45.jpg"), 45) = -2)
+    Check(tag$ + " JPEG turned 1 returns -2", IMAGE.ROTATE(src$, P$("_" + tag$ + "_1.jpg"), 1) = -2)
+    Check(tag$ + " JPEG turned -135 returns -2", IMAGE.ROTATE(src$, P$("_" + tag$ + "_m135.jpg"), -135) = -2)
+ENDSUB
+
+SUB TestRotateBytes()
+    TurnJpeg(files{"bytes"}, "byte-built", 400, 300, "Byte Artist")
+
+    DIM src$ = files{"bytes"}
+    DIM outJ$ = P$("_ext.jpeg")
+    Check("ROTATE to a .jpeg file returns 0", IMAGE.ROTATE(src$, outJ$, 90) = 0)
+    Check("ROTATE to a .jpeg file changes only the orientation", Orient(outJ$) = 6 ANDALSO FromSof$(BINREADER$(outJ$)) = bytesTail$)
+
+    ' The degrees given in other forms.
+    DIM deg AS INTEGER = 90
+    DIM degArr AS ARRAY = [0, 90, 180]
+    DIM cfg AS MAP
+    cfg{"deg"} = 90
+    DIM o1$ = P$("_f1.jpg")
+    Check("ROTATE with degrees from a variable returns 0", IMAGE.ROTATE(src$, o1$, deg) = 0)
+    Check("ROTATE with degrees from a variable sets orientation 6", Orient(o1$) = 6)
+    DIM o2$ = P$("_f2.jpg")
+    Check("ROTATE with degrees from an expression returns 0", IMAGE.ROTATE(src$, o2$, 45 * 6) = 0)
+    Check("ROTATE with degrees from an expression (270) sets orientation 8", Orient(o2$) = 8)
+    DIM o3$ = P$("_f3.jpg")
+    Check("ROTATE with degrees from a FUNC answer returns 0", IMAGE.ROTATE(src$, o3$, Ninety()) = 0)
+    Check("ROTATE with degrees from a FUNC answer sets orientation 6", Orient(o3$) = 6)
+    DIM o4$ = P$("_f4.jpg")
+    Check("ROTATE with degrees from an array cell returns 0", IMAGE.ROTATE(src$, o4$, degArr[2]) = 0)
+    Check("ROTATE with degrees from an array cell (180) sets orientation 3", Orient(o4$) = 3)
+    DIM o5$ = P$("_f5.jpg")
+    Check("ROTATE with degrees from a map field returns 0", IMAGE.ROTATE(src$, o5$, cfg{"deg"}) = 0)
+    Check("ROTATE with degrees from a map field sets orientation 6", Orient(o5$) = 6)
+    DIM o6$ = P$("_f6.jpg")
+    Check("ROTATE from inside a FUNC returns 0", RotateInFunc(src$, o6$, -90) = 0)
+    Check("ROTATE from inside a FUNC (-90) sets orientation 8", Orient(o6$) = 8)
+    DIM o7$ = P$("_f7.jpg")
+    Check("ROTATE with paths from a FUNC answer and an expression returns 0", IMAGE.ROTATE(JpegPath$(), base$ + "_f7.jpg", 90) = 0)
+    Check("ROTATE with paths from a FUNC answer and an expression sets orientation 6", Orient(o7$) = 6)
+    DIM o8$ = P$("_f8.jpg")
+    Check("ROTATE with the source from an array cell returns 0", IMAGE.ROTATE(made[0], o8$, 90) = 0)
+    Check("ROTATE with the source from an array cell sets orientation 6", Orient(o8$) = 6)
+    Check("ROTATE turned 0 returns 0", IMAGE.ROTATE(src$, P$("_f0.jpg"), degArr[0]) = 0)
+    Check("ROTATE turned 0 is upright and keeps the pixel data", Upright(base$ + "_f0.jpg") ANDALSO FromSof$(BINREADER$(base$ + "_f0.jpg")) = bytesTail$)
+    Check("ROTATE with 45 from an expression returns -2", IMAGE.ROTATE(src$, P$("_f45.jpg"), deg \ 2) = -2)
+    Check("ROTATE with 45 from inside a FUNC returns -2", RotateInFunc(src$, P$("_ff45.jpg"), 45) = -2)
+
+    DIM same$ = P$("_same.jpg")
+    CopyFile(src$, same$)
+    Check("ROTATE with src = dst returns 0", IMAGE.ROTATE(same$, same$, 90) = 0)
+    Check("ROTATE with src = dst sets orientation 6", Orient(same$) = 6)
+    Check("ROTATE with src = dst keeps the pixel data", FromSof$(BINREADER$(same$)) = bytesTail$)
+    Check("ROTATE with src = dst keeps the artist", Txt$(IMAGE.META(same$), "artist") = "Byte Artist")
+ENDSUB
+
+' ---------------------------------------------------------------- IMAGE.ROTATE, Windows
+
+SUB TestRotateWindows()
+    TurnJpeg(files{"real"}, "real", 400, 300, "Real Artist")
+
+    DIM png$ = files{"png"}
+    DIM p90$ = P$("_png90.png")
+    Check("ROTATE of a PNG by 90 returns 0", IMAGE.ROTATE(png$, p90$, 90) = 0)
+    Check("ROTATE of a PNG by 90 swaps width and height", SameSize(IMAGE.SIZE(p90$), 300, 400))
+    Check("ROTATE of a PNG by 90 writes a PNG", LEFT$(BINREADER$(p90$), 8) = PNGSIG$)
+    Check("ROTATE of a PNG by 90 turns it clockwise", Quads(p90$, "grwb", 2))
+    DIM p180$ = P$("_png180.png")
+    Check("ROTATE of a PNG by 180 returns 0", IMAGE.ROTATE(png$, p180$, 180) = 0)
+    Check("ROTATE of a PNG by 180 keeps width and height", SameSize(IMAGE.SIZE(p180$), 400, 300))
+    Check("ROTATE of a PNG by 180 turns it upside down", Quads(p180$, "wgbr", 2))
+    DIM pm90$ = P$("_pngm90.png")
+    Check("ROTATE of a PNG by -90 returns 0", IMAGE.ROTATE(png$, pm90$, -90) = 0)
+    Check("ROTATE of a PNG by -90 swaps width and height", SameSize(IMAGE.SIZE(pm90$), 300, 400))
+    Check("ROTATE of a PNG by -90 turns it anticlockwise", Quads(pm90$, "bwrg", 2))
+    DIM p270$ = P$("_png270.png")
+    Check("ROTATE of a PNG by 270 returns 0", IMAGE.ROTATE(png$, p270$, 270) = 0)
+    Check("ROTATE of a PNG by 270 is the same as -90", Quads(p270$, "bwrg", 2) ANDALSO SameSize(IMAGE.SIZE(p270$), 300, 400))
+    DIM p450$ = P$("_png450.png")
+    Check("ROTATE of a PNG by 450 returns 0", IMAGE.ROTATE(png$, p450$, 450) = 0)
+    Check("ROTATE of a PNG by 450 is the same as 90", Quads(p450$, "grwb", 2) ANDALSO SameSize(IMAGE.SIZE(p450$), 300, 400))
+    DIM p360$ = P$("_png360.png")
+    Check("ROTATE of a PNG by 360 returns 0", IMAGE.ROTATE(png$, p360$, 360) = 0)
+    Check("ROTATE of a PNG by 360 is unturned", Quads(p360$, "rbgw", 2) ANDALSO SameSize(IMAGE.SIZE(p360$), 400, 300))
+    Check("ROTATE of a PNG by 45 returns -2", IMAGE.ROTATE(png$, P$("_png45.png"), 45) = -2)
+    DIM pjpg$ = P$("_png90.jpg")
+    Check("ROTATE of a PNG to .jpg returns 0", IMAGE.ROTATE(png$, pjpg$, 90) = 0)
+    Check("ROTATE of a PNG to .jpg writes a JPEG turned as displayed", Txt$(IMAGE.META(pjpg$), "format") = "jpeg" ANDALSO SameSize(IMAGE.SIZE(pjpg$), 300, 400) ANDALSO Upright(pjpg$))
+    Check("ROTATE of a PNG to .jpg turns the pixels", Quads(pjpg$, "grwb", 40))
+
+    DIM real$ = files{"real"}
+    DIM jp$ = P$("_real90.png")
+    Check("ROTATE of a JPEG to .png returns 0", IMAGE.ROTATE(real$, jp$, 90) = 0)
+    Check("ROTATE of a JPEG to .png writes a PNG", LEFT$(BINREADER$(jp$), 8) = PNGSIG$)
+    Check("ROTATE of a JPEG to .png swaps width and height", SameSize(IMAGE.SIZE(jp$), 300, 400))
+    Check("ROTATE of a JPEG to .png turns the pixels clockwise", Quads(jp$, "grwb", 40))
+    DIM jm AS MAP = IMAGE.META(jp$)
+    Check("ROTATE of a JPEG to .png carries no artist", NOT Has(jm, "artist") ANDALSO NOT Has(jm, "text"))
+    Check("ROTATE of a JPEG to .png carries no orientation", NOT Has(jm, "orientation"))
+
+    ' A JPEG already turned by its orientation is turned further as displayed.
+    DIM r6$ = P$("_real_o6.jpg")
+    Check("ROTATE of the real JPEG by 90 to .jpg returns 0", IMAGE.ROTATE(real$, r6$, 90) = 0)
+    DIM r6p$ = P$("_real_o6_90.png")
+    Check("ROTATE of an orientation-6 JPEG by 90 to .png returns 0", IMAGE.ROTATE(r6$, r6p$, 90) = 0)
+    Check("ROTATE of an orientation-6 JPEG by 90 to .png is turned 180 in all", SameSize(IMAGE.SIZE(r6p$), 400, 300) ANDALSO Quads(r6p$, "wgbr", 40))
+    DIM r6b$ = P$("_real_o6_0.bmp")
+    Check("ROTATE of an orientation-6 JPEG by 0 to .bmp returns 0", IMAGE.ROTATE(r6$, r6b$, 0) = 0)
+    Check("ROTATE of an orientation-6 JPEG by 0 to .bmp is written as displayed", SameSize(IMAGE.SIZE(r6b$), 300, 400) ANDALSO Quads(r6b$, "grwb", 40))
+
+    Check("ROTATE of a missing source to .jpg returns -6", IMAGE.ROTATE(missing$, P$("_miss.jpg"), 90) = -6)
+    Check("ROTATE of a missing source to .png returns -6", IMAGE.ROTATE(missing$, P$("_miss.png"), 90) = -6)
+    Check("ROTATE of a missing source writes no file", NOT FILE.EXISTS(base$ + "_miss.jpg") ANDALSO NOT FILE.EXISTS(base$ + "_miss.png"))
+    Check("ROTATE of a text file returns -6", IMAGE.ROTATE(files{"text"}, P$("_txt.png"), 90) = -6)
+    Check("ROTATE of an empty source returns -6", IMAGE.ROTATE("", P$("_empty.png"), 90) = -6)
+    Check("ROTATE to an empty dst$ returns -1", IMAGE.ROTATE(png$, "", 90) = -1)
+    Check("ROTATE to a dst$ that cannot be written returns -1", IMAGE.ROTATE(png$, base$ + "_nodir/out.png", 90) = -1)
+    Check("ROTATE of a JPEG to a .jpg that cannot be written returns -1", IMAGE.ROTATE(real$, nodir$, 90) = -1)
+
+    DIM sp$ = P$("_same.png")
+    CopyFile(png$, sp$)
+    Check("ROTATE of a PNG with src = dst returns 0", IMAGE.ROTATE(sp$, sp$, 90) = 0)
+    Check("ROTATE of a PNG with src = dst writes the turned picture", SameSize(IMAGE.SIZE(sp$), 300, 400) ANDALSO Quads(sp$, "grwb", 2))
+ENDSUB
+
+SUB TestRotateElsewhere()
+    Check("ROTATE of a PNG returns -100 off Windows", IMAGE.ROTATE(files{"png"}, P$("_x.png"), 90) = -100)
+    Check("ROTATE of a JPEG to .png returns -100 off Windows", IMAGE.ROTATE(files{"bytes"}, P$("_x2.png"), 90) = -100)
+ENDSUB
+
+' ---------------------------------------------------------------- FILE.RECYCLE
+
+FUNC RecycleInFunc(path$)
+    RETURN FILE.RECYCLE(path$)
+ENDFUNC
+
+SUB TestRecycle()
+    DIM f1$ = base$ + "_rec1.txt"
+    BINWRITER f1$, "invented file to recycle" + CHR$(10)
+    Check("RECYCLE fixture file exists", FILE.EXISTS(f1$))
+    DIM r AS BOOLEAN = FILE.RECYCLE(f1$)
+    Check("RECYCLE of a file answers TRUE", r = TRUE)
+    Check("RECYCLE of a file: the file is gone", NOT FILE.EXISTS(f1$))
+    Check("RECYCLE of the same path again answers FALSE", FILE.RECYCLE(f1$) = FALSE)
+    Check("RECYCLE of a missing path answers FALSE", FILE.RECYCLE(missing$) = FALSE)
+    Check("RECYCLE of a path in a missing folder answers FALSE", FILE.RECYCLE(nodir$) = FALSE)
+
+    DIM f2$ = base$ + "_rec2.txt"
+    BINWRITER f2$, "second invented file" + CHR$(10)
+    Check("RECYCLE from inside a FUNC answers TRUE", RecycleInFunc(f2$) = TRUE)
+    Check("RECYCLE from inside a FUNC: the file is gone", NOT FILE.EXISTS(f2$))
+
+    DIM paths AS MAP
+    paths{"f"} = base$ + "_rec3.txt"
+    BINWRITER paths{"f"}, "third invented file" + CHR$(10)
+    Check("RECYCLE with the path from a map field answers TRUE", FILE.RECYCLE(paths{"f"}) = TRUE)
+    Check("RECYCLE with the path from a map field: the file is gone", NOT FILE.EXISTS(base$ + "_rec3.txt"))
+
+    BINWRITER base$ + "_rec4.txt", "fourth invented file" + CHR$(10)
+    Check("RECYCLE with the path from an expression answers TRUE", FILE.RECYCLE(base$ + "_rec" + STR$(2 + 2) + ".txt") = TRUE)
+    Check("RECYCLE with the path from an expression: the file is gone", NOT FILE.EXISTS(base$ + "_rec4.txt"))
+
+    DIM dir$ = base$ + "_recdir"
+    MKDIR dir$
+    BINWRITER dir$ + "/inside.txt", "invented file inside a folder" + CHR$(10)
+    Check("RECYCLE fixture folder exists", FILE.ISDIR(dir$))
+    Check("RECYCLE of a folder with a file answers TRUE", FILE.RECYCLE(dir$) = TRUE)
+    Check("RECYCLE of a folder: the folder is gone", NOT FILE.ISDIR(dir$))
+    Check("RECYCLE of a folder: the file inside is gone", NOT FILE.EXISTS(dir$ + "/inside.txt"))
+
+    DIM dir2$ = base$ + "_recempty"
+    MKDIR dir2$
+    Check("RECYCLE of an empty folder answers TRUE", FILE.RECYCLE(dir2$) = TRUE)
+    Check("RECYCLE of an empty folder: the folder is gone", NOT FILE.ISDIR(dir2$))
+    Check("RECYCLE of a missing folder answers FALSE", FILE.RECYCLE(dir2$) = FALSE)
+
+    IF FILE.EXISTS(f1$) THEN KILL f1$
+    IF FILE.EXISTS(f2$) THEN KILL f2$
+    IF FILE.EXISTS(base$ + "_rec3.txt") THEN KILL base$ + "_rec3.txt"
+    IF FILE.EXISTS(base$ + "_rec4.txt") THEN KILL base$ + "_rec4.txt"
+    IF FILE.EXISTS(dir$ + "/inside.txt") THEN KILL dir$ + "/inside.txt"
+    IF FILE.ISDIR(dir$) THEN RMDIR dir$
+    IF FILE.ISDIR(dir2$) THEN RMDIR dir2$
+ENDSUB
+
+' ---------------------------------------------------------------- CLIPBOARD images
+
+FUNC GetInFunc(path$)
+    RETURN CLIPBOARD.GETIMAGE(path$)
+ENDFUNC
+
+SUB TestClipWindows()
+    DIM png$ = files{"png"}
+    Check("SETIMAGE of a PNG answers TRUE", CLIPBOARD.SETIMAGE(png$) = TRUE)
+    DIM g1$ = P$("_clip1.png")
+    Check("GETIMAGE to a .png answers TRUE", CLIPBOARD.GETIMAGE(g1$) = TRUE)
+    Check("GETIMAGE writes a PNG for a .png path", LEFT$(BINREADER$(g1$), 8) = PNGSIG$)
+    Check("GETIMAGE: IMAGE.SIZE equals the picture set", SameSize(IMAGE.SIZE(g1$), 400, 300))
+    Check("GETIMAGE: the colours are those of the picture set", Quads(g1$, "rbgw", 2))
+    DIM g2$ = P$("_clip2.bmp")
+    Check("GETIMAGE to a .bmp answers TRUE", CLIPBOARD.GETIMAGE(g2$) = TRUE)
+    Check("GETIMAGE writes a BMP for a .bmp path", LEFT$(BINREADER$(g2$), 2) = "BM" ANDALSO SameSize(IMAGE.SIZE(g2$), 400, 300))
+    DIM g3$ = P$("_clip3.jpg")
+    Check("GETIMAGE to a .jpg from inside a FUNC answers TRUE", GetInFunc(g3$) = TRUE)
+    Check("GETIMAGE writes a JPEG for a .jpg path", Txt$(IMAGE.META(g3$), "format") = "jpeg" ANDALSO SameSize(IMAGE.SIZE(g3$), 400, 300))
+    Check("GETIMAGE twice reads the same picture again", CLIPBOARD.GETIMAGE(P$("_clip4.png")) = TRUE ANDALSO SameSize(IMAGE.SIZE(base$ + "_clip4.png"), 400, 300))
+
+    ' A JPEG turned by its orientation goes on the clipboard as displayed.
+    DIM r6$ = P$("_clip_o6.jpg")
+    Check("SETIMAGE fixture: the real JPEG turned 90 to .jpg returns 0", IMAGE.ROTATE(files{"real"}, r6$, 90) = 0)
+    Check("SETIMAGE of an orientation-6 JPEG answers TRUE", CLIPBOARD.SETIMAGE(r6$) = TRUE)
+    DIM g5$ = P$("_clip5.png")
+    Check("GETIMAGE after an orientation-6 JPEG answers TRUE", CLIPBOARD.GETIMAGE(g5$) = TRUE)
+    Check("SETIMAGE shows the JPEG as displayed: size swapped", SameSize(IMAGE.SIZE(g5$), 300, 400))
+    Check("SETIMAGE shows the JPEG as displayed: turned clockwise", Quads(g5$, "grwb", 40))
+
+    DIM paths AS ARRAY = [files{"png"}, files{"real"}]
+    Check("SETIMAGE with the path from an array cell answers TRUE", CLIPBOARD.SETIMAGE(paths[1]) = TRUE)
+    DIM g6$ = P$("_clip6.png")
+    Check("GETIMAGE after a JPEG from an array cell has its size", CLIPBOARD.GETIMAGE(g6$) = TRUE ANDALSO SameSize(IMAGE.SIZE(g6$), 400, 300))
+
+    Check("SETIMAGE of a missing file answers FALSE", CLIPBOARD.SETIMAGE(missing$) = FALSE)
+    Check("SETIMAGE of a text file answers FALSE", CLIPBOARD.SETIMAGE(files{"text"}) = FALSE)
+
+    CLIPBOARD.SET "invented clipboard text"
+    DIM g7$ = P$("_clip7.png")
+    Check("GETIMAGE after CLIPBOARD.SET of plain text answers FALSE", CLIPBOARD.GETIMAGE(g7$) = FALSE)
+    Check("GETIMAGE after CLIPBOARD.SET of plain text from inside a FUNC answers FALSE", GetInFunc(P$("_clip8.png")) = FALSE)
+ENDSUB
+
+SUB TestClipElsewhere()
+    Check("SETIMAGE answers FALSE off Windows", CLIPBOARD.SETIMAGE(files{"png"}) = FALSE)
+    Check("GETIMAGE answers FALSE off Windows", CLIPBOARD.GETIMAGE(P$("_clipx.png")) = FALSE)
+ENDSUB
+
+' ---------------------------------------------------------------- run
+
+TRY
+    TestRotateBytes()
+CATCH
+    Check("ROTATE lossless group ran without raising: " + ERRMSG$, FALSE)
+ENDTRY
+TRY
+    IF onWindows THEN
+        TestRotateWindows()
+    ELSE
+        TestRotateElsewhere()
+    ENDIF
+CATCH
+    Check("ROTATE Windows group ran without raising: " + ERRMSG$, FALSE)
+ENDTRY
+TRY
+    TestRecycle()
+CATCH
+    Check("RECYCLE group ran without raising: " + ERRMSG$, FALSE)
+ENDTRY
+
+DIM savedClip$ = ""
+IF onWindows THEN savedClip$ = CLIPBOARD.GET$()
+TRY
+    IF onWindows THEN
+        TestClipWindows()
+    ELSE
+        TestClipElsewhere()
+    ENDIF
+CATCH
+    Check("CLIPBOARD image group ran without raising: " + ERRMSG$, FALSE)
+ENDTRY
+IF onWindows THEN CLIPBOARD.SET savedClip$
+
+DIM k AS INTEGER
+FOR k = 0 TO LEN(made) - 1
+    IF FILE.EXISTS(made[k]) THEN KILL made[k]
+NEXT
+
+PRINT "RESULTS: "; passed; " passed, "; failed; " failed"
+IF failed > 0 THEN END 1

@@ -211,21 +211,6 @@ struct ScImage {
     int w = 0, h = 0;
 };
 
-// The pixel of the displayed image at (dx, dy) is the stored one at
-// (sx, sy); sw and sh are the stored width and height.
-static void sc_source_of(int orientation, int dx, int dy, int sw, int sh, int& sx, int& sy) {
-    switch (orientation) {
-        case 2: sx = sw - 1 - dx; sy = dy; break;
-        case 3: sx = sw - 1 - dx; sy = sh - 1 - dy; break;
-        case 4: sx = dx; sy = sh - 1 - dy; break;
-        case 5: sx = dy; sy = dx; break;
-        case 6: sx = dy; sy = sh - 1 - dx; break;
-        case 7: sx = sw - 1 - dy; sy = sh - 1 - dx; break;
-        case 8: sx = sw - 1 - dy; sy = dx; break;
-        default: sx = dx; sy = dy; break;
-    }
-}
-
 // Decodes the first frame of `src` (any WIC format) to BGRA, turned the way
 // a JPEG's EXIF orientation says it is displayed. The file is closed again
 // before this returns, so a target may name the same file.
@@ -280,22 +265,13 @@ done:
         img.h = (int)h;
         return SC_OK;
     }
-    int sw = (int)w, sh = (int)h;
-    img.w = orientation >= 5 ? sh : sw;
-    img.h = orientation >= 5 ? sw : sh;
     try {
         img.px.resize(buf.size());
     } catch (const std::bad_alloc&) {
         return SC_E_SIZE;
     }
-    const uint32_t* from = (const uint32_t*)buf.data();
-    uint32_t* to = (uint32_t*)img.px.data();
-    for (int dy = 0; dy < img.h; dy++)
-        for (int dx = 0; dx < img.w; dx++) {
-            int sx, sy;
-            sc_source_of(orientation, dx, dy, sw, sh, sx, sy);
-            to[(size_t)dy * img.w + dx] = from[(size_t)sy * sw + sx];
-        }
+    jdb_image::orient_pixels((const uint32_t*)buf.data(), (int)w, (int)h, orientation,
+                             (uint32_t*)img.px.data(), img.w, img.h);
     return SC_OK;
 }
 
@@ -311,6 +287,156 @@ extern "C" int jdb_imgconvert(const char* src_utf8, const char* dst_utf8) {
     ScImage img;
     int rc = sc_load(src_utf8, img);
     return rc != SC_OK ? rc : sc_save(dst_utf8, img);
+}
+
+// The picture `src` on the clipboard as a DIB with alpha (CF_DIBV5, from
+// which Windows makes CF_DIB and CF_BITMAP) and as PNG, which programs that
+// keep transparency take first. false when it cannot be read or placed.
+extern "C" int jdb_clip_setimage(const char* src_utf8) {
+    ScImage img;
+    if (sc_load(src_utf8, img) != SC_OK) return 0;
+    size_t row = (size_t)img.w * 4;
+    HGLOBAL dib = GlobalAlloc(GMEM_MOVEABLE, sizeof(BITMAPV5HEADER) + row * img.h);
+    if (!dib) return 0;
+    uint8_t* p = (uint8_t*)GlobalLock(dib);
+    BITMAPV5HEADER hdr = {};
+    hdr.bV5Size = sizeof(hdr);
+    hdr.bV5Width = img.w;
+    hdr.bV5Height = img.h;          // bottom-up, which every reader takes
+    hdr.bV5Planes = 1;
+    hdr.bV5BitCount = 32;
+    hdr.bV5Compression = BI_BITFIELDS;
+    hdr.bV5SizeImage = (DWORD)(row * img.h);
+    hdr.bV5RedMask = 0x00FF0000;
+    hdr.bV5GreenMask = 0x0000FF00;
+    hdr.bV5BlueMask = 0x000000FF;
+    hdr.bV5AlphaMask = 0xFF000000;
+    hdr.bV5CSType = LCS_sRGB;
+    hdr.bV5Intent = LCS_GM_IMAGES;
+    memcpy(p, &hdr, sizeof(hdr));
+    for (int y = 0; y < img.h; y++)
+        memcpy(p + sizeof(hdr) + row * (img.h - 1 - y), &img.px[row * y], row);
+    GlobalUnlock(dib);
+
+    HGLOBAL png = NULL;
+    {
+        ScCom com;
+        IWICImagingFactory* factory = NULL;
+        IStream* stream = NULL;
+        IWICBitmapEncoder* encoder = NULL;
+        IWICBitmapFrameEncode* frame = NULL;
+        bool ok = false;
+        if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER,
+                                       IID_PPV_ARGS(&factory))) &&
+            SUCCEEDED(CreateStreamOnHGlobal(NULL, FALSE, &stream)) &&
+            SUCCEEDED(factory->CreateEncoder(GUID_ContainerFormatPng, NULL, &encoder)) &&
+            SUCCEEDED(encoder->Initialize(stream, WICBitmapEncoderNoCache)) &&
+            SUCCEEDED(encoder->CreateNewFrame(&frame, NULL)) &&
+            SUCCEEDED(frame->Initialize(NULL)) &&
+            SUCCEEDED(frame->SetSize((UINT)img.w, (UINT)img.h))) {
+            WICPixelFormatGUID fmt = GUID_WICPixelFormat32bppBGRA;
+            ok = SUCCEEDED(frame->SetPixelFormat(&fmt)) &&
+                 IsEqualGUID(fmt, GUID_WICPixelFormat32bppBGRA) &&
+                 SUCCEEDED(frame->WritePixels((UINT)img.h, (UINT)row, (UINT)img.px.size(),
+                                              (BYTE*)img.px.data())) &&
+                 SUCCEEDED(frame->Commit()) && SUCCEEDED(encoder->Commit()) &&
+                 SUCCEEDED(GetHGlobalFromStream(stream, &png));
+        }
+        if (frame) frame->Release();
+        if (encoder) encoder->Release();
+        if (stream) stream->Release();
+        if (factory) factory->Release();
+        if (!ok && png) { GlobalFree(png); png = NULL; }
+    }
+
+    if (!OpenClipboard(NULL)) {
+        GlobalFree(dib);
+        if (png) GlobalFree(png);
+        return 0;
+    }
+    EmptyClipboard();
+    bool placed = SetClipboardData(CF_DIBV5, dib) != NULL;
+    if (!placed) GlobalFree(dib);
+    if (png && !SetClipboardData(RegisterClipboardFormatW(L"PNG"), png)) GlobalFree(png);
+    CloseClipboard();
+    return placed ? 1 : 0;
+}
+
+// The picture on the clipboard (a 24- or 32-bit DIB) written to `dst` in the
+// format of its extension; false when there is none.
+extern "C" int jdb_clip_getimage(const char* dst_utf8) {
+    if (!dst_utf8 || !*dst_utf8) return 0;
+    if (!OpenClipboard(NULL)) return 0;
+    HANDLE h = GetClipboardData(CF_DIBV5);
+    if (!h) h = GetClipboardData(CF_DIB);
+    ScImage img;
+    bool ok = false;
+    if (h) {
+        SIZE_T total = GlobalSize(h);
+        const uint8_t* p = (const uint8_t*)GlobalLock(h);
+        if (p && total >= sizeof(BITMAPINFOHEADER)) {
+            const BITMAPINFOHEADER* bi = (const BITMAPINFOHEADER*)p;
+            int w = bi->biWidth;
+            int hh = bi->biHeight < 0 ? -bi->biHeight : bi->biHeight;
+            bool bottom_up = bi->biHeight > 0;
+            int bits = bi->biBitCount;
+            size_t off = bi->biSize;
+            if (bi->biCompression == BI_BITFIELDS && bi->biSize == sizeof(BITMAPINFOHEADER)) off += 12;
+            size_t row = ((size_t)w * bits / 8 + 3) & ~(size_t)3;
+            bool plain = bi->biCompression == BI_RGB || bi->biCompression == BI_BITFIELDS;
+            if (plain && (bits == 24 || bits == 32) && w > 0 && hh > 0 &&
+                (unsigned long long)w * hh <= SC_MAX_PIXELS && off + row * hh <= total &&
+                [&] {
+                    // The clipboard is open and locked here: a failed
+                    // allocation answers FALSE instead of leaving it so.
+                    try { img.px.resize((size_t)w * hh * 4); } catch (const std::bad_alloc&) { return false; }
+                    return true;
+                }()) {
+                img.w = w;
+                img.h = hh;
+                bool any_alpha = false;
+                for (int y = 0; y < hh; y++) {
+                    const uint8_t* src = p + off + row * (bottom_up ? hh - 1 - y : y);
+                    uint8_t* dst = &img.px[(size_t)y * w * 4];
+                    for (int x = 0; x < w; x++) {
+                        dst[x * 4 + 0] = src[x * (bits / 8) + 0];
+                        dst[x * 4 + 1] = src[x * (bits / 8) + 1];
+                        dst[x * 4 + 2] = src[x * (bits / 8) + 2];
+                        dst[x * 4 + 3] = bits == 32 ? src[x * 4 + 3] : 255;
+                        if (bits == 32 && src[x * 4 + 3]) any_alpha = true;
+                    }
+                }
+                // A 32-bit DIB that leaves alpha at 0 everywhere means opaque.
+                if (bits == 32 && !any_alpha)
+                    for (size_t i = 3; i < img.px.size(); i += 4) img.px[i] = 255;
+                ok = true;
+            }
+        }
+        if (p) GlobalUnlock(h);
+    }
+    CloseClipboard();
+    return ok && sc_save(dst_utf8, img) == SC_OK ? 1 : 0;
+}
+
+// Writes `src` as displayed, turned clockwise by `quarters` quarter turns.
+extern "C" int jdb_imgrotate(const char* src_utf8, const char* dst_utf8, int quarters) {
+    if (!src_utf8 || !*src_utf8) return SC_E_DECODE;
+    if (!dst_utf8 || !*dst_utf8) return SC_E_PATH;
+    ScImage img;
+    int rc = sc_load(src_utf8, img);
+    if (rc != SC_OK) return rc;
+    static const int turn_code[4] = { 1, 6, 3, 8 };
+    int q = ((quarters % 4) + 4) % 4;
+    if (q == 0) return sc_save(dst_utf8, img);
+    ScImage out;
+    try {
+        out.px.resize(img.px.size());
+    } catch (const std::bad_alloc&) {
+        return SC_E_SIZE;
+    }
+    jdb_image::orient_pixels((const uint32_t*)img.px.data(), img.w, img.h, turn_code[q],
+                             (uint32_t*)out.px.data(), out.w, out.h);
+    return sc_save(dst_utf8, out);
 }
 
 // Writes the rectangle (x, y, w, h) of `src` as displayed to `dst`.
@@ -548,6 +674,15 @@ extern "C" int jdb_imgconvert(const char*, const char*) {
     return SC_UNSUPPORTED;
 }
 extern "C" int jdb_imgcrop(const char*, const char*, int, int, int, int) {
+    return SC_UNSUPPORTED;
+}
+extern "C" int jdb_clip_setimage(const char*) {
+    return 0;
+}
+extern "C" int jdb_clip_getimage(const char*) {
+    return 0;
+}
+extern "C" int jdb_imgrotate(const char*, const char*, int) {
     return SC_UNSUPPORTED;
 }
 extern "C" int jdb_imgresize(const char*, const char*, int, int) {

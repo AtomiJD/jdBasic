@@ -1,6 +1,7 @@
 #include "forms.h"
 #include "vm.h"
 #include "value.h"
+#include "image_meta.h"
 
 #if defined(FORMS) && defined(_WIN32)
 
@@ -24,6 +25,7 @@
 #include <uxtheme.h>
 
 #include <algorithm>
+#include <cmath>
 #include <deque>
 #include <map>
 #include <stdexcept>
@@ -40,6 +42,7 @@
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "uxtheme.lib")
+#pragma comment(lib, "msimg32.lib")
 
 // Main-script directory, defined in main.cpp; relative .jdform paths
 // resolve against it like the graphics asset loaders do.
@@ -124,6 +127,7 @@ std::string value_text(const Value& v) {
 
 // Resolve a data-file path: as given first, then against the script dir.
 std::string resolve_data_path(const std::string& path) {
+    if (path.empty()) return path;
     if (GetFileAttributesW(widen(path).c_str()) != INVALID_FILE_ATTRIBUTES) return path;
     if (!g_base_dir.empty()) {
         std::string alt = g_base_dir + "/" + path;
@@ -379,57 +383,268 @@ SYSTEMTIME epoch_to_systime(double epoch) {
     return st;
 }
 
-// Decode any WIC-supported image (PNG/JPG/BMP/GIF/ICO) into a 32-bit
-// DIB scaled to the requested device-pixel size.
-HBITMAP load_image_file(const std::wstring& path, int dw, int dh) {
+// ---- PICTURE: the decoded picture and how it is shown ------------------------
+
+// A PICTURE keeps its picture decoded at full size, turned the way it is
+// displayed. "stretch" hands Windows one bitmap scaled to the control, as
+// PICTURE always did; "fit" and "zoom" are painted here, from the full
+// picture or from a copy scaled to the current factor when shrinking.
+struct PicView {
+    HBITMAP full = nullptr;     // premultiplied BGRA, top-down
+    uint32_t* bits = nullptr;
+    int w = 0, h = 0;
+    std::string mode = "STRETCH";
+    double zoom = 1.0;
+    double sx = 0, sy = 0;      // picture pixel at the top-left in "zoom"
+    HBITMAP scaled = nullptr;   // the picture at cache_scale, for scale < 1
+    double cache_scale = 0;
+};
+std::map<int, PicView> g_picviews;
+const double kPicMaxPixels = 100000000.0;
+
+void picview_drop_cache(PicView& v) {
+    if (v.scaled) DeleteObject(v.scaled);
+    v.scaled = nullptr;
+    v.cache_scale = 0;
+}
+
+void picview_free(PicView& v) {
+    picview_drop_cache(v);
+    if (v.full) DeleteObject(v.full);
+    v.full = nullptr;
+    v.bits = nullptr;
+    v.w = v.h = 0;
+}
+
+HBITMAP new_dib(int w, int h, uint32_t** bits) {
+    BITMAPINFO bi = {};
+    bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
+    bi.bmiHeader.biWidth = w;
+    bi.bmiHeader.biHeight = -h;
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+    void* p = nullptr;
+    HBITMAP b = CreateDIBSection(nullptr, &bi, DIB_RGB_COLORS, &p, nullptr, 0);
+    if (!b || !p) { if (b) DeleteObject(b); return nullptr; }
+    *bits = (uint32_t*)p;
+    return b;
+}
+
+// Decodes `path` into v at full size, upright; false when it cannot be read
+// or holds more than kPicMaxPixels.
+bool picview_load(const std::string& path, PicView& v) {
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     IWICImagingFactory* fac = nullptr;
     if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
                                 IID_PPV_ARGS(&fac))))
-        return nullptr;
-    HBITMAP hbmp = nullptr;
+        return false;
     IWICBitmapDecoder* dec = nullptr;
     IWICBitmapFrameDecode* frame = nullptr;
-    IWICBitmapScaler* scaler = nullptr;
     IWICFormatConverter* conv = nullptr;
+    std::vector<uint32_t> raw;
+    UINT w = 0, h = 0;
+    bool ok = false;
     do {
-        if (FAILED(fac->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
+        if (FAILED(fac->CreateDecoderFromFilename(widen(path).c_str(), nullptr, GENERIC_READ,
                                                   WICDecodeMetadataCacheOnDemand, &dec))) break;
         if (FAILED(dec->GetFrame(0, &frame))) break;
-        if (dw <= 0 || dh <= 0) {
-            UINT iw = 0, ih = 0;
-            frame->GetSize(&iw, &ih);
-            dw = (int)iw; dh = (int)ih;
-        }
-        if (FAILED(fac->CreateBitmapScaler(&scaler))) break;
-        if (FAILED(scaler->Initialize(frame, dw, dh, WICBitmapInterpolationModeFant))) break;
+        if (FAILED(frame->GetSize(&w, &h)) || w == 0 || h == 0) break;
+        if ((double)w * (double)h > kPicMaxPixels) break;
         if (FAILED(fac->CreateFormatConverter(&conv))) break;
-        if (FAILED(conv->Initialize(scaler, GUID_WICPixelFormat32bppPBGRA,
+        if (FAILED(conv->Initialize(frame, GUID_WICPixelFormat32bppPBGRA,
                                     WICBitmapDitherTypeNone, nullptr, 0.0,
                                     WICBitmapPaletteTypeCustom))) break;
-        BITMAPINFO bi = {};
-        bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
-        bi.bmiHeader.biWidth = dw;
-        bi.bmiHeader.biHeight = -dh;
-        bi.bmiHeader.biPlanes = 1;
-        bi.bmiHeader.biBitCount = 32;
-        bi.bmiHeader.biCompression = BI_RGB;
-        void* bits = nullptr;
-        hbmp = CreateDIBSection(nullptr, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
-        if (!hbmp || !bits) { if (hbmp) { DeleteObject(hbmp); hbmp = nullptr; } break; }
-        if (FAILED(conv->CopyPixels(nullptr, dw * 4, dw * dh * 4, (BYTE*)bits))) {
-            DeleteObject(hbmp);
-            hbmp = nullptr;
+        try {
+            raw.resize((size_t)w * h);
+        } catch (const std::bad_alloc&) {
+            break;
         }
+        ok = SUCCEEDED(conv->CopyPixels(nullptr, w * 4, (UINT)(raw.size() * 4), (BYTE*)raw.data()));
     } while (false);
     if (conv) conv->Release();
-    if (scaler) scaler->Release();
     if (frame) frame->Release();
     if (dec) dec->Release();
     fac->Release();
-    return hbmp;
+    if (!ok) return false;
+
+    int orientation = 1;
+    jdb_image::Bytes file;
+    if (jdb_image::read_file(path, file)) orientation = jdb_image::jpeg_orientation(file);
+    int dw = orientation >= 5 ? (int)h : (int)w;
+    int dh = orientation >= 5 ? (int)w : (int)h;
+    uint32_t* bits = nullptr;
+    HBITMAP full = new_dib(dw, dh, &bits);
+    if (!full) return false;
+    jdb_image::orient_pixels(raw.data(), (int)w, (int)h, orientation, bits, dw, dh);
+    picview_free(v);
+    v.full = full;
+    v.bits = bits;
+    v.w = dw;
+    v.h = dh;
+    v.sx = v.sy = 0;
+    return true;
 }
 
+// The picture scaled to w x h by WIC (Fant averages when shrinking).
+HBITMAP picview_scaled(const PicView& v, int w, int h) {
+    if (!v.full || w <= 0 || h <= 0) return nullptr;
+    IWICImagingFactory* fac = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                IID_PPV_ARGS(&fac))))
+        return nullptr;
+    IWICBitmap* src = nullptr;
+    IWICBitmapScaler* scaler = nullptr;
+    HBITMAP out = nullptr;
+    uint32_t* bits = nullptr;
+    do {
+        if (FAILED(fac->CreateBitmapFromMemory((UINT)v.w, (UINT)v.h, GUID_WICPixelFormat32bppPBGRA,
+                                               (UINT)v.w * 4, (UINT)v.w * 4 * (UINT)v.h,
+                                               (BYTE*)v.bits, &src))) break;
+        if (FAILED(fac->CreateBitmapScaler(&scaler))) break;
+        if (FAILED(scaler->Initialize(src, (UINT)w, (UINT)h,
+                                      (w < v.w || h < v.h) ? WICBitmapInterpolationModeFant
+                                                           : WICBitmapInterpolationModeCubic))) break;
+        out = new_dib(w, h, &bits);
+        if (!out) break;
+        if (FAILED(scaler->CopyPixels(nullptr, (UINT)w * 4, (UINT)w * 4 * (UINT)h, (BYTE*)bits))) {
+            DeleteObject(out);
+            out = nullptr;
+        }
+    } while (false);
+    if (scaler) scaler->Release();
+    if (src) src->Release();
+    fac->Release();
+    return out;
+}
+
+// Where the picture lies in a control of cw x ch device pixels: shown at
+// `scale`, its pixel (ix, iy) at (ox + ix * scale, oy + iy * scale). In
+// "zoom" the scroll position is kept within the picture here.
+void picview_geometry(PicView& v, int cw, int ch, double& scale, double& ox, double& oy) {
+    if (v.w <= 0 || v.h <= 0) { scale = 1; ox = oy = 0; return; }
+    if (v.mode == "FIT") scale = std::min(1.0, std::min((double)cw / v.w, (double)ch / v.h));
+    else scale = v.zoom;
+    if (scale <= 0) scale = 1;
+    double dw = v.w * scale, dh = v.h * scale;
+    if (v.mode != "ZOOM" || dw <= cw) {
+        if (v.mode == "ZOOM") v.sx = 0;
+        ox = (cw - dw) / 2;
+    } else {
+        v.sx = std::max(0.0, std::min(v.sx, v.w - cw / scale));
+        ox = -v.sx * scale;
+    }
+    if (v.mode != "ZOOM" || dh <= ch) {
+        if (v.mode == "ZOOM") v.sy = 0;
+        oy = (ch - dh) / 2;
+    } else {
+        v.sy = std::max(0.0, std::min(v.sy, v.h - ch / scale));
+        oy = -v.sy * scale;
+    }
+}
+
+void picview_paint(HWND hwnd, int handle, PicView& v) {
+    PAINTSTRUCT ps;
+    HDC hdc = BeginPaint(hwnd, &ps);
+    RECT rc;
+    GetClientRect(hwnd, &rc);
+    int cw = rc.right, ch = rc.bottom;
+    HDC mem = CreateCompatibleDC(hdc);
+    HBITMAP canvas = CreateCompatibleBitmap(hdc, std::max(1, cw), std::max(1, ch));
+    HGDIOBJ old_canvas = SelectObject(mem, canvas);
+    auto bb = g_back_brush.find(handle);
+    FillRect(mem, &rc, bb != g_back_brush.end() ? bb->second : GetSysColorBrush(COLOR_BTNFACE));
+    if (v.full) {
+        double scale, ox, oy;
+        picview_geometry(v, cw, ch, scale, ox, oy);
+        BLENDFUNCTION bf = { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
+        HDC src = CreateCompatibleDC(hdc);
+        if (scale < 1.0) {
+            int sw = std::max(1, (int)std::lround(v.w * scale));
+            int sh = std::max(1, (int)std::lround(v.h * scale));
+            if (!v.scaled || v.cache_scale != scale) {
+                picview_drop_cache(v);
+                v.scaled = picview_scaled(v, sw, sh);
+                v.cache_scale = scale;
+            }
+            if (v.scaled) {
+                HGDIOBJ o = SelectObject(src, v.scaled);
+                AlphaBlend(mem, (int)std::lround(ox), (int)std::lround(oy), sw, sh, src, 0, 0, sw, sh, bf);
+                SelectObject(src, o);
+            }
+        } else {
+            // Only the part of the picture inside the control is drawn.
+            int x0 = std::max(0, (int)std::floor(-ox / scale));
+            int y0 = std::max(0, (int)std::floor(-oy / scale));
+            int x1 = std::min(v.w, (int)std::ceil((cw - ox) / scale));
+            int y1 = std::min(v.h, (int)std::ceil((ch - oy) / scale));
+            if (x1 > x0 && y1 > y0) {
+                HGDIOBJ o = SelectObject(src, v.full);
+                AlphaBlend(mem, (int)std::lround(ox + x0 * scale), (int)std::lround(oy + y0 * scale),
+                           (int)std::lround((x1 - x0) * scale), (int)std::lround((y1 - y0) * scale),
+                           src, x0, y0, x1 - x0, y1 - y0, bf);
+                SelectObject(src, o);
+            }
+        }
+        DeleteDC(src);
+    }
+    BitBlt(hdc, 0, 0, cw, ch, mem, 0, 0, SRCCOPY);
+    SelectObject(mem, old_canvas);
+    DeleteObject(canvas);
+    DeleteDC(mem);
+    EndPaint(hwnd, &ps);
+}
+
+// The bitmap "stretch" hands the control: the picture scaled to it.
+void picview_apply_stretch(int handle, PicView& v) {
+    HWND hwnd = g_items[handle].hwnd;
+    RECT rc;
+    GetClientRect(hwnd, &rc);
+    HBITMAP bmp = picview_scaled(v, std::max(1, (int)rc.right), std::max(1, (int)rc.bottom));
+    auto old = g_pictures.find(handle);
+    if (old != g_pictures.end()) DeleteObject(old->second);
+    if (bmp) g_pictures[handle] = bmp; else g_pictures.erase(handle);
+    SendMessageW(hwnd, STM_SETIMAGE, IMAGE_BITMAP, (LPARAM)bmp);
+}
+
+// Loads `path` into the PICTURE `handle` and shows it in its mode; an empty
+// path leaves the control empty.
+bool picture_load(int handle, const std::string& path) {
+    PicView& v = g_picviews[handle];
+    if (path.empty()) {
+        picview_free(v);
+        SendMessageW(g_items[handle].hwnd, STM_SETIMAGE, IMAGE_BITMAP, 0);
+        auto old = g_pictures.find(handle);
+        if (old != g_pictures.end()) { DeleteObject(old->second); g_pictures.erase(old); }
+        InvalidateRect(g_items[handle].hwnd, nullptr, TRUE);
+        return true;
+    }
+    if (!picview_load(path, v)) return false;
+    if (v.mode == "STRETCH") picview_apply_stretch(handle, v);
+    InvalidateRect(g_items[handle].hwnd, nullptr, TRUE);
+    return true;
+}
+
+bool picture_viewing(int handle) {
+    auto it = g_picviews.find(handle);
+    return it != g_picviews.end() && it->second.mode != "STRETCH";
+}
+
+// The picture pixel under device point (x, y) of a PICTURE.
+void picture_image_point(int handle, int x, int y, double& ix, double& iy) {
+    PicView& v = g_picviews[handle];
+    RECT rc;
+    GetClientRect(g_items[handle].hwnd, &rc);
+    if (v.mode == "STRETCH") {
+        ix = v.w > 0 && rc.right > 0 ? x * (double)v.w / rc.right : 0;
+        iy = v.h > 0 && rc.bottom > 0 ? y * (double)v.h / rc.bottom : 0;
+        return;
+    }
+    double scale, ox, oy;
+    picview_geometry(v, rc.right, rc.bottom, scale, ox, oy);
+    ix = (x - ox) / scale;
+    iy = (y - oy) / scale;
+}
 HWND toolbar_of(int form_handle) {
     for (auto& [h, it] : g_items)
         if (it.kind == "TOOLBAR" && it.form == form_handle) return it.hwnd;
@@ -906,6 +1121,20 @@ LRESULT CALLBACK form_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             break;
         }
 
+        case WM_MOUSEWHEEL: {
+            // The wheel goes to the focus and climbs to the form; a picture
+            // under the pointer that is looked at gets it instead.
+            POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
+            HWND under = WindowFromPoint(pt);
+            auto uh = g_byhwnd.find(under);
+            if (uh != g_byhwnd.end() && g_items[uh->second].kind == "PICTURE" &&
+                picture_viewing(uh->second) && under != hwnd) {
+                SendMessageW(under, WM_MOUSEWHEEL, wParam, lParam);
+                return 0;
+            }
+            break;
+        }
+
         case WM_LBUTTONDOWN:
         case WM_LBUTTONUP:
         case WM_RBUTTONDOWN:
@@ -976,6 +1205,11 @@ LRESULT CALLBACK form_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                         if (pic != g_pictures.end()) {
                             DeleteObject(pic->second);
                             g_pictures.erase(pic);
+                        }
+                        auto pview = g_picviews.find(it->first);
+                        if (pview != g_picviews.end()) {
+                            picview_free(pview->second);
+                            g_picviews.erase(pview);
                         }
                         auto bb2 = g_back_brush.find(it->first);
                         if (bb2 != g_back_brush.end()) {
@@ -1115,6 +1349,15 @@ void queue_mouse(const FormsItem& it, const char* ev, int button, LPARAM lp) {
     // logical units, like every other coordinate the FORM API takes
     m.as_object()->set("x", Value::make_i64(lg((int)(short)LOWORD(lp))));
     m.as_object()->set("y", Value::make_i64(lg((int)(short)HIWORD(lp))));
+    if (it.kind == "PICTURE") {
+        auto hit = g_byhwnd.find(it.hwnd);
+        if (hit != g_byhwnd.end() && picture_viewing(hit->second)) {
+            double ix, iy;
+            picture_image_point(hit->second, (short)LOWORD(lp), (short)HIWORD(lp), ix, iy);
+            m.as_object()->set("imagex", Value::make_f64(ix));
+            m.as_object()->set("imagey", Value::make_f64(iy));
+        }
+    }
     queue_mods(m);
     queue_event(it.name, ev, std::move(m));
 }
@@ -1145,6 +1388,86 @@ void queue_drop(const FormsItem& it, HDROP drop) {
 LRESULT CALLBACK ctl_sub_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
                               UINT_PTR, DWORD_PTR) {
     auto hit = g_byhwnd.find(hwnd);
+    if (hit != g_byhwnd.end() && g_items[hit->second].kind == "PICTURE") {
+        int handle = hit->second;
+        FormsItem& it = g_items[handle];
+        bool viewing = picture_viewing(handle);
+        switch (msg) {
+            case WM_SIZE: {
+                auto pv = g_picviews.find(handle);
+                if (pv != g_picviews.end() && pv->second.full) {
+                    if (viewing) InvalidateRect(hwnd, nullptr, FALSE);
+                    else picview_apply_stretch(handle, pv->second);
+                }
+                break;
+            }
+            case WM_NCHITTEST:
+                // A STATIC lets the mouse through to the form; a picture
+                // that is looked at takes it.
+                if (viewing) return HTCLIENT;
+                break;
+            case WM_ERASEBKGND:
+                if (viewing) return 1;
+                break;
+            case WM_PAINT:
+                if (viewing) {
+                    picview_paint(hwnd, handle, g_picviews[handle]);
+                    return 0;
+                }
+                break;
+            case WM_GETDLGCODE:
+                if (viewing) return DLGC_WANTARROWS | DLGC_WANTCHARS;
+                break;
+            case WM_LBUTTONDOWN:
+            case WM_RBUTTONDOWN:
+                if (viewing) {
+                    SetFocus(hwnd);
+                    if (msg == WM_LBUTTONDOWN) {
+                        g_shape_held.insert(hwnd);
+                        SetCapture(hwnd);
+                    }
+                }
+                break;
+            case WM_LBUTTONUP:
+                if (g_shape_held.erase(hwnd)) {
+                    queue_mouse(it, "MOUSEUP", 1, lp);
+                    if (GetCapture() == hwnd) ReleaseCapture();
+                    return 0;
+                }
+                break;
+            case WM_LBUTTONDBLCLK:
+                if (viewing) {
+                    queue_mouse(it, "DBLCLICK", 1, lp);
+                    return 0;
+                }
+                break;
+            case WM_MOUSEWHEEL:
+                if (viewing) {
+                    POINT pt = { (short)LOWORD(lp), (short)HIWORD(lp) };
+                    // With the focus here and the pointer over another
+                    // picture that is looked at, the wheel is that one's.
+                    HWND under = WindowFromPoint(pt);
+                    auto uh = g_byhwnd.find(under);
+                    if (under != hwnd && uh != g_byhwnd.end() &&
+                        g_items[uh->second].kind == "PICTURE" && picture_viewing(uh->second))
+                        return SendMessageW(under, WM_MOUSEWHEEL, wp, lp);
+                    ScreenToClient(hwnd, &pt);
+                    Value m = info_map(it);
+                    m.as_object()->set("delta", Value::make_f64(GET_WHEEL_DELTA_WPARAM(wp) / (double)WHEEL_DELTA));
+                    m.as_object()->set("x", Value::make_i64(lg(pt.x)));
+                    m.as_object()->set("y", Value::make_i64(lg(pt.y)));
+                    double ix, iy;
+                    picture_image_point(handle, pt.x, pt.y, ix, iy);
+                    m.as_object()->set("imagex", Value::make_f64(ix));
+                    m.as_object()->set("imagey", Value::make_f64(iy));
+                    queue_mods(m);
+                    queue_event(it.name, "MOUSEWHEEL", std::move(m));
+                    return 0;
+                }
+                break;
+            default: break;
+        }
+    }
     if (hit != g_byhwnd.end()) {
         FormsItem& it = g_items[hit->second];
         switch (msg) {
@@ -2763,16 +3086,45 @@ void set_prop(int handle, FormsItem& it, const std::string& prop, const Value& v
         g_shape_brushes[handle] = CreateSolidBrush(rgb_to_colorref(rgb));
         InvalidateRect(h, nullptr, TRUE);
     } else if (prop == "PICTURE" && it.kind == "PICTURE") {
+        std::string path = resolve_data_path(value_text(v));
+        if (!picture_load(handle, path))
+            throw std::runtime_error(std::string(who) + ": cannot load image '" + path + "'");
+    } else if (it.kind == "PICTURE" &&
+               (prop == "SCALEMODE" || prop == "ZOOM" || prop == "SCROLLX" || prop == "SCROLLY")) {
+        PicView& pv = g_picviews[handle];
+        std::string was = pv.mode;
+        if (prop == "SCALEMODE") {
+            std::string m = value_text(v);
+            for (auto& c : m) c = (char)toupper((unsigned char)c);
+            if (m != "STRETCH" && m != "FIT" && m != "ZOOM")
+                throw std::runtime_error(std::string(who) + ": SCALEMODE is \"stretch\", \"fit\" or \"zoom\"");
+            pv.mode = m;
+        } else if (prop == "ZOOM") {
+            double z = v.to_double();
+            if (!(z >= 0.01 && z <= 32))
+                throw std::runtime_error(std::string(who) + ": ZOOM is between 0.01 and 32");
+            pv.zoom = z;
+            pv.mode = "ZOOM";
+        } else if (prop == "SCROLLX") {
+            pv.sx = v.to_double();
+        } else {
+            pv.sy = v.to_double();
+        }
+        if (pv.mode != was) {
+            if (pv.mode == "STRETCH") {
+                picview_drop_cache(pv);
+                if (pv.full) picview_apply_stretch(handle, pv);
+            } else if (was == "STRETCH") {
+                SendMessageW(h, STM_SETIMAGE, IMAGE_BITMAP, 0);
+                auto old = g_pictures.find(handle);
+                if (old != g_pictures.end()) { DeleteObject(old->second); g_pictures.erase(old); }
+            }
+        }
         RECT rc;
         GetClientRect(h, &rc);
-        std::string path = resolve_data_path(value_text(v));
-        HBITMAP bmp = load_image_file(widen(path), rc.right, rc.bottom);
-        if (!bmp)
-            throw std::runtime_error(std::string(who) + ": cannot load image '" + path + "'");
-        auto old = g_pictures.find(handle);
-        if (old != g_pictures.end()) DeleteObject(old->second);
-        g_pictures[handle] = bmp;
-        SendMessageW(h, STM_SETIMAGE, IMAGE_BITMAP, (LPARAM)bmp);
+        double scale, ox, oy;
+        if (pv.mode != "STRETCH") picview_geometry(pv, rc.right, rc.bottom, scale, ox, oy);
+        InvalidateRect(h, nullptr, FALSE);
     } else if (prop == "TEXT" && it.kind == "UPDOWN") {
         SetWindowTextW(it.buddy, widen(value_text(v)).c_str());
     } else if (prop == "COLUMNS" && it.kind == "LISTVIEW") {
@@ -2862,6 +3214,37 @@ void set_prop(int handle, FormsItem& it, const std::string& prop, const Value& v
 Value get_prop(int handle, FormsItem& it, const std::string& prop, const char* who) {
     Value edit_out;
     if (is_edit_kind(it.kind) && edit_get_prop(handle, it, prop, edit_out)) return edit_out;
+    if (it.kind == "PICTURE" &&
+        (prop == "SCALEMODE" || prop == "ZOOM" || prop == "SCROLLX" || prop == "SCROLLY" ||
+         prop == "SCALE" || prop == "IMAGEWIDTH" || prop == "IMAGEHEIGHT" ||
+         prop == "CENTERX" || prop == "CENTERY")) {
+        PicView& pv = g_picviews[handle];
+        if (prop == "CENTERX" || prop == "CENTERY") {
+            RECT crc;
+            GetClientRect(it.hwnd, &crc);
+            double ix, iy;
+            picture_image_point(handle, crc.right / 2, crc.bottom / 2, ix, iy);
+            return Value::make_f64(prop == "CENTERX" ? ix : iy);
+        }
+        if (prop == "IMAGEWIDTH") return Value::make_i64(pv.w);
+        if (prop == "IMAGEHEIGHT") return Value::make_i64(pv.h);
+        if (prop == "ZOOM") return Value::make_f64(pv.zoom);
+        if (prop == "SCALEMODE") {
+            std::string m = pv.mode;
+            for (auto& c : m) c = (char)tolower((unsigned char)c);
+            return Value::make_string(m);
+        }
+        RECT rc;
+        GetClientRect(it.hwnd, &rc);
+        if (pv.mode == "STRETCH") {
+            if (prop == "SCALE") return Value::make_f64(pv.w > 0 ? (double)rc.right / pv.w : 1.0);
+            return Value::make_f64(prop == "SCROLLX" ? pv.sx : pv.sy);
+        }
+        double scale, ox, oy;
+        picview_geometry(pv, rc.right, rc.bottom, scale, ox, oy);
+        if (prop == "SCALE") return Value::make_f64(scale);
+        return Value::make_f64(prop == "SCROLLX" ? pv.sx : pv.sy);
+    }
     if (it.kind == "MENU") {
         if (prop == "NAME") return Value::make_string(it.name);
         if (prop == "KIND") return Value::make_string(it.kind);
@@ -3366,6 +3749,7 @@ const std::vector<const char*>& events_of(const std::string& kind) {
     static const std::vector<const char*> list_ev  = { "CLICK", "DBLCLICK", JDF_INPUT_EV };
     static const std::vector<const char*> tick_ev  = { "TICK" };
     static const std::vector<const char*> mouse_ev = { "MOUSEDOWN", "MOUSEUP", "MOUSEMOVE" };
+    static const std::vector<const char*> pic_ev   = { "DBLCLICK", "MOUSEWHEEL", JDF_INPUT_EV };
     static const std::vector<const char*> none_ev  = {};
 #undef JDF_INPUT_EV
     if (is_form_kind(kind)) return form_ev;
@@ -3377,6 +3761,7 @@ const std::vector<const char*>& events_of(const std::string& kind) {
     if (kind == "LISTBOX" || kind == "LISTVIEW" || kind == "TREEVIEW") return list_ev;
     if (kind == "TIMER")    return tick_ev;
     if (kind == "SHAPE")    return mouse_ev;
+    if (kind == "PICTURE")  return pic_ev;
     return none_ev;
 }
 
@@ -3471,14 +3856,9 @@ void load_controls(int frm, const Value& doc, const std::string& path) {
             handle = create_control(frm, name, L"STATIC", "",
                                     SS_BITMAP | SS_CENTERIMAGE, 0, x, y, w, h, "PICTURE");
             std::string ppath = resolve_data_path(jf_str(c, "picture", where, ""));
-            if (!ppath.empty()) {
-                HBITMAP bmp = load_image_file(widen(ppath), px(w), px(h));
-                if (!bmp)
-                    throw std::runtime_error("FORM.LOAD: " + where +
-                                             ": cannot load image \"" + ppath + "\"");
-                g_pictures[handle] = bmp;
-                SendMessageW(g_items[handle].hwnd, STM_SETIMAGE, IMAGE_BITMAP, (LPARAM)bmp);
-            }
+            if (!ppath.empty() && !picture_load(handle, ppath))
+                throw std::runtime_error("FORM.LOAD: " + where +
+                                         ": cannot load image \"" + ppath + "\"");
         } else if (type == "PROGRESS") {
             handle = create_control(frm, name, PROGRESS_CLASSW, "", 0, 0,
                                     x, y, w, h, "PROGRESS");
@@ -3866,12 +4246,8 @@ void register_forms_builtins(VM& vm) {
             SS_BITMAP | SS_CENTERIMAGE, 0,
             arg_int(args, 3), arg_int(args, 4), arg_int(args, 5), arg_int(args, 6), "PICTURE");
         std::string path = resolve_data_path(arg_str(args, 2, "FORM.PICTURE"));
-        HBITMAP bmp = load_image_file(widen(path),
-                                      px(arg_int(args, 5)), px(arg_int(args, 6)));
-        if (!bmp)
+        if (!picture_load(handle, path))
             throw std::runtime_error("FORM.PICTURE: cannot load image '" + path + "'");
-        g_pictures[handle] = bmp;
-        SendMessageW(g_items[handle].hwnd, STM_SETIMAGE, IMAGE_BITMAP, (LPARAM)bmp);
         return Value::make_i64(handle);
     });
 

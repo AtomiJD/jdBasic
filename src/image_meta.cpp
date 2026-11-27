@@ -591,7 +591,10 @@ int jpeg_strip(const Bytes& b, bool gps_only, Bytes& result) {
     return RC_OK;
 }
 
-int jpeg_set(const Bytes& b, const Fields& fields, Bytes& result) {
+// The JPEG with its EXIF changed by `edit` (an EXIF is made when it has
+// none, and dropped when nothing is left in it).
+template <typename Edit>
+int jpeg_edit_exif(const Bytes& b, Edit edit, Bytes& result) {
     Jpeg j;
     if (!parse_jpeg(b, j)) return RC_SOURCE;
     Exif e;
@@ -602,7 +605,7 @@ int jpeg_set(const Bytes& b, const Fields& fields, Bytes& result) {
         at = (long)i;
         break;
     }
-    for (auto& f : fields) set_ascii(e.ifd0, field_named(f.first)->exif_tag, f.second);
+    edit(e);
     Bytes seg;
     Bytes tiff = build_tiff(e);
     if (!tiff.empty() && !app1_of(tiff, seg)) return RC_WRITE;
@@ -621,6 +624,12 @@ int jpeg_set(const Bytes& b, const Fields& fields, Bytes& result) {
     o.out.insert(o.out.end(), b.begin() + j.rest, b.end());
     result.swap(o.out);
     return RC_OK;
+}
+
+int jpeg_set(const Bytes& b, const Fields& fields, Bytes& result) {
+    return jpeg_edit_exif(b, [&](Exif& e) {
+        for (auto& f : fields) set_ascii(e.ifd0, field_named(f.first)->exif_tag, f.second);
+    }, result);
 }
 
 // ---- PNG ---------------------------------------------------------------------
@@ -848,6 +857,50 @@ bool write_file(const std::string& path, const Bytes& data) {
 
 bool read_meta(const Bytes& file, Meta& m) {
     return jpeg_read(file, m) || png_read(file, m);
+}
+
+void orient_pixels(const uint32_t* from, int sw, int sh, int orientation,
+                   uint32_t* to, int& dw, int& dh) {
+    dw = orientation >= 5 && orientation <= 8 ? sh : sw;
+    dh = orientation >= 5 && orientation <= 8 ? sw : sh;
+    for (int dy = 0; dy < dh; dy++)
+        for (int dx = 0; dx < dw; dx++) {
+            int sx, sy;
+            switch (orientation) {
+                case 2: sx = sw - 1 - dx; sy = dy; break;
+                case 3: sx = sw - 1 - dx; sy = sh - 1 - dy; break;
+                case 4: sx = dx; sy = sh - 1 - dy; break;
+                case 5: sx = dy; sy = dx; break;
+                case 6: sx = dy; sy = sh - 1 - dx; break;
+                case 7: sx = sw - 1 - dy; sy = sh - 1 - dx; break;
+                case 8: sx = sw - 1 - dy; sy = dx; break;
+                default: sx = dx; sy = dy; break;
+            }
+            to[(size_t)dy * dw + dx] = from[(size_t)sy * sw + sx];
+        }
+}
+
+int turned_orientation(int orientation, int quarters) {
+    static const int turn_code[4] = { 1, 6, 3, 8 };  // 0, 90, 180, 270 degrees clockwise
+    const uint32_t grid[6] = { 0, 1, 2, 3, 4, 5 };    // 3 x 2
+    uint32_t shown[6], turned[6], probe[6];
+    int w, h, tw, th, pw, ph;
+    orient_pixels(grid, 3, 2, orientation, shown, w, h);
+    orient_pixels(shown, w, h, turn_code[((quarters % 4) + 4) % 4], turned, tw, th);
+    for (int o = 1; o <= 8; o++) {
+        orient_pixels(grid, 3, 2, o, probe, pw, ph);
+        if (pw == tw && ph == th && memcmp(probe, turned, sizeof probe) == 0) return o;
+    }
+    return 1;
+}
+
+int rotate_jpeg(const Bytes& file, int quarters, Bytes& out) {
+    int turned = turned_orientation(jpeg_orientation(file), quarters);
+    return jpeg_edit_exif(file, [&](Exif& e) {
+        e.ifd0.erase(std::remove_if(e.ifd0.begin(), e.ifd0.end(),
+                                    [](const Tag& t) { return t.tag == 0x0112; }), e.ifd0.end());
+        if (turned != 1) e.ifd0.push_back(orientation_only(turned).ifd0[0]);
+    }, out);
 }
 
 int jpeg_orientation(const Bytes& file) {

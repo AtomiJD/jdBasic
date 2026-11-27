@@ -730,6 +730,30 @@ void VM::register_system_builtins() {
                                              clamp_int(w), clamp_int(h)));
     });
 
+    // IMAGE.ROTATE(src$, dst$, degrees) -> int rc. A JPEG written as a JPEG
+    // is turned by its EXIF orientation alone, so it loses nothing; any
+    // other picture is written turned (Windows).
+    register_native("IMAGE.ROTATE", 3, 3, [=](const std::vector<Value>& args) -> Value {
+        if (args[0].type != ValueType::STRING) return Value::make_i64(-6);
+        if (args[1].type != ValueType::STRING) return Value::make_i64(-1);
+        int64_t deg;
+        if (!int_arg(args[2], deg) || deg % 90 != 0) return Value::make_i64(-2);
+        int quarters = (int)(((deg / 90) % 4 + 4) % 4);
+        std::string src = args[0].as_string()->data, dst = args[1].as_string()->data;
+        std::string ext = dst.size() >= 5 ? dst.substr(dst.size() - 5) : dst;
+        for (auto& c : ext) c = (char)tolower((unsigned char)c);
+        bool jpeg_out = ext.size() >= 4 && (ext.substr(ext.size() - 4) == ".jpg" || ext == ".jpeg");
+        jdb_image::Bytes file, out;
+        jdb_image::Meta meta;
+        if (jpeg_out && jdb_image::read_file(src, file) && jdb_image::read_meta(file, meta) &&
+            meta.format == "jpeg") {
+            int rc = jdb_image::rotate_jpeg(file, quarters, out);
+            if (rc != 0) return Value::make_i64(rc);
+            return Value::make_i64(jdb_image::write_file(dst, out) ? 0 : -1);
+        }
+        return Value::make_i64(jdb_imgrotate(src.c_str(), dst.c_str(), quarters));
+    });
+
     // IMAGE.SIZE(src$) -> [width, height] as displayed, [0, 0] when unreadable
     register_native("IMAGE.SIZE", 1, 1, [](const std::vector<Value>& args) -> Value {
         int w = 0, h = 0;

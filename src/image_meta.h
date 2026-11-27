@@ -45,6 +45,19 @@ bool read_meta(const Bytes& file, Meta& m);
 // JPEG, PNG, GIF or BMP; false when there is none to read.
 bool display_size(const Bytes& file, int& width, int& height);
 
+// Writes the sw x sh top-down 32-bit pixels `from` into `to` (as many) the
+// way EXIF orientation 1 to 8 displays them; dw and dh get the displayed size.
+void orient_pixels(const uint32_t* from, int sw, int sh, int orientation,
+                   uint32_t* to, int& dw, int& dh);
+
+// The orientation that shows a picture of `orientation` turned clockwise by
+// `quarters` quarter turns.
+int turned_orientation(int orientation, int quarters);
+
+// The JPEG turned clockwise by `quarters` quarter turns without touching its
+// pixels: only the EXIF orientation is written.
+int rotate_jpeg(const Bytes& file, int quarters, Bytes& out);
+
 // The EXIF orientation of a JPEG, 1 when it has none.
 int jpeg_orientation(const Bytes& file);
 

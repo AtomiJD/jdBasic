@@ -27,6 +27,20 @@ Range: `v1.3.0..HEAD`.
   description, software and date. `jdb/demos/workflow/photo_publish.jdb`
   shows what a folder of photos gives away and writes them cut to 4:3 or
   3:4, scaled and without personal metadata.
+- **`FORM.PICTURE` as a picture viewer** (#1122): `SCALEMODE` `"fit"` and
+  `"zoom"` beside the old stretch, `ZOOM`, `SCROLLX`/`SCROLLY`, read-only
+  `SCALE`, `IMAGEWIDTH`/`IMAGEHEIGHT` and `CENTERX`/`CENTERY`; in those modes
+  the control takes the mouse and the keys and fires `MOUSEWHEEL` (also over
+  another control with the focus), `DBLCLICK` and mouse events with the
+  picture pixel under the pointer. A phone photo stands upright, an empty
+  path makes an empty control.
+- **`IMAGE.ROTATE`, `FILE.RECYCLE`, `CLIPBOARD.SETIMAGE`/`GETIMAGE`**
+  (#1125, #1126, #1127): a JPEG turns without losing quality (only its EXIF
+  orientation changes), a file goes to the recycle bin, a picture goes onto
+  the clipboard with transparency and comes back off it into a file.
+- **jdPix** (#1120): `jdb/demos/forms/jdpix`, a picture viewer on native
+  forms: steps through a folder, fits, zooms at the pointer and pans, turns
+  a photo, shows what it gives away and saves a copy without it.
 - **`tools/hooks/check_images.ps1`** (#1115): an agent commit that takes an
   image with a GPS position, a photographer or owner name, a camera serial
   or a private term in its metadata is blocked; an untracked image goes into

@@ -4,7 +4,13 @@
 #include <cstring>
 #include "jdb_path.h"
 #include "jdb_calendar.h"
+#include <ctime>
+#if defined(_WIN32) && !defined(JDB_LEAN)
+#include <shellapi.h>
+#pragma comment(lib, "shell32.lib")
+#endif
 #if !defined(_WIN32)
+#include <sys/stat.h>
 #include <utime.h>
 #if !defined(JDB_MCU)
 #include <sys/statvfs.h>
@@ -684,6 +690,84 @@ void VM::register_file_builtins() {
     register_native("FILE.COPY", 2, 3, [](const std::vector<Value>& args) -> Value {
         FileTransfer::run(args, false);
         return Value::make_bool(true);
+    });
+
+    // FILE.RECYCLE(path$) -> boolean: the file or folder goes to the recycle
+    // bin (the trash), from where it can be put back; FALSE when it is not
+    // there or cannot be moved.
+    register_native("FILE.RECYCLE", 1, 1, [](const std::vector<Value>& args) -> Value {
+        if (args[0].type != ValueType::STRING) return Value::make_bool(false);
+        std::string p = args[0].as_string()->data;
+        if (p.empty()) return Value::make_bool(false);
+#if defined(_WIN32)
+        int wn = MultiByteToWideChar(CP_UTF8, 0, p.c_str(), -1, nullptr, 0);
+        std::wstring w(wn > 0 ? wn : 1, L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, p.c_str(), -1, &w[0], wn);
+        // By its UTF-8 name, and never a pattern: SHFileOperation would
+        // read * and ? as wildcards.
+        if (w.find_first_of(L"*?") != std::wstring::npos ||
+            GetFileAttributesW(w.c_str()) == INVALID_FILE_ATTRIBUTES)
+            return Value::make_bool(false);
+        DWORD fn = GetFullPathNameW(w.c_str(), 0, nullptr, nullptr);
+        if (fn == 0) return Value::make_bool(false);
+        std::wstring full(fn + 1, L'\0');       // the list ends in two NULs
+        GetFullPathNameW(w.c_str(), fn, &full[0], nullptr);
+        SHFILEOPSTRUCTW op = {};
+        op.wFunc = FO_DELETE;
+        op.pFrom = full.c_str();
+        op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI;
+        return Value::make_bool(SHFileOperationW(&op) == 0 && !op.fAnyOperationsAborted &&
+                                GetFileAttributesW(w.c_str()) == INVALID_FILE_ATTRIBUTES);
+#elif defined(JDB_MCU)
+        return Value::make_bool(false);
+#else
+        if (!jdb_path::exists(p)) return Value::make_bool(false);
+        const char* home = getenv("HOME");
+        if (!home || !*home) return Value::make_bool(false);
+        std::string abs = p;
+        if (abs[0] != '/') abs = current_dir() + "/" + abs;
+        std::string name = jdb_path::basename(abs);
+#if defined(__APPLE__)
+        std::string bin = std::string(home) + "/.Trash";
+#else
+        const char* xdg = getenv("XDG_DATA_HOME");
+        std::string bin = (xdg && *xdg ? std::string(xdg) : std::string(home) + "/.local/share") + "/Trash";
+        mkdir((bin.substr(0, bin.size() - 6)).c_str(), 0700);
+        mkdir(bin.c_str(), 0700);
+        mkdir((bin + "/files").c_str(), 0700);
+        mkdir((bin + "/info").c_str(), 0700);
+        bin += "/files";
+#endif
+        // A name already in the bin gets a number, as file managers do.
+        std::string target = bin + "/" + name;
+        for (int n = 2; jdb_path::exists(target) && n < 10000; n++)
+            target = bin + "/" + name + "." + std::to_string(n);
+        std::string stored = jdb_path::basename(target);
+#if !defined(__APPLE__)
+        std::string info = bin.substr(0, bin.size() - 6) + "/info/" + stored + ".trashinfo";
+        std::string url;
+        for (unsigned char c : abs) {
+            if (isalnum(c) || strchr("/-_.~", c)) url += (char)c;
+            else { char hex[4]; snprintf(hex, sizeof hex, "%%%02X", c); url += hex; }
+        }
+        time_t now = time(nullptr);
+        struct tm tmv;
+        localtime_r(&now, &tmv);
+        char when[32];
+        strftime(when, sizeof when, "%Y-%m-%dT%H:%M:%S", &tmv);
+        FILE* f = fopen(info.c_str(), "wx");
+        if (!f) return Value::make_bool(false);
+        fprintf(f, "[Trash Info]\nPath=%s\nDeletionDate=%s\n", url.c_str(), when);
+        fclose(f);
+        if (rename(abs.c_str(), target.c_str()) != 0) {
+            remove(info.c_str());
+            return Value::make_bool(false);
+        }
+        return Value::make_bool(true);
+#else
+        return Value::make_bool(rename(abs.c_str(), target.c_str()) == 0);
+#endif
+#endif
     });
 #endif
 

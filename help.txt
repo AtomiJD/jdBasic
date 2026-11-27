@@ -606,6 +606,18 @@ Description: Clears the current workspace, including all source code, variables,
 Syntax: CLEAR_RECUR(task_id)
 Description: Stops and removes a recurring background task started with RECUR.
 
+[CLIPBOARD.GETIMAGE]
+Syntax: CLIPBOARD.GETIMAGE(path$) -> boolean
+Description: Writes the picture on the clipboard (a 24- or 32-bit bitmap) to
+path$ in the format of its extension. FALSE when there is none. Windows only.
+Example: IF CLIPBOARD.GETIMAGE("shot.png") THEN PRINT "saved"
+
+[CLIPBOARD.SETIMAGE]
+Syntax: CLIPBOARD.SETIMAGE(path$) -> boolean
+Description: Puts the picture in path$ on the clipboard as a bitmap with
+transparency and as PNG. FALSE when it cannot be read. Windows only.
+Example: ok = CLIPBOARD.SETIMAGE("photo.jpg")
+
 [CLIPBOARD.GET$]
 Syntax: CLIPBOARD.GET$()
 Description: Returns the text currently in the system clipboard (Unicode text, as UTF-8).
@@ -1154,6 +1166,13 @@ Description: Moves or renames a file or directory; a file also to another drive,
 [FILE.COPY]
 Syntax: FILE.COPY(source$, target$, [overwrite]) -> boolean
 Description: Copies a file, keeping its modification time. A target that is an existing directory receives the copy under the source's name. An existing target file is replaced only with overwrite TRUE; otherwise, and on any failure, raises an error. Returns TRUE.
+
+[FILE.RECYCLE]
+Syntax: FILE.RECYCLE(path$) -> boolean
+Description: Moves a file or folder to the recycle bin without asking (the
+desktop trash on Linux, ~/.Trash on macOS). FALSE when it does not exist or
+cannot be moved there.
+Example: IF FILE.RECYCLE("old.jpg") THEN PRINT "in the recycle bin"
 
 [FILE.STAT]
 Syntax: FILE.STAT(path$) -> map
@@ -2916,6 +2935,15 @@ orientation; "gps" removes only the position. A rewritten EXIF loses its
 thumbnail and MakerNote. 0 ok, -1 dst$ not writable, -3 bad what$, -6 src$
 missing or not JPEG/PNG. Every platform.
 Example: rc = IMAGE.STRIP("photo.jpg", "public.jpg")
+
+[IMAGE.ROTATE]
+Syntax: IMAGE.ROTATE(src$, dst$, degrees) -> INTEGER
+Description: Writes src$ turned clockwise by a multiple of 90 degrees (-90
+anticlockwise). A JPEG written as .jpg/.jpeg changes only its EXIF
+orientation: no quality lost, every platform. Anything else is written
+turned and without metadata (Windows only, -100 elsewhere). Errors as
+IMAGE.CONVERT, and -2 when degrees is not a multiple of 90.
+Example: rc = IMAGE.ROTATE("photo.jpg", "photo.jpg", 90)
 
 [IMAGE.SETMETA]
 Syntax: IMAGE.SETMETA(src$, dst$, fields) -> INTEGER
@@ -4720,7 +4748,17 @@ with CURSOR "SIZEWE" makes a splitter bar.
 
 [FORM.PICTURE]
 Syntax: FORM.PICTURE(frm, name$, path$, x, y, w, h) -> handle
-Description: Image control (PNG/JPG/BMP/GIF), scaled to the control. Swap via FORM.SET PICTURE.
+Description: Image control (PNG/JPG/BMP/GIF/TIFF via WIC); a JPEG's EXIF
+orientation is applied. Swap via FORM.SET PICTURE. SCALEMODE "stretch"
+(default, fills the control), "fit" (whole picture, proportions kept, not
+enlarged) or "zoom" (ZOOM factor, 1 = one picture pixel per screen pixel,
+0.01 to 32; setting ZOOM selects it). SCROLLX/SCROLLY: picture pixel at the
+top-left in zoom, kept within the picture. Read only: SCALE (factor shown
+now), IMAGEWIDTH, IMAGEHEIGHT. In fit and zoom the control takes mouse and
+keys (arrows too): MOUSEDOWN/UP/MOVE, DBLCLICK, KEYDOWN/UP and MOUSEWHEEL
+(delta 1 per notch away from the user); mouse events carry imagex/imagey,
+the picture pixel under the pointer. BACKCOLOR fills around the picture.
+Example: FORM.SET(pic, "SCALEMODE", "fit")
 
 [FORM.PROGRESS]
 Syntax: FORM.PROGRESS(frm, name$, x, y, w, h) -> handle

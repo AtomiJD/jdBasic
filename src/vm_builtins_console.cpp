@@ -365,6 +365,19 @@ void VM::register_console_builtins() {
 #endif
 
 #ifndef JDB_LEAN
+    // CLIPBOARD.SETIMAGE(path$) / CLIPBOARD.GETIMAGE(path$) -> boolean: a
+    // picture onto the clipboard from a file, or from the clipboard into one.
+    register_native("CLIPBOARD.SETIMAGE", 1, 1, [](const std::vector<Value>& args) -> Value {
+        if (args[0].type != ValueType::STRING) return Value::make_bool(false);
+        return Value::make_bool(jdb_clip_setimage(args[0].as_string()->data.c_str()) != 0);
+    });
+    register_native("CLIPBOARD.GETIMAGE", 1, 1, [](const std::vector<Value>& args) -> Value {
+        if (args[0].type != ValueType::STRING) return Value::make_bool(false);
+        return Value::make_bool(jdb_clip_getimage(args[0].as_string()->data.c_str()) != 0);
+    });
+#endif
+
+#ifndef JDB_LEAN
     register_native("CLIPBOARD.GET$", 0, -1, [](const std::vector<Value>& args) -> Value {
         (void)args;
 #if defined(_WIN32)

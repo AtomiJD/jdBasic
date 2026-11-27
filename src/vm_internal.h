@@ -85,6 +85,10 @@ extern "C" int jdb_imgconvert(const char* src, const char* dst);
 // IMAGE.CROP / IMAGE.RESIZE backing, the same way.
 extern "C" int jdb_imgcrop(const char* src, const char* dst, int x, int y, int w, int h);
 extern "C" int jdb_imgresize(const char* src, const char* dst, int w, int h);
+extern "C" int jdb_imgrotate(const char* src, const char* dst, int quarters);
+// CLIPBOARD.SETIMAGE / GETIMAGE backing (src/screencap.cpp). 1 = done.
+extern "C" int jdb_clip_setimage(const char* src);
+extern "C" int jdb_clip_getimage(const char* dst);
 
 #ifdef PICOCALC
 extern "C" int  picocalc_gfx_buffered(void);

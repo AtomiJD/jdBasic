@@ -1,0 +1,811 @@
+' FORM.PICTURE as a viewer: SCALEMODE stretch / fit / zoom, ZOOM, SCROLLX,
+' SCROLLY, SCALE, IMAGEWIDTH, IMAGEHEIGHT and the mouse, key and wheel events
+' with imagex / imagey. The pictures are built from bytes at run time; the
+' events are window messages sent to the control, the real pointer stays put.
+' Control sizes are logical units, SCALE / ZOOM / scroll are picture and
+' device pixels, so every expectation is derived from the control's device
+' rectangle. Needs a FORMS build on Windows.
+
+OPTION "EXPLICIT"
+
+DIM N_PASS AS INTEGER = 0
+DIM N_FAIL AS INTEGER = 0
+
+SUB Check(cond AS BOOLEAN, label AS STRING)
+    IF cond THEN
+        N_PASS = N_PASS + 1
+    ELSE
+        N_FAIL = N_FAIL + 1
+        PRINT "FAIL: "; label
+    ENDIF
+ENDSUB
+
+FUNC Near(a AS DOUBLE, b AS DOUBLE, tol AS DOUBLE) AS BOOLEAN
+    RETURN ABS(a - b) <= tol
+ENDFUNC
+
+DECLARE FUNC SendMessageW LIB "user32" ALIAS "SendMessageW" (hwnd AS INTEGER, msg AS INTEGER, wp AS INTEGER, lp AS INTEGER) AS INTEGER
+DECLARE FUNC GetWindowRect LIB "user32" ALIAS "GetWindowRect" (hwnd AS INTEGER, r AS ARRAY) AS ARRAY
+
+DIM WM_KEYDOWN AS INTEGER = 256
+DIM WM_KEYUP AS INTEGER = 257
+DIM WM_MOUSEMOVE AS INTEGER = 512
+DIM WM_LBUTTONDOWN AS INTEGER = 513
+DIM WM_LBUTTONUP AS INTEGER = 514
+DIM WM_LBUTTONDBLCLK AS INTEGER = 515
+DIM WM_RBUTTONDOWN AS INTEGER = 516
+DIM WM_RBUTTONUP AS INTEGER = 517
+DIM WM_MOUSEWHEEL AS INTEGER = 522
+
+DIM BIG_PNG AS STRING = "tmp/fpv_big.png"
+DIM SMALL_PNG AS STRING = "tmp/fpv_small.png"
+DIM SRC_PNG AS STRING = "tmp/fpv_src.png"
+DIM PLAIN_JPG AS STRING = "tmp/fpv_plain.jpg"
+DIM TURNED_JPG AS STRING = "tmp/fpv_turned.jpg"
+DIM MISSING_PNG AS STRING = "tmp/fpv_does_not_exist.png"
+DIM GRAY_SMALL_PNG AS STRING = "tmp/fpv_gray_small.png"
+DIM GRAY_HUGE_PNG AS STRING = "tmp/fpv_gray_huge.png"
+
+DIM frm AS DOUBLE = 0
+DIM pic AS DOUBLE = 0
+DIM txt AS DOUBLE = 0
+
+' last event of each kind and how many arrived
+DIM ev_down AS MAP = {"none": TRUE}
+DIM ev_up AS MAP = {"none": TRUE}
+DIM ev_move AS MAP = {"none": TRUE}
+DIM ev_dbl AS MAP = {"none": TRUE}
+DIM ev_keydown AS MAP = {"none": TRUE}
+DIM ev_keyup AS MAP = {"none": TRUE}
+DIM ev_wheel AS MAP = {"none": TRUE}
+DIM n_down AS INTEGER = 0
+DIM n_up AS INTEGER = 0
+DIM n_move AS INTEGER = 0
+DIM n_dbl AS INTEGER = 0
+DIM n_keydown AS INTEGER = 0
+DIM n_keyup AS INTEGER = 0
+DIM n_wheel AS INTEGER = 0
+DIM wheel_zooms AS BOOLEAN = FALSE
+
+SUB PICVIEW_MOUSEDOWN(e)
+    n_down = n_down + 1
+    ev_down = e[0]
+ENDSUB
+
+SUB PICVIEW_MOUSEUP(e)
+    n_up = n_up + 1
+    ev_up = e[0]
+ENDSUB
+
+SUB PICVIEW_MOUSEMOVE(e)
+    n_move = n_move + 1
+    ev_move = e[0]
+ENDSUB
+
+SUB PICVIEW_DBLCLICK(e)
+    n_dbl = n_dbl + 1
+    ev_dbl = e[0]
+ENDSUB
+
+SUB PICVIEW_KEYDOWN(e)
+    n_keydown = n_keydown + 1
+    ev_keydown = e[0]
+ENDSUB
+
+SUB PICVIEW_KEYUP(e)
+    n_keyup = n_keyup + 1
+    ev_keyup = e[0]
+ENDSUB
+
+' with wheel_zooms set, the handler of the specification's example
+SUB PICVIEW_MOUSEWHEEL(e)
+    n_wheel = n_wheel + 1
+    ev_wheel = e[0]
+    IF wheel_zooms THEN
+        DIM f AS DOUBLE = IIF(e[0]{"delta"} > 0, 1.25, 0.8)
+        DIM ix AS DOUBLE = e[0]{"imagex"}
+        DIM iy AS DOUBLE = e[0]{"imagey"}
+        DIM sx AS DOUBLE = FORM.GET(pic, "SCROLLX")
+        DIM sy AS DOUBLE = FORM.GET(pic, "SCROLLY")
+        FORM.SET(pic, "ZOOM", FORM.GET(pic, "SCALE") * f)
+        FORM.SET(pic, "SCROLLX", ix - (ix - sx) / f)
+        FORM.SET(pic, "SCROLLY", iy - (iy - sy) / f)
+    ENDIF
+ENDSUB
+
+' a second picture with a wheel handler that only counts
+DIM n_wheel_two AS INTEGER = 0
+DIM wheel_two_delta AS DOUBLE = 0
+
+SUB PICTWO_MOUSEWHEEL(e)
+    n_wheel_two = n_wheel_two + 1
+    wheel_two_delta = e[0]{"delta"}
+ENDSUB
+
+' a field of an event map as a number, -99999 when it is absent
+FUNC Num(m AS MAP, k AS STRING) AS DOUBLE
+    IF TYPEOF(m{k}) = "NONE" THEN RETURN -99999
+    DIM v AS DOUBLE = m{k}
+    RETURN v
+ENDFUNC
+
+FUNC Has(m AS MAP, k AS STRING) AS BOOLEAN
+    RETURN TYPEOF(m{k}) <> "NONE"
+ENDFUNC
+
+FUNC IsFalse(m AS MAP, k AS STRING) AS BOOLEAN
+    IF TYPEOF(m{k}) = "NONE" THEN RETURN FALSE
+    RETURN NOT m{k}
+ENDFUNC
+
+' ---- picture files from bytes --------------------------------------------
+
+FUNC PngChunk(kind AS STRING, body AS STRING) AS STRING
+    RETURN PACK$(">i", LEN(body)) + kind + body + PACK$(">i", CODEC.CRC32(kind + body))
+ENDFUNC
+
+FUNC Rgb3(r AS INTEGER, g AS INTEGER, b AS INTEGER) AS STRING
+    RETURN CHR$(r) + CHR$(g) + CHR$(b)
+ENDFUNC
+
+' an RGB PNG of w x h in four quadrants
+SUB WritePng(path AS STRING, w AS INTEGER, h AS INTEGER)
+    DIM half_w AS INTEGER = INT(w / 2)
+    DIM half_h AS INTEGER = INT(h / 2)
+    DIM top_row AS STRING = CHR$(0) + REPEAT$(Rgb3(220, 40, 40), half_w) + REPEAT$(Rgb3(40, 200, 40), w - half_w)
+    DIM bottom_row AS STRING = CHR$(0) + REPEAT$(Rgb3(40, 40, 220), half_w) + REPEAT$(Rgb3(230, 220, 30), w - half_w)
+    DIM raw AS STRING = REPEAT$(top_row, half_h) + REPEAT$(bottom_row, h - half_h)
+    DIM sig AS STRING = CHR$(137) + "PNG" + CHR$(13) + CHR$(10) + CHR$(26) + CHR$(10)
+    DIM ihdr AS STRING = PACK$(">iibbbbb", w, h, 8, 2, 0, 0, 0)
+    DIM png AS STRING = sig + PngChunk("IHDR", ihdr) + PngChunk("IDAT", CODEC.DEFLATE$(raw, 6, "zlib")) + PngChunk("IEND", "")
+    BINWRITER path, png
+ENDSUB
+
+' an APP1 Exif segment carrying only Orientation (tag 274), right after SOI
+SUB WriteTurnedJpeg(src AS STRING, dst AS STRING, orientation AS INTEGER)
+    DIM jpg AS STRING = BINREADER$(src)
+    DIM tiff AS STRING = "MM" + PACK$(">sisssisxxi", 42, 8, 1, 274, 3, 1, orientation, 0)
+    DIM payload AS STRING = "Exif" + CHR$(0) + CHR$(0) + tiff
+    DIM seg AS STRING = CHR$(255) + CHR$(225) + PACK$(">s", LEN(payload) + 2) + payload
+    BINWRITER dst, LEFT$(jpg, 2) + seg + MID$(jpg, 2)
+ENDSUB
+
+' a 1-bit greyscale PNG of w x h, all black
+SUB WriteGrayPng(path AS STRING, w AS INTEGER, h AS INTEGER)
+    DIM row AS STRING = CHR$(0) + REPEAT$(CHR$(0), INT((w + 7) / 8))
+    DIM sig AS STRING = CHR$(137) + "PNG" + CHR$(13) + CHR$(10) + CHR$(26) + CHR$(10)
+    DIM ihdr AS STRING = PACK$(">iibbbbb", w, h, 1, 0, 0, 0, 0)
+    BINWRITER path, sig + PngChunk("IHDR", ihdr) + PngChunk("IDAT", CODEC.DEFLATE$(REPEAT$(row, h), 6, "zlib")) + PngChunk("IEND", "")
+ENDSUB
+
+' ---- geometry and messages ------------------------------------------------
+
+' [left, top, right, bottom] of a window in screen device pixels
+FUNC ScreenRect(h AS DOUBLE) AS ARRAY
+    DIM hw AS INTEGER = FORM.GET(h, "HWND")
+    DIM buf AS ARRAY = [0, 0]
+    DIM answer AS ARRAY = GetWindowRect(hw, buf)
+    DIM cells AS ARRAY = answer[1]
+    RETURN UNPACK("<nnnn", PACK$("<dd", cells[0], cells[1]))
+ENDFUNC
+
+FUNC DevW(h AS DOUBLE) AS DOUBLE
+    DIM r AS ARRAY = ScreenRect(h)
+    RETURN r[2] - r[0]
+ENDFUNC
+
+FUNC DevH(h AS DOUBLE) AS DOUBLE
+    DIM r AS ARRAY = ScreenRect(h)
+    RETURN r[3] - r[1]
+ENDFUNC
+
+FUNC PackXY(px AS INTEGER, py AS INTEGER) AS INTEGER
+    RETURN ((py BAND 65535) SHL 16) BOR (px BAND 65535)
+ENDFUNC
+
+SUB Pump()
+    DIM i AS INTEGER
+    DIM alive AS BOOLEAN
+    FOR i = 1 TO 8
+        alive = FORM.DOEVENTS()
+    NEXT i
+ENDSUB
+
+SUB SendTo(h AS DOUBLE, msg AS INTEGER, wp AS INTEGER, lp AS INTEGER)
+    DIM hw AS INTEGER = FORM.GET(h, "HWND")
+    DIM r AS INTEGER = SendMessageW(hw, msg, wp, lp)
+    Pump()
+ENDSUB
+
+SUB ClearEvents()
+    ev_down = {"none": TRUE}
+    ev_up = {"none": TRUE}
+    ev_move = {"none": TRUE}
+    ev_dbl = {"none": TRUE}
+    ev_keydown = {"none": TRUE}
+    ev_keyup = {"none": TRUE}
+    ev_wheel = {"none": TRUE}
+ENDSUB
+
+' a wheel of `amount` (120 per notch) at the client point px, py of the picture, sent to `target`
+SUB Wheel(target AS DOUBLE, px AS INTEGER, py AS INTEGER, amount AS INTEGER)
+    WheelOver(target, pic, px, py, amount)
+ENDSUB
+
+' the same with the pointer over the control `over`
+SUB WheelOver(target AS DOUBLE, over AS DOUBLE, px AS INTEGER, py AS INTEGER, amount AS INTEGER)
+    DIM r AS ARRAY = ScreenRect(over)
+    DIM word AS INTEGER = amount
+    IF word < 0 THEN word = 65536 + word
+    SendTo(target, WM_MOUSEWHEEL, word SHL 16, PackXY(r[0] + px, r[1] + py))
+ENDSUB
+
+' ---- value forms ---------------------------------------------------------
+
+FUNC ZoomThree() AS DOUBLE
+    RETURN 3
+ENDFUNC
+
+FUNC ModeFit() AS STRING
+    RETURN "fit"
+ENDFUNC
+
+FUNC BigPath() AS STRING
+    RETURN BIG_PNG
+ENDFUNC
+
+SUB SetZoomInside(h AS DOUBLE, z AS DOUBLE)
+    FORM.SET(h, "ZOOM", z)
+ENDSUB
+
+FUNC ModeInside(h AS DOUBLE) AS STRING
+    DIM m AS STRING = FORM.GET(h, "SCALEMODE")
+    RETURN m
+ENDFUNC
+
+FUNC ImageWidthInside(h AS DOUBLE) AS DOUBLE
+    DIM v AS DOUBLE = FORM.GET(h, "IMAGEWIDTH")
+    RETURN v
+ENDFUNC
+
+' the rectangle with the HWND passed straight from FORM.GET
+FUNC InlineRectWidth(h AS DOUBLE) AS DOUBLE
+    DIM answer AS ARRAY = GetWindowRect(FORM.GET(h, "HWND"), [0, 0])
+    DIM cells AS ARRAY = answer[1]
+    DIM r AS ARRAY = UNPACK("<nnnn", PACK$("<dd", cells[0], cells[1]))
+    RETURN r[2] - r[0]
+ENDFUNC
+
+FUNC Mode(h AS DOUBLE) AS STRING
+    DIM m AS STRING = FORM.GET(h, "SCALEMODE")
+    RETURN m
+ENDFUNC
+
+FUNC G(h AS DOUBLE, prop AS STRING) AS DOUBLE
+    DIM v AS DOUBLE = FORM.GET(h, prop)
+    RETURN v
+ENDFUNC
+
+' ==========================================================================
+
+DIM raised AS BOOLEAN
+DIM fixtures_ok AS BOOLEAN = TRUE
+DIM jpeg_ok AS BOOLEAN = FALSE
+
+TRY
+    MKDIR "tmp"
+    WritePng(BIG_PNG, 400, 300)
+    WritePng(SMALL_PNG, 40, 30)
+    WritePng(SRC_PNG, 400, 300)
+    DIM big_size AS ARRAY = IMAGE.SIZE(BIG_PNG)
+    DIM small_size AS ARRAY = IMAGE.SIZE(SMALL_PNG)
+    IF big_size[0] <> 400 ORELSE big_size[1] <> 300 ORELSE small_size[0] <> 40 ORELSE small_size[1] <> 30 THEN
+        fixtures_ok = FALSE
+        PRINT "fixture: the PNG files did not come out as 400x300 and 40x30"
+    ENDIF
+    DIM rc AS INTEGER = IMAGE.CONVERT(SRC_PNG, PLAIN_JPG)
+    IF rc = 0 THEN
+        WriteTurnedJpeg(PLAIN_JPG, TURNED_JPG, 6)
+        DIM turned_size AS ARRAY = IMAGE.SIZE(TURNED_JPG)
+        jpeg_ok = turned_size[0] = 300 ANDALSO turned_size[1] = 400
+    ENDIF
+    IF NOT jpeg_ok THEN PRINT "fixture: no JPEG with EXIF orientation 6, its checks are skipped"
+
+    frm = FORM.CREATE("Picture view test", 760, 560, "PVT")
+    FORM.SET(frm, "X", 0)
+    FORM.SET(frm, "Y", 0)
+    FORM.SET(frm, "TOPMOST", TRUE)
+    pic = FORM.PICTURE(frm, "picView", BIG_PNG, 10, 10, 300, 150)
+    txt = FORM.TEXTBOX(frm, "txtOther", "", 10, 500, 200, 24)
+    FORM.SHOW(frm)
+    Pump()
+
+    ' ---- defaults: stretch -------------------------------------------------
+    Check(FORM.GET(pic, "KIND") = "PICTURE", "FORM.PICTURE makes a PICTURE control")
+    Check(Mode(pic) = "stretch", "a new picture has SCALEMODE stretch")
+    Check(FORM.GET(pic, "IMAGEWIDTH") = 400, "IMAGEWIDTH is the picture's width (400)")
+    Check(FORM.GET(pic, "IMAGEHEIGHT") = 300, "IMAGEHEIGHT is the picture's height (300)")
+
+    DIM prop_name AS STRING = "IMAGEWIDTH"
+    Check(G(pic, prop_name) = 400, "IMAGEWIDTH read with the property name in a variable")
+    Check(G(pic, "IMAGE" + "HEIGHT") = 300, "IMAGEHEIGHT read with the property name from an expression")
+    Check(ImageWidthInside(pic) = 400, "IMAGEWIDTH read inside a FUNC")
+
+    DIM dw AS DOUBLE = DevW(pic)
+    DIM dh AS DOUBLE = DevH(pic)
+    DIM k AS DOUBLE = dw / FORM.GET(pic, "WIDTH")
+    Check(InlineRectWidth(pic) = dw, "fixture: GetWindowRect with FORM.GET(h, HWND) inline answers the same rectangle as through a variable")
+    Check(FORM.GET(pic, "WIDTH") = 300 ANDALSO FORM.GET(pic, "HEIGHT") = 150, "the control keeps its logical size 300 x 150")
+    Check(Near(dh / FORM.GET(pic, "HEIGHT"), k, 0.02), "the control's device size follows one factor in both directions")
+    Check(Near(FORM.GET(pic, "SCALE"), dw / 400, 0.01), "SCALE in stretch is the horizontal factor, device width / picture width")
+
+    ' ---- SCALEMODE round-trip ----------------------------------------------
+    FORM.SET(pic, "SCALEMODE", "fit")
+    Check(Mode(pic) = "fit", "SCALEMODE fit reads back fit")
+    FORM.SET(pic, "SCALEMODE", "zoom")
+    Check(Mode(pic) = "zoom", "SCALEMODE zoom reads back zoom")
+    FORM.SET(pic, "SCALEMODE", "stretch")
+    Check(Mode(pic) = "stretch", "SCALEMODE stretch reads back stretch")
+
+    DIM mode_var AS STRING = "fit"
+    FORM.SET(pic, "SCALEMODE", mode_var)
+    Check(Mode(pic) = "fit", "SCALEMODE from a variable")
+    FORM.SET(pic, "SCALEMODE", "zo" + "om")
+    Check(Mode(pic) = "zoom", "SCALEMODE from an expression")
+    FORM.SET(pic, "SCALEMODE", ModeFit())
+    Check(Mode(pic) = "fit", "SCALEMODE from a FUNC answer")
+    DIM modes AS ARRAY = ["stretch", "fit", "zoom"]
+    FORM.SET(pic, "SCALEMODE", modes[2])
+    Check(Mode(pic) = "zoom", "SCALEMODE from an array cell")
+    DIM settings AS MAP = {"mode": "stretch", "zoom": 1.5}
+    FORM.SET(pic, "SCALEMODE", settings{"mode"})
+    Check(Mode(pic) = "stretch", "SCALEMODE from a map field")
+    FORM.SET(pic, "SCALEMODE", "fit")
+    Check(ModeInside(pic) = "fit", "SCALEMODE read inside a FUNC")
+
+    FORM.SET(pic, "SCALEMODE", "stretch")
+    raised = FALSE
+    TRY
+        FORM.SET(pic, "SCALEMODE", "FIT")
+    CATCH
+        raised = TRUE
+    ENDTRY
+    Check(NOT raised, "SCALEMODE FIT in capitals is accepted")
+    Check(LCASE$(Mode(pic)) = "fit", "SCALEMODE FIT in capitals selects fit")
+    FORM.SET(pic, "SCALEMODE", "stretch")
+    raised = FALSE
+    TRY
+        FORM.SET(pic, "SCALEMODE", "Zoom")
+    CATCH
+        raised = TRUE
+    ENDTRY
+    Check(NOT raised ANDALSO LCASE$(Mode(pic)) = "zoom", "SCALEMODE Zoom in mixed case selects zoom")
+
+    raised = FALSE
+    TRY
+        FORM.SET(pic, "SCALEMODE", "tile")
+    CATCH
+        raised = TRUE
+    ENDTRY
+    Check(raised, "an unknown SCALEMODE (tile) raises an error")
+    raised = FALSE
+    TRY
+        FORM.SET(pic, "SCALEMODE", "")
+    CATCH
+        raised = TRUE
+    ENDTRY
+    Check(raised, "an empty SCALEMODE raises an error")
+
+    ' ---- ZOOM: switches to zoom, value forms, range ------------------------
+    FORM.SET(pic, "SCALEMODE", "fit")
+    FORM.SET(pic, "ZOOM", 2)
+    Check(Mode(pic) = "zoom", "setting ZOOM switches SCALEMODE from fit to zoom")
+    Check(Near(FORM.GET(pic, "SCALE"), 2, 0.0001), "SCALE in zoom is the ZOOM factor (literal 2)")
+    Check(Near(FORM.GET(pic, "ZOOM"), 2, 0.0001), "ZOOM reads back 2")
+    FORM.SET(pic, "SCALEMODE", "stretch")
+    FORM.SET(pic, "ZOOM", 1)
+    Check(Mode(pic) = "zoom", "setting ZOOM switches SCALEMODE from stretch to zoom")
+    Check(Near(FORM.GET(pic, "SCALE"), 1, 0.0001), "ZOOM 1 shows one picture pixel per device pixel (SCALE 1)")
+
+    DIM zoom_var AS DOUBLE = 2.5
+    FORM.SET(pic, "ZOOM", zoom_var)
+    Check(Near(FORM.GET(pic, "SCALE"), 2.5, 0.0001), "ZOOM from a variable")
+    FORM.SET(pic, "ZOOM", zoom_var * 2 - 1)
+    Check(Near(FORM.GET(pic, "SCALE"), 4, 0.0001), "ZOOM from an expression")
+    FORM.SET(pic, "ZOOM", ZoomThree())
+    Check(Near(FORM.GET(pic, "SCALE"), 3, 0.0001), "ZOOM from a FUNC answer")
+    DIM zooms AS ARRAY = [0.5, 0.75, 1.25]
+    FORM.SET(pic, "ZOOM", zooms[1])
+    Check(Near(FORM.GET(pic, "SCALE"), 0.75, 0.0001), "ZOOM from an array cell")
+    FORM.SET(pic, "ZOOM", settings{"zoom"})
+    Check(Near(FORM.GET(pic, "SCALE"), 1.5, 0.0001), "ZOOM from a map field")
+    FORM.SET(pic, "SCALEMODE", "fit")
+    SetZoomInside(pic, 1.75)
+    Check(Near(FORM.GET(pic, "SCALE"), 1.75, 0.0001) ANDALSO Mode(pic) = "zoom", "ZOOM set inside a FUNC switches to zoom")
+
+    FORM.SET(pic, "ZOOM", 0.01)
+    Check(Near(FORM.GET(pic, "SCALE"), 0.01, 0.00001), "ZOOM 0.01, the lower end, is accepted")
+    FORM.SET(pic, "ZOOM", 32)
+    Check(Near(FORM.GET(pic, "SCALE"), 32, 0.0001), "ZOOM 32, the upper end, is accepted")
+    raised = FALSE
+    TRY
+        FORM.SET(pic, "ZOOM", 0.009)
+    CATCH
+        raised = TRUE
+    ENDTRY
+    Check(raised, "ZOOM below 0.01 (0.009) raises an error")
+    raised = FALSE
+    TRY
+        FORM.SET(pic, "ZOOM", 0)
+    CATCH
+        raised = TRUE
+    ENDTRY
+    Check(raised, "ZOOM 0 raises an error")
+    raised = FALSE
+    TRY
+        FORM.SET(pic, "ZOOM", -1)
+    CATCH
+        raised = TRUE
+    ENDTRY
+    Check(raised, "a negative ZOOM raises an error")
+    raised = FALSE
+    TRY
+        FORM.SET(pic, "ZOOM", 32.5)
+    CATCH
+        raised = TRUE
+    ENDTRY
+    Check(raised, "ZOOM above 32 (32.5) raises an error")
+    DIM too_far AS DOUBLE = 16 * 3
+    raised = FALSE
+    TRY
+        FORM.SET(pic, "ZOOM", too_far)
+    CATCH
+        raised = TRUE
+    ENDTRY
+    Check(raised, "ZOOM above 32 from a variable (48) raises an error")
+
+    ' ---- fit: SCALE --------------------------------------------------------
+    FORM.SET(pic, "SCALEMODE", "fit")
+    dw = DevW(pic)
+    dh = DevH(pic)
+    Check(Near(FORM.GET(pic, "SCALE"), MIN([dw / 400, dh / 300]), 0.01), "fit, wide control: SCALE is the height-limited factor min(devW/400, devH/300)")
+    Check(FORM.GET(pic, "IMAGEWIDTH") = 400 ANDALSO FORM.GET(pic, "IMAGEHEIGHT") = 300, "IMAGEWIDTH / IMAGEHEIGHT stay 400 x 300 in fit")
+
+    FORM.SET(pic, "WIDTH", 150)
+    FORM.SET(pic, "HEIGHT", 300)
+    Pump()
+    DIM tw AS DOUBLE = DevW(pic)
+    DIM th AS DOUBLE = DevH(pic)
+    Check(Near(FORM.GET(pic, "SCALE"), MIN([tw / 400, th / 300]), 0.01), "fit, tall control: SCALE is the width-limited factor")
+    Check(Near(FORM.GET(pic, "SCALE"), tw / 400, 0.01), "fit, tall control: the width decides")
+    FORM.SET(pic, "WIDTH", 300)
+    FORM.SET(pic, "HEIGHT", 150)
+    Pump()
+
+    FORM.SET(pic, "PICTURE", SMALL_PNG)
+    Check(Mode(pic) = "fit", "swapping the picture with FORM.SET PICTURE keeps SCALEMODE fit")
+    Check(FORM.GET(pic, "IMAGEWIDTH") = 40 ANDALSO FORM.GET(pic, "IMAGEHEIGHT") = 30, "after the swap IMAGEWIDTH / IMAGEHEIGHT are the new picture's 40 x 30")
+    Check(Near(FORM.GET(pic, "SCALE"), 1, 0.0001), "fit: a picture smaller than the control is not enlarged (SCALE 1)")
+    FORM.SET(pic, "PICTURE", BIG_PNG)
+    Check(Near(FORM.GET(pic, "SCALE"), MIN([dw / 400, dh / 300]), 0.01), "fit: swapping back to the larger picture fits it again")
+
+    ' ---- zoom: SCROLLX / SCROLLY clamping ---------------------------------
+    DIM zc AS DOUBLE = 2 * MAX([dw / 400, dh / 300])
+    FORM.SET(pic, "ZOOM", zc)
+    DIM max_x AS DOUBLE = 400 - dw / zc
+    DIM max_y AS DOUBLE = 300 - dh / zc
+    FORM.SET(pic, "SCROLLX", 30)
+    FORM.SET(pic, "SCROLLY", 30)
+    FORM.SET(pic, "SCROLLX", -50)
+    Check(Near(FORM.GET(pic, "SCROLLX"), 0, 0.0001), "SCROLLX below 0 is kept at 0")
+    FORM.SET(pic, "SCROLLX", 99999)
+    Check(Near(FORM.GET(pic, "SCROLLX"), max_x, 1), "SCROLLX past the end is kept at IMAGEWIDTH - device width / ZOOM")
+    FORM.SET(pic, "SCROLLX", 20)
+    Check(Near(FORM.GET(pic, "SCROLLX"), 20, 0.5), "SCROLLX inside the range reads back")
+    FORM.SET(pic, "SCROLLY", -50)
+    Check(Near(FORM.GET(pic, "SCROLLY"), 0, 0.0001), "SCROLLY below 0 is kept at 0")
+    FORM.SET(pic, "SCROLLY", 99999)
+    Check(Near(FORM.GET(pic, "SCROLLY"), max_y, 1), "SCROLLY past the end is kept at IMAGEHEIGHT - device height / ZOOM")
+    DIM scroll_var AS DOUBLE = 15
+    FORM.SET(pic, "SCROLLY", scroll_var + 5)
+    Check(Near(FORM.GET(pic, "SCROLLY"), 20, 0.5), "SCROLLY from an expression reads back")
+    DIM scrolls AS ARRAY = [5, 12]
+    FORM.SET(pic, "SCROLLX", scrolls[1])
+    Check(Near(FORM.GET(pic, "SCROLLX"), 12, 0.5), "SCROLLX from an array cell reads back")
+
+    ' narrower than the control, taller than it: SCROLLX reads 0, SCROLLY clamps
+    DIM z_mid AS DOUBLE = (dw / 400 + dh / 300) / 2
+    FORM.SET(pic, "ZOOM", z_mid)
+    FORM.SET(pic, "SCROLLX", 30)
+    FORM.SET(pic, "SCROLLY", 99999)
+    Check(400 * z_mid < dw ANDALSO 300 * z_mid > dh, "geometry: at this ZOOM the picture is narrower and taller than the control")
+    Check(Near(FORM.GET(pic, "SCROLLX"), 0, 0.0001), "SCROLLX reads 0 where the picture is narrower than the control")
+    Check(Near(FORM.GET(pic, "SCROLLY"), 300 - dh / z_mid, 1), "SCROLLY still clamps where the picture is taller")
+
+    ' wider than the control, lower than it: SCROLLY reads 0, SCROLLX clamps
+    FORM.SET(pic, "WIDTH", 150)
+    FORM.SET(pic, "HEIGHT", 300)
+    Pump()
+    tw = DevW(pic)
+    th = DevH(pic)
+    DIM z_tall AS DOUBLE = (tw / 400 + th / 300) / 2
+    FORM.SET(pic, "ZOOM", z_tall)
+    FORM.SET(pic, "SCROLLY", 30)
+    FORM.SET(pic, "SCROLLX", 99999)
+    Check(400 * z_tall > tw ANDALSO 300 * z_tall < th, "geometry: at this ZOOM the picture is wider and lower than the control")
+    Check(Near(FORM.GET(pic, "SCROLLY"), 0, 0.0001), "SCROLLY reads 0 where the picture is lower than the control")
+    Check(Near(FORM.GET(pic, "SCROLLX"), 400 - tw / z_tall, 1), "SCROLLX still clamps where the picture is wider")
+    FORM.SET(pic, "WIDTH", 300)
+    FORM.SET(pic, "HEIGHT", 150)
+    Pump()
+
+    FORM.SET(pic, "ZOOM", 0.25)
+    FORM.SET(pic, "SCROLLX", 40)
+    FORM.SET(pic, "SCROLLY", 40)
+    Check(Near(FORM.GET(pic, "SCROLLX"), 0, 0.0001) ANDALSO Near(FORM.GET(pic, "SCROLLY"), 0, 0.0001), "SCROLLX and SCROLLY read 0 when the picture is smaller on both sides")
+
+    FORM.SET(pic, "ZOOM", 2)
+    FORM.SET(pic, "PICTURE", SMALL_PNG)
+    Check(Mode(pic) = "zoom", "swapping the picture with FORM.SET PICTURE keeps SCALEMODE zoom")
+    Check(FORM.GET(pic, "IMAGEWIDTH") = 40, "after the swap in zoom IMAGEWIDTH is 40")
+    FORM.SET(pic, "PICTURE", "tmp/" + "fpv_big.png")
+    Check(Mode(pic) = "zoom" ANDALSO FORM.GET(pic, "IMAGEWIDTH") = 400, "a swap with a path from an expression")
+    Check(FORM.GET(pic, "SCROLLX") >= 0 ANDALSO FORM.GET(pic, "SCROLLX") <= 400 - dw / FORM.GET(pic, "SCALE") + 1, "after a swap SCROLLX is inside its range")
+
+    ' ---- the path in other forms -------------------------------------------
+    DIM paths AS ARRAY = [SMALL_PNG, BIG_PNG]
+    DIM files AS MAP = {"big": BIG_PNG}
+    DIM p_lit AS DOUBLE = FORM.PICTURE(frm, "picLit", "tmp/fpv_big.png", 330, 10, 60, 40)
+    Check(FORM.GET(p_lit, "IMAGEWIDTH") = 400, "FORM.PICTURE with a literal path")
+    DIM p_fn AS DOUBLE = FORM.PICTURE(frm, "picFn", BigPath(), 400, 10, 60, 40)
+    Check(FORM.GET(p_fn, "IMAGEWIDTH") = 400, "FORM.PICTURE with a path from a FUNC")
+    DIM p_cell AS DOUBLE = FORM.PICTURE(frm, "picCell", paths[0], 470, 10, 60, 40)
+    Check(FORM.GET(p_cell, "IMAGEWIDTH") = 40, "FORM.PICTURE with a path from an array cell")
+    DIM p_map AS DOUBLE = FORM.PICTURE(frm, "picMap", files{"big"}, 540, 10, 60, 40)
+    Check(FORM.GET(p_map, "IMAGEHEIGHT") = 300, "FORM.PICTURE with a path from a map field")
+    Check(Mode(p_map) = "stretch", "a second picture also starts in stretch")
+    FORM.SET(p_cell, "PICTURE", paths[1])
+    Check(FORM.GET(p_cell, "IMAGEWIDTH") = 400, "FORM.SET PICTURE with a path from an array cell")
+
+    ' ---- a missing file ----------------------------------------------------
+    DIM p_bad AS DOUBLE = 0
+    raised = FALSE
+    TRY
+        p_bad = FORM.PICTURE(frm, "picBad", MISSING_PNG, 610, 10, 60, 40)
+    CATCH
+        raised = TRUE
+    ENDTRY
+    Check(raised, "FORM.PICTURE with a missing file raises an error")
+    raised = FALSE
+    TRY
+        FORM.SET(p_map, "PICTURE", MISSING_PNG)
+    CATCH
+        raised = TRUE
+    ENDTRY
+    Check(raised, "FORM.SET PICTURE with a missing file raises an error")
+
+    ' ---- at most 100 million pixels ----------------------------------------
+    WriteGrayPng(GRAY_SMALL_PNG, 16, 16)
+    WriteGrayPng(GRAY_HUGE_PNG, 10001, 10000)
+    DIM huge_size AS ARRAY = IMAGE.SIZE(GRAY_HUGE_PNG)
+    IF huge_size[0] = 10001 ANDALSO huge_size[1] = 10000 THEN
+        DIM p_gray AS DOUBLE = FORM.PICTURE(frm, "picGray", GRAY_SMALL_PNG, 610, 60, 60, 40)
+        Check(FORM.GET(p_gray, "IMAGEWIDTH") = 16, "a 1-bit greyscale PNG of 16 x 16 loads")
+        raised = FALSE
+        TRY
+            p_bad = FORM.PICTURE(frm, "picHuge", GRAY_HUGE_PNG, 610, 110, 60, 40)
+        CATCH
+            raised = TRUE
+        ENDTRY
+        Check(raised, "FORM.PICTURE of 10001 x 10000 pixels (over 100 million) is refused with an error")
+        raised = FALSE
+        TRY
+            FORM.SET(p_gray, "PICTURE", GRAY_HUGE_PNG)
+        CATCH
+            raised = TRUE
+        ENDTRY
+        Check(raised, "FORM.SET PICTURE of over 100 million pixels is refused with an error")
+    ELSE
+        PRINT "fixture: the large greyscale PNG did not come out as 10001 x 10000, its checks are skipped"
+    ENDIF
+
+    ' ---- JPEG with EXIF orientation 6 --------------------------------------
+    IF jpeg_ok THEN
+        DIM p_jpg AS DOUBLE = FORM.PICTURE(frm, "picJpg", PLAIN_JPG, 330, 60, 60, 40)
+        Check(FORM.GET(p_jpg, "IMAGEWIDTH") = 400 ANDALSO FORM.GET(p_jpg, "IMAGEHEIGHT") = 300, "a JPEG without orientation is 400 x 300")
+        FORM.SET(p_jpg, "PICTURE", TURNED_JPG)
+        Check(FORM.GET(p_jpg, "IMAGEWIDTH") = 300, "a JPEG with EXIF orientation 6 is shown upright: IMAGEWIDTH 300")
+        Check(FORM.GET(p_jpg, "IMAGEHEIGHT") = 400, "a JPEG with EXIF orientation 6 is shown upright: IMAGEHEIGHT 400")
+        DIM p_jpg2 AS DOUBLE = FORM.PICTURE(frm, "picJpg2", TURNED_JPG, 400, 60, 300, 150)
+        Check(FORM.GET(p_jpg2, "IMAGEWIDTH") = 300 ANDALSO FORM.GET(p_jpg2, "IMAGEHEIGHT") = 400, "FORM.PICTURE of the turned JPEG is 300 x 400")
+        FORM.SET(p_jpg2, "SCALEMODE", "fit")
+        Check(Near(FORM.GET(p_jpg2, "SCALE"), MIN([DevW(p_jpg2) / 300, DevH(p_jpg2) / 400]), 0.01), "fit of the turned JPEG uses its displayed size")
+    ENDIF
+
+    ' ---- events in zoom ----------------------------------------------------
+    FORM.SET(pic, "ZOOM", 4)
+    FORM.SET(pic, "SCROLLX", 20)
+    FORM.SET(pic, "SCROLLY", 10)
+    DIM sx0 AS DOUBLE = FORM.GET(pic, "SCROLLX")
+    DIM sy0 AS DOUBLE = FORM.GET(pic, "SCROLLY")
+    Check(Near(sx0, 20, 0.5) ANDALSO Near(sy0, 10, 0.5), "zoom 4 from 20, 10 keeps the scroll position")
+    DIM qx AS INTEGER = 41
+    DIM qy AS INTEGER = 61
+    DIM want_ix AS DOUBLE = sx0 + qx / 4
+    DIM want_iy AS DOUBLE = sy0 + qy / 4
+    k = DevW(pic) / FORM.GET(pic, "WIDTH")
+
+    ClearEvents()
+    SendTo(pic, WM_MOUSEMOVE, 0, PackXY(qx, qy))
+    Check(Has(ev_move, "imagex"), "zoom: MOUSEMOVE fires with imagex")
+    Check(Near(Num(ev_move, "imagex"), want_ix, 1), "zoom: MOUSEMOVE imagex is SCROLLX + x / ZOOM")
+    Check(Near(Num(ev_move, "imagey"), want_iy, 1), "zoom: MOUSEMOVE imagey is SCROLLY + y / ZOOM")
+    Check(Num(ev_move, "button") = 0, "zoom: MOUSEMOVE button is 0")
+
+    ClearEvents()
+    SendTo(pic, WM_LBUTTONDOWN, 1, PackXY(qx, qy))
+    Check(Has(ev_down, "imagex"), "zoom: left MOUSEDOWN fires with imagex")
+    Check(Num(ev_down, "button") = 1, "zoom: left MOUSEDOWN button is 1")
+    Check(Near(Num(ev_down, "imagex"), want_ix, 1), "zoom: MOUSEDOWN imagex is the picture pixel under the pointer")
+    Check(Near(Num(ev_down, "imagey"), want_iy, 1), "zoom: MOUSEDOWN imagey is the picture pixel under the pointer")
+    Check(Near(Num(ev_down, "x"), qx / k, 1), "zoom: MOUSEDOWN x is in logical units")
+    Check(Near(Num(ev_down, "y"), qy / k, 1), "zoom: MOUSEDOWN y is in logical units")
+    Check(IsFalse(ev_down, "shift") ANDALSO IsFalse(ev_down, "ctrl") ANDALSO IsFalse(ev_down, "alt"), "zoom: MOUSEDOWN carries shift, ctrl and alt as FALSE")
+
+    ClearEvents()
+    SendTo(pic, WM_LBUTTONUP, 0, PackXY(qx, qy))
+    Check(Num(ev_up, "button") = 1, "zoom: left MOUSEUP button is 1")
+    Check(Near(Num(ev_up, "imagex"), want_ix, 1) ANDALSO Near(Num(ev_up, "imagey"), want_iy, 1), "zoom: MOUSEUP carries imagex / imagey")
+
+    ClearEvents()
+    SendTo(pic, WM_RBUTTONDOWN, 2, PackXY(qx, qy))
+    Check(Num(ev_down, "button") = 2, "zoom: right MOUSEDOWN button is 2")
+    Check(Near(Num(ev_down, "imagex"), want_ix, 1), "zoom: right MOUSEDOWN carries imagex")
+    SendTo(pic, WM_RBUTTONUP, 0, PackXY(qx, qy))
+    Check(Num(ev_up, "button") = 2, "zoom: right MOUSEUP button is 2")
+
+    ClearEvents()
+    DIM dbl_before AS INTEGER = n_dbl
+    SendTo(pic, WM_LBUTTONDBLCLK, 1, PackXY(qx, qy))
+    Check(n_dbl = dbl_before + 1, "zoom: a double click fires DBLCLICK once")
+    Check(Near(Num(ev_dbl, "imagex"), want_ix, 1) ANDALSO Near(Num(ev_dbl, "imagey"), want_iy, 1), "zoom: DBLCLICK carries imagex / imagey")
+    SendTo(pic, WM_LBUTTONUP, 0, PackXY(qx, qy))
+
+    ClearEvents()
+    SendTo(pic, WM_KEYDOWN, 37, 1)
+    Check(Num(ev_keydown, "key") = 37, "zoom: KEYDOWN fires for the left arrow with key 37")
+    SendTo(pic, WM_KEYUP, 37, 3221225473)
+    Check(Num(ev_keyup, "key") = 37, "zoom: KEYUP fires for the left arrow with key 37")
+    ClearEvents()
+    SendTo(pic, WM_KEYDOWN, 40, 1)
+    Check(Num(ev_keydown, "key") = 40, "zoom: KEYDOWN fires for the down arrow with key 40")
+    SendTo(pic, WM_KEYUP, 40, 3221225473)
+    ClearEvents()
+    SendTo(pic, WM_KEYDOWN, 65, 1)
+    Check(Num(ev_keydown, "key") = 65, "zoom: KEYDOWN fires for A with key 65")
+    Check(IsFalse(ev_keydown, "shift") ANDALSO IsFalse(ev_keydown, "ctrl") ANDALSO IsFalse(ev_keydown, "alt"), "zoom: KEYDOWN carries shift, ctrl and alt as FALSE")
+    SendTo(pic, WM_KEYUP, 65, 3221225473)
+
+    ' the wheel
+    ClearEvents()
+    Wheel(pic, qx, qy, 120)
+    Check(Has(ev_wheel, "delta"), "zoom: MOUSEWHEEL fires with delta")
+    Check(Near(Num(ev_wheel, "delta"), 1, 0.0001), "one notch away from the user is delta 1")
+    Check(Near(Num(ev_wheel, "imagex"), want_ix, 1) ANDALSO Near(Num(ev_wheel, "imagey"), want_iy, 1), "MOUSEWHEEL imagex / imagey are the pixel under the pointer")
+    ClearEvents()
+    Wheel(pic, qx, qy, -120)
+    Check(Near(Num(ev_wheel, "delta"), -1, 0.0001), "one notch towards the user is delta -1")
+    ClearEvents()
+    Wheel(pic, qx, qy, 60)
+    Check(Near(Num(ev_wheel, "delta"), 0.5, 0.0001), "half a notch (60) is delta 0.5")
+    ClearEvents()
+    Wheel(pic, qx, qy, -30)
+    Check(Near(Num(ev_wheel, "delta"), -0.25, 0.0001), "a quarter notch towards (-30) is delta -0.25")
+    ClearEvents()
+    Wheel(pic, qx, qy, 240)
+    Check(Near(Num(ev_wheel, "delta"), 2, 0.0001), "two notches (240) is delta 2")
+
+    DIM pic_two AS DOUBLE = FORM.PICTURE(frm, "picTwo", SMALL_PNG, 330, 300, 120, 90)
+    FORM.SET(pic_two, "SCALEMODE", "fit")
+    Pump()
+    DIM two_cx AS INTEGER = INT(DevW(pic_two) / 2)
+    DIM two_cy AS INTEGER = INT(DevH(pic_two) / 2)
+    WheelOver(pic_two, pic_two, two_cx, two_cy, -120)
+    Check(n_wheel_two = 1, "a second picture in fit with a plain handler fires MOUSEWHEEL")
+    Check(Near(wheel_two_delta, -1, 0.0001), "  with delta -1")
+    FORM.SET(pic, "FOCUS", TRUE)
+    Pump()
+    DIM first_before AS INTEGER = n_wheel
+    WheelOver(pic, pic_two, two_cx, two_cy, 120)
+    Check(n_wheel_two = 2, "a wheel sent to the focused first picture with the pointer over the second fires on the second")
+    Check(n_wheel = first_before, "  and not on the focused first picture")
+
+    FORM.SET(txt, "FOCUS", TRUE)
+    Pump()
+    ClearEvents()
+    DIM wheel_before AS INTEGER = n_wheel
+    Wheel(txt, qx, qy, 120)
+    Check(n_wheel = wheel_before + 1, "a wheel sent to the focused TEXTBOX with the pointer over the picture fires the picture's MOUSEWHEEL")
+    Check(Near(Num(ev_wheel, "delta"), 1, 0.0001), "  with delta 1")
+    Check(Near(Num(ev_wheel, "imagex"), want_ix, 1) ANDALSO Near(Num(ev_wheel, "imagey"), want_iy, 1), "  and the picture pixel under the pointer")
+
+    ' the specification's example: the wheel zooms at the pointer
+    FORM.SET(pic, "ZOOM", 2)
+    FORM.SET(pic, "SCROLLX", 50)
+    FORM.SET(pic, "SCROLLY", 40)
+    DIM ex_x AS INTEGER = 41
+    DIM ex_y AS INTEGER = 41
+    DIM ex_ix AS DOUBLE = FORM.GET(pic, "SCROLLX") + ex_x / 2
+    DIM ex_iy AS DOUBLE = FORM.GET(pic, "SCROLLY") + ex_y / 2
+    wheel_zooms = TRUE
+    Wheel(pic, ex_x, ex_y, 120)
+    wheel_zooms = FALSE
+    Check(Near(FORM.GET(pic, "SCALE"), 2.5, 0.01), "the example handler zooms 2 by 1.25 to 2.5")
+    ClearEvents()
+    SendTo(pic, WM_MOUSEMOVE, 0, PackXY(ex_x, ex_y))
+    Check(Near(Num(ev_move, "imagex"), ex_ix, 1) ANDALSO Near(Num(ev_move, "imagey"), ex_iy, 1), "after the example's zoom the picture pixel under the pointer stays put")
+
+    ' ---- events in fit -----------------------------------------------------
+    FORM.SET(pic, "SCALEMODE", "fit")
+    dw = DevW(pic)
+    dh = DevH(pic)
+    DIM s AS DOUBLE = FORM.GET(pic, "SCALE")
+    DIM ox AS DOUBLE = (dw - 400 * s) / 2
+    DIM oy AS DOUBLE = (dh - 300 * s) / 2
+    DIM fx AS INTEGER = ROUND(ox + 300.5 * s)
+    DIM fy AS INTEGER = ROUND(oy + 75.5 * s)
+    ClearEvents()
+    SendTo(pic, WM_LBUTTONDOWN, 1, PackXY(fx, fy))
+    Check(Near(Num(ev_down, "imagex"), 300, 1), "fit: a click maps to picture pixel x 300")
+    Check(Near(Num(ev_down, "imagey"), 75, 1), "fit: a click maps to picture pixel y 75")
+    SendTo(pic, WM_LBUTTONUP, 0, PackXY(fx, fy))
+
+    Check(ox >= 4, "geometry: the fitted picture leaves a bar on each side")
+    ClearEvents()
+    SendTo(pic, WM_MOUSEMOVE, 0, PackXY(INT(ox / 2), fy))
+    Check(Has(ev_move, "imagex") ANDALSO Num(ev_move, "imagex") < 0, "fit: beside the picture on the left imagex is below 0")
+    ClearEvents()
+    SendTo(pic, WM_MOUSEMOVE, 0, PackXY(INT(dw - ox / 2), fy))
+    Check(Has(ev_move, "imagex") ANDALSO Num(ev_move, "imagex") > 399, "fit: beside the picture on the right imagex is past IMAGEWIDTH - 1")
+
+    ClearEvents()
+    Wheel(pic, fx, fy, -120)
+    Check(Near(Num(ev_wheel, "delta"), -1, 0.0001), "fit: MOUSEWHEEL fires with delta -1")
+    Check(Near(Num(ev_wheel, "imagex"), 300, 1) ANDALSO Near(Num(ev_wheel, "imagey"), 75, 1), "fit: MOUSEWHEEL carries the pixel under the pointer")
+
+    ClearEvents()
+    SendTo(pic, WM_KEYDOWN, 39, 1)
+    Check(Num(ev_keydown, "key") = 39, "fit: KEYDOWN fires for the right arrow with key 39")
+    SendTo(pic, WM_KEYUP, 39, 3221225473)
+
+    FORM.CLOSE(frm)
+    Pump()
+CATCH
+    N_FAIL = N_FAIL + 1
+    PRINT "FAIL: the test stopped on an error: "; ERRMSG$
+    PRINT STACK$
+ENDTRY
+
+TRY
+    KILL GRAY_SMALL_PNG
+    KILL GRAY_HUGE_PNG
+CATCH
+    PRINT "cleanup: "; ERRMSG$
+ENDTRY
+TRY
+    KILL BIG_PNG
+    KILL SMALL_PNG
+    KILL SRC_PNG
+    KILL PLAIN_JPG
+    KILL TURNED_JPG
+CATCH
+    PRINT "cleanup: "; ERRMSG$
+ENDTRY
+
+IF IMAGE.SIZE(BIG_PNG)[0] <> 0 ORELSE IMAGE.SIZE(SMALL_PNG)[0] <> 0 ORELSE IMAGE.SIZE(SRC_PNG)[0] <> 0 ORELSE IMAGE.SIZE(PLAIN_JPG)[0] <> 0 ORELSE IMAGE.SIZE(TURNED_JPG)[0] <> 0 ORELSE IMAGE.SIZE(GRAY_SMALL_PNG)[0] <> 0 ORELSE IMAGE.SIZE(GRAY_HUGE_PNG)[0] <> 0 THEN
+    PRINT "cleanup: a picture file in tmp/ was left behind"
+ENDIF
+
+PRINT ""
+PRINT "RESULTS: "; N_PASS; " passed, "; N_FAIL; " failed"
+IF N_FAIL > 0 THEN END 1
