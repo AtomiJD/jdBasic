@@ -82,9 +82,16 @@ document on the right. Both panes are editable and kept in step:
 - An edit in the source redraws only the blocks that changed.
 - The other pane follows the caret to the same block.
 - Saving writes the source pane, in the file's own encoding and line endings.
-- Printing from the rendered view (focused, or shown alone) prints it as
-  shown, with headings, tables and pictures; in dark mode it goes to paper
-  drawn light. From the source pane the source prints as plain text.
+- Printing from the rendered view (focused, or shown alone) prints it
+  with headings, tables and pictures, drawn light also in dark mode. A
+  table wider than the space between the page margins is narrowed to fit:
+  its wide columns share the width and their text wraps in the cell. From
+  the source pane the source prints as plain text.
+- Copy and Cut in the rendered view put the selection on the clipboard as
+  it prints, formatted and drawn light, tables fitted to the page width, so
+  it pastes into Word or Outlook as it is shown.
+- A right-click in either pane opens Undo, Redo, Cut, Copy, Paste, Delete
+  and Select All for that pane.
 - The bar between the panes can be dragged; the panes follow when the
   button is let go, and the split is kept for the next start.
 - Pictures in PNG and JPEG are shown as they are, GIF, BMP and TIFF as a

@@ -4,6 +4,13 @@ Range: `v1.3.0..HEAD`.
 
 ## New
 
+- **`FORM.PRINTAREA()`** (#1116): the width and height inside the page
+  setup's margins in twips, for the printer and paper chosen last or the
+  default printer, so a program can lay content out to the page before it
+  prints. `MDRICH` takes it as `opts{"table_width"}`: a wider table is
+  narrowed to fit, its wide columns wrapping inside the cell. jdTexti
+  prints and copies the rendered view that way, drawn light also in dark
+  mode, and has a right-click menu in both panes.
 - **Images without a window** (#1109, #1114): `IMAGE.SIZE` reads the width
   and height of a JPEG, PNG, GIF or BMP from its header, `IMAGE.CROP` and
   `IMAGE.RESIZE` (Windows) cut and scale a photo. All of them, and

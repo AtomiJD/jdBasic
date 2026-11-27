@@ -45,7 +45,13 @@ runs whose text is CRLF; the view has exactly one paragraph per block.
 | `BODY$(b, runs, [drawn$])` | The same without lead and tail; `drawn$` is the kind the paragraph still looks like when that differs (a paragraph split off a heading). |
 | `NEWBLOCK(kind$, [model])` | An empty block for the editor: `para`, `heading`, `item` (continuing model's list, the next number), `quote`, `code`. |
 
-`opts{"base"}` is the folder image paths are relative to.
+`opts{"base"}` is the folder image paths are relative to. `opts{"table_width"}`
+(twips) caps the width of a table: when its columns, each as wide as its
+longest cell, add up to more, a column narrower than an equal share of
+the width keeps its size and the wider ones share the rest in proportion,
+their text wrapping inside the cell. Without it a table is as wide as its
+cells, a column at most 60 characters. `FORM.PRINTAREA()` gives the width
+for a printed page.
 
 ## A block
 

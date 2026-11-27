@@ -1221,6 +1221,64 @@ SUB MDV_MOUSEUP(e)
     UPDATE_STATUS()
 ENDSUB
 
+' A right-click opens the edit menu for the pane that was clicked; the pane
+' takes the focus first, so the commands work on it.
+SUB SHOW_EDIT_POPUP(pane AS DOUBLE)
+    FORM.SET(pane, "FOCUS")
+    view_active = 0
+    IF pane = mdv THEN view_active = 1
+    MD_STATE()
+    UPDATE_STATUS()
+    FORM.POPUP(frm, [ _
+        {"text": "&Undo", "name": "popUndo"}, _
+        {"text": "&Redo", "name": "popRedo"}, _
+        "-", _
+        {"text": "Cu&t", "name": "popCut"}, _
+        {"text": "&Copy", "name": "popCopy"}, _
+        {"text": "&Paste", "name": "popPaste"}, _
+        {"text": "&Delete", "name": "popDelete"}, _
+        "-", _
+        {"text": "Select &All", "name": "popSelAll"}])
+ENDSUB
+
+SUB TXT_MOUSEDOWN(e)
+    IF quitting ORELSE CINT(e[0]{"button"}) <> 2 THEN RETURN
+    SHOW_EDIT_POPUP(txt)
+ENDSUB
+
+SUB MDV_MOUSEDOWN(e)
+    IF quitting ORELSE CINT(e[0]{"button"}) <> 2 THEN RETURN
+    SHOW_EDIT_POPUP(mdv)
+ENDSUB
+
+SUB POPUNDO_CLICK(e)
+    MNUUNDO_CLICK(e)
+ENDSUB
+
+SUB POPREDO_CLICK(e)
+    MNUREDO_CLICK(e)
+ENDSUB
+
+SUB POPCUT_CLICK(e)
+    MNUCUT_CLICK(e)
+ENDSUB
+
+SUB POPCOPY_CLICK(e)
+    MNUCOPY_CLICK(e)
+ENDSUB
+
+SUB POPPASTE_CLICK(e)
+    MNUPASTE_CLICK(e)
+ENDSUB
+
+SUB POPDELETE_CLICK(e)
+    MNUDELETE_CLICK(e)
+ENDSUB
+
+SUB POPSELALL_CLICK(e)
+    MNUSELALL_CLICK(e)
+ENDSUB
+
 ' Edits are carried to the other pane a moment after typing stops, so a
 ' long file stays quick to type in; saving and the format commands carry
 ' them at once.
@@ -1374,19 +1432,22 @@ SUB MNUPAGESETUP_CLICK(e)
     FORM.PAGESETUP()
 ENDSUB
 
+' Fills the hidden copy of the view with the document drawn light, its
+' tables cut down to the width inside the page margins.
+SUB MD_PAPER()
+    MD_FLUSH()
+    DIM area AS MAP = FORM.PRINTAREA()
+    FORM.SET(mdprint, "TEXTRTF", MDRICH.DOC$(MDSYNC.BLOCKS(md_doc), {"base": MD_BASE$(), "table_width": CINT(area{"width"})}))
+ENDSUB
+
 ' The rendered view prints as it is shown while it has the focus or is
-' shown alone, the source as plain text otherwise. A dark view goes to
-' paper drawn light.
+' shown alone, the source as plain text otherwise. It goes to paper drawn
+' light, with every table inside the margins.
 SUB MNUPRINT_CLICK(e)
     TRY
         IF md_on ANDALSO (view_active ORELSE md_layout = 2) THEN
-            MD_FLUSH()
-            DIM page_rt AS DOUBLE = mdv
-            IF dark_on THEN
-                FORM.SET(mdprint, "TEXTRTF", MDRICH.DOC$(MDSYNC.BLOCKS(md_doc), {"base": MD_BASE$()}))
-                page_rt = mdprint
-            ENDIF
-            FORM.PRINTRICH(page_rt, DOC_NAME$())
+            MD_PAPER()
+            FORM.PRINTRICH(mdprint, DOC_NAME$())
         ELSE
             FORM.PRINT(FORM.GET(txt, "TEXT"), DOC_NAME$(), {"name": font_face, "size": font_size})
         ENDIF
@@ -1431,12 +1492,37 @@ SUB MNUREDO_CLICK(e)
     ENDIF
 ENDSUB
 
+' A selection in the rendered view goes to the clipboard as it would print:
+' drawn light, tables inside the page width. The paper copy holds the same
+' text as the view, so the selection carries over by offset.
+SUB COPY_SELECTION()
+    DIM ed_now AS DOUBLE = ED()
+    IF ed_now <> mdv THEN
+        FORM.SET(ed_now, "COPY", TRUE)
+        RETURN
+    ENDIF
+    MD_PAPER()
+    IF FORM.GET(mdprint, "TEXT") <> FORM.GET(mdv, "TEXT") THEN
+        FORM.SET(mdv, "COPY", TRUE)
+        RETURN
+    ENDIF
+    FORM.SET(mdprint, "SELSTART", CINT(FORM.GET(mdv, "SELSTART")))
+    FORM.SET(mdprint, "SELLENGTH", CINT(FORM.GET(mdv, "SELLENGTH")))
+    FORM.SET(mdprint, "COPY", TRUE)
+ENDSUB
+
 SUB MNUCUT_CLICK(e)
-    FORM.SET(ED(), "CUT", TRUE)
+    IF ED() <> mdv THEN
+        FORM.SET(ED(), "CUT", TRUE)
+        RETURN
+    ENDIF
+    IF FORM.GET(mdv, "SELTEXT") = "" THEN RETURN
+    COPY_SELECTION()
+    FORM.SET(mdv, "SELTEXT", "")
 ENDSUB
 
 SUB MNUCOPY_CLICK(e)
-    FORM.SET(ED(), "COPY", TRUE)
+    COPY_SELECTION()
 ENDSUB
 
 SUB MNUPASTE_CLICK(e)

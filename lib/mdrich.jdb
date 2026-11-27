@@ -13,7 +13,7 @@
 ' Stands in for: the Markdown round trip of WYSIWYG editors (Typora,
 ' prosemirror-markdown, remark-stringify).
 '
-' version: 1.2.0
+' version: 1.3.0
 
 EXPORT MODULE MDRICH
 
@@ -38,6 +38,7 @@ DIM NUM_RGB AS INTEGER = 8355714        ' 127,127,130  the number of an ordered 
 DIM MAX_PICT_BYTES AS INTEGER = 8388608  ' larger pictures show as their [alt] text
 DIM gPictCache AS MAP                    ' path -> [size|mtime, RTF picture]
 DIM PICT_CACHE_MAX AS INTEGER = 200
+DIM MIN_CELL_W AS INTEGER = 720         ' twips; a fitted column is never narrower
 DIM CODE_FONT AS STRING = "Consolas"
 DIM CODE_BG_RGB AS INTEGER = 15790320  ' 240,240,240
 DIM HEAD_SIZES AS ARRAY = [44, 36, 30, 26, 24, 23]
@@ -786,6 +787,13 @@ FUNC IsDark(opts)
 ENDFUNC
 
 ' The colour text goes back to after a coloured stretch.
+' opts{"table_width"}: twips a table may take, 0 for as wide as its cells.
+FUNC TableWidth(opts)
+    IF TYPEOF(opts) <> "OBJECT" THEN RETURN 0
+    IF NOT MAP.EXISTS(opts, "table_width") THEN RETURN 0
+    RETURN CINT(opts{"table_width"})
+ENDFUNC
+
 FUNC TextColor$(opts)
     IF IsDark(opts) THEN RETURN "\cf9"
     RETURN "\cf0"
@@ -927,11 +935,47 @@ EXPORT FUNC CELLS(row$)
     RETURN RowCells(row$)
 ENDFUNC
 
+' Column widths cut down to a table width: a column narrower than an equal
+' share of what is left keeps its width, the wider ones share the rest in
+' proportion to their own width and wrap inside it.
+FUNC FitWidths(widths, max_w)
+    IF max_w <= 0 ORELSE SUM(widths) <= max_w THEN RETURN widths
+    DIM n = LEN(widths)
+    DIM kept = ZEROS([n])
+    DIM changed = TRUE
+    DO WHILE changed
+        changed = FALSE
+        DIM rest = max_w - SUM(widths * kept)
+        DIM n_wide = n - SUM(kept)
+        IF n_wide = 0 THEN EXITDO
+        DIM c = 0
+        FOR c = 0 TO n - 1
+            IF kept[c] = 0 ANDALSO widths[c] <= rest / n_wide THEN
+                kept[c] = 1
+                changed = TRUE
+            ENDIF
+        NEXT c
+    LOOP
+    DIM rest_w = max_w - SUM(widths * kept)
+    DIM wide_sum = SUM(widths * (1 - kept))
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO n - 1
+        IF kept[k] = 1 THEN
+            out = APPEND(out, widths[k])
+        ELSE
+            out = APPEND(out, MAX([MIN_CELL_W, INT(rest_w * widths[k] / wide_sum)]))
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
 ' A table block as RichEdit table rows with a border round every cell. A
 ' column is as wide as its longest cell; the delimiter row's colons align
-' it; the header row is bold. Rows end in \row and no paragraph follows:
-' a \par right after \row makes RichEdit drop the next paragraph.
-FUNC TableRtf$(b)
+' it; the header row is bold. With max_w > 0 (twips) the columns are cut
+' down so the table fits that width. Rows end in \row and no paragraph
+' follows: a \par right after \row makes RichEdit drop the next paragraph.
+FUNC TableRtf$(b, max_w)
     DIM rows = SegLines(b{"segs"})
     DIM cells_of = []
     DIM ncols = 1
@@ -950,7 +994,8 @@ FUNC TableRtf$(b)
         FOR r = 0 TO LEN(cells_of) - 1
             IF c < LEN(cells_of[r]) THEN w = MAX([w, LEN(-SegsText$(cells_of[r][c], 0))])
         NEXT r
-        widths = APPEND(widths, MIN([60, w]) * 130 + 260)
+        IF max_w <= 0 THEN w = MIN([60, w])
+        widths = APPEND(widths, w * 130 + 260)
         DIM d$ = ""
         IF c < LEN(delim_cells) THEN d$ = TRIM$(delim_cells[c])
         DIM al$ = ""
@@ -961,6 +1006,7 @@ FUNC TableRtf$(b)
         ENDIF
         aligns = APPEND(aligns, al$)
     NEXT c
+    widths = FitWidths(widths, max_w)
     DIM border$ = "\clbrdrt\brdrs\brdrw10\brdrcf3\clbrdrl\brdrs\brdrw10\brdrcf3\clbrdrb\brdrs\brdrw10\brdrcf3\clbrdrr\brdrs\brdrw10\brdrcf3"
     DIM out$ = ""
     FOR r = 0 TO LEN(cells_of) - 1
@@ -1046,7 +1092,7 @@ EXPORT FUNC RTF$(b, opts = 0)
         IF pict$ <> "" THEN RETURN "\pard\sa120 " + pict$
         RETURN "\pard\sa120{\cf3 " + RtfEsc$("[" + b{"alt"} + "]") + "}"
     ELSEIF kind$ = "table" THEN
-        RETURN TableRtf$(b)
+        RETURN TableRtf$(b, TableWidth(opts))
     ELSEIF kind$ = "blank" THEN
         RETURN "\pard "
     ENDIF

@@ -1,0 +1,90 @@
+' FORM.PRINTAREA(): the area inside the page setup's margins in twips,
+' for the printer and paper in use (A4 when there is no printer).
+' Opens no dialog and prints nothing. Needs a FORMS build on Windows.
+
+OPTION "EXPLICIT"
+
+DIM N_PASS AS INTEGER = 0
+DIM N_FAIL AS INTEGER = 0
+
+SUB Check(cond AS BOOLEAN, label AS STRING)
+    IF cond THEN
+        N_PASS = N_PASS + 1
+    ELSE
+        N_FAIL = N_FAIL + 1
+        PRINT "FAIL: "; label
+    ENDIF
+ENDSUB
+
+DIM TWIPS_PER_INCH AS INTEGER = 1440
+DIM LOW_TWIPS AS INTEGER = 1 * TWIPS_PER_INCH
+DIM HIGH_TWIPS AS INTEGER = 20 * TWIPS_PER_INCH
+
+FUNC AreaFromFunc() AS MAP
+    DIM inner AS MAP = FORM.PRINTAREA()
+    RETURN inner
+ENDFUNC
+
+FUNC WidthFromFunc() AS DOUBLE
+    DIM inner_w AS DOUBLE = FORM.PRINTAREA(){"width"}
+    RETURN inner_w
+ENDFUNC
+
+FUNC IsWhole(x AS DOUBLE) AS BOOLEAN
+    RETURN INT(x) = x
+ENDFUNC
+
+FUNC InBounds(x AS DOUBLE) AS BOOLEAN
+    RETURN x >= LOW_TWIPS ANDALSO x <= HIGH_TWIPS
+ENDFUNC
+
+' shape
+DIM area AS MAP = FORM.PRINTAREA()
+Check(TYPEOF(area{"width"}) <> "NONE", "the answer has a width key")
+Check(TYPEOF(area{"height"}) <> "NONE", "the answer has a height key")
+Check(LEN(MAP.KEYS(area)) = 2, "the answer holds just width and height")
+
+DIM w AS DOUBLE = area{"width"}
+DIM h AS DOUBLE = area{"height"}
+Check(IsWhole(w), "width is a whole number of twips")
+Check(IsWhole(h), "height is a whole number of twips")
+Check(w > 0, "width is positive")
+Check(h > 0, "height is positive")
+Check(InBounds(w), "width lies between 1 and 20 inches")
+Check(InBounds(h), "height lies between 1 and 20 inches")
+
+' the same values on a second call
+DIM again AS MAP = FORM.PRINTAREA()
+Check(again{"width"} = w, "a second call answers the same width")
+Check(again{"height"} = h, "a second call answers the same height")
+
+' the value reached in other forms
+Check(FORM.PRINTAREA(){"width"} = w, "width read straight off the call")
+Check(FORM.PRINTAREA(){"height"} = h, "height read straight off the call")
+DIM key_name AS STRING = "height"
+Check(area{key_name} = h, "height read through a variable key")
+Check(area{"width"} + area{"height"} = w + h, "the fields add up in an expression")
+Check(area{"width"} / TWIPS_PER_INCH = w / 1440, "width converts to inches")
+
+DIM from_func AS MAP = AreaFromFunc()
+Check(from_func{"width"} = w ANDALSO from_func{"height"} = h, "called inside a FUNC it answers the same area")
+Check(WidthFromFunc() = w, "a FUNC returning the width answers the same width")
+
+DIM areas AS ARRAY = [FORM.PRINTAREA(), FORM.PRINTAREA()]
+DIM cell AS MAP = areas[1]
+Check(cell{"width"} = w ANDALSO cell{"height"} = h, "the answer held in an array cell")
+
+DIM holder AS MAP = {"page": FORM.PRINTAREA()}
+DIM field AS MAP = holder{"page"}
+Check(field{"width"} = w ANDALSO field{"height"} = h, "the answer held in a field of a map")
+
+' a table laid out to the width fits it
+DIM col_count AS INTEGER = 4
+DIM col_w AS INTEGER = INT(w / col_count)
+Check(col_w * col_count <= w, "columns cut from the width fit the page")
+Check(col_w > 0, "a quarter of the width is still positive")
+
+PRINT
+PRINT "RESULTS: "; N_PASS; " passed, "; N_FAIL; " failed"
+IF N_FAIL > 0 THEN END 1
+PRINT "ALL PRINTAREA TESTS PASSED!"

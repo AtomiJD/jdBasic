@@ -14,6 +14,7 @@
 #include <commctrl.h>
 #include <objbase.h>
 #include <commdlg.h>
+#include <winspool.h>
 #include <richedit.h>
 #include <richole.h>
 #include <tom.h>
@@ -33,6 +34,7 @@
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "comdlg32.lib")
+#pragma comment(lib, "winspool.lib")
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "windowscodecs.lib")
 #pragma comment(lib, "ole32.lib")
@@ -1752,6 +1754,46 @@ HDC printer_dc(const std::wstring& printer, bool& cancelled) {
     g_print_devmode = pd.hDevMode;
     g_print_devnames = pd.hDevNames;
     return pd.hDC;
+}
+
+// The area inside the page setup's margins in twips, for the printer and
+// paper of the last page setup or print dialog, else the default printer;
+// A4 when there is no printer at all.
+std::pair<int, int> print_area_twips() {
+    int pagew = 8268, pageh = 11693;    // thousandths of an inch
+    HDC dc = nullptr;
+    DEVMODEW* dm = g_print_devmode ? (DEVMODEW*)GlobalLock(g_print_devmode) : nullptr;
+    if (g_print_devnames) {
+        auto* dn = (DEVNAMES*)GlobalLock(g_print_devnames);
+        if (dn) {
+            const wchar_t* base = (const wchar_t*)dn;
+            dc = CreateDCW(base + dn->wDriverOffset, base + dn->wDeviceOffset, nullptr, dm);
+            GlobalUnlock(g_print_devnames);
+        }
+    }
+    if (!dc) {
+        DWORD n = 0;
+        GetDefaultPrinterW(nullptr, &n);
+        if (n) {
+            std::wstring name(n, L'\0');
+            if (GetDefaultPrinterW(&name[0], &n)) {
+                name.resize(wcslen(name.c_str()));
+                dc = CreateDCW(L"WINSPOOL", name.c_str(), nullptr, nullptr);
+            }
+        }
+    }
+    if (dm) GlobalUnlock(g_print_devmode);
+    if (dc) {
+        int dpx = GetDeviceCaps(dc, LOGPIXELSX), dpy = GetDeviceCaps(dc, LOGPIXELSY);
+        if (dpx > 0 && dpy > 0) {
+            pagew = MulDiv(GetDeviceCaps(dc, PHYSICALWIDTH), 1000, dpx);
+            pageh = MulDiv(GetDeviceCaps(dc, PHYSICALHEIGHT), 1000, dpy);
+        }
+        DeleteDC(dc);
+    }
+    int w = pagew - g_print_margins.left - g_print_margins.right;
+    int h = pageh - g_print_margins.top - g_print_margins.bottom;
+    return { std::max(0, MulDiv(w, 1440, 1000)), std::max(0, MulDiv(h, 1440, 1000)) };
 }
 
 bool do_print(const std::string& text, const std::string& title, const Value& font,
@@ -4080,6 +4122,15 @@ void register_forms_builtins(VM& vm) {
     // FORM.PAGESETUP() -> TRUE when the page setup was confirmed
     vm.register_native("FORM.PAGESETUP", 0, 0, [](const std::vector<Value>&) -> Value {
         return Value::make_bool(do_page_setup());
+    });
+
+    // FORM.PRINTAREA() -> {"width", "height"} in twips inside the margins
+    vm.register_native("FORM.PRINTAREA", 0, 0, [](const std::vector<Value>&) -> Value {
+        auto wh = print_area_twips();
+        Value r = Value::make_object();
+        r.as_object()->set("width", Value::make_i64(wh.first));
+        r.as_object()->set("height", Value::make_i64(wh.second));
+        return r;
     });
 
     // FORM.PRINT(text$, [title$], [font], [printer$], [outfile$]) -> TRUE when printed

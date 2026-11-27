@@ -167,7 +167,7 @@ inline const std::unordered_set<std::string>& native_names() {
         "POLLEVENT", "POLLEVENT$", "POP", "POPUP",
         "POP_COLOR", "POP_ID", "POP_STYLE_COLOR", "PORT",
         "PORTS", "POS", "POST$", "POST_ASYNC",
-        "POST_ASYNC$", "PRINT", "PRINTRICH", "PROBE",
+        "POST_ASYNC$", "PRINT", "PRINTAREA", "PRINTRICH", "PROBE",
         "PROBE$", "PROCESS", "PRODUCT", "PROGRESS",
         "PROPERTIES", "PSET", "PSRAM", "PSRAMLARGEST",
         "PULLDOWN", "PULLUP", "PUSH", "PUSH_ID",

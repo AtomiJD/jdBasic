@@ -224,4 +224,17 @@ IF UCASE$(OS.GETOS$()) = "WINDOWS" THEN
     RMDIR pic_dir$
 ENDIF
 
+' a table cut down to a width: the narrow column keeps its size, the row
+' ends at the width; without a width the columns follow their cells
+DIM wide_md$ = "| id | text |" + NL$ + "|---|---|" + NL$ + "| 1 | " + REPEAT$("word ", 40) + "|" + NL$
+DIM wide_tb = MDRICH.BLOCKS(wide_md$)[0]
+DIM free_x = REGEX.FINDALL("cellx([0-9]+)", MDRICH.RTF$(wide_tb))
+DIM fit_x = REGEX.FINDALL("cellx([0-9]+)", MDRICH.RTF$(wide_tb, {"table_width": 6000}))
+TESTKIT.EQ(free_x[1][0], "8710", "a table without a width: a column at most 60 characters")
+TESTKIT.EQ(fit_x[0][0], "650", "a narrow column keeps its width in a fitted table")
+TESTKIT.EQ(fit_x[1][0], "6000", "a fitted table ends at the width")
+DIM narrow_rtf$ = MDRICH.RTF$(MDRICH.BLOCKS("| a | b |" + NL$ + "|---|---|" + NL$)[0])
+TESTKIT.EQ(MDRICH.RTF$(MDRICH.BLOCKS("| a | b |" + NL$ + "|---|---|" + NL$)[0], {"table_width": 6000}), narrow_rtf$, "a table narrower than the width is unchanged")
+TESTKIT.ISTRUE(INSTR(MDRICH.DOC$(MDRICH.BLOCKS(wide_md$), {"table_width": 6000}), "\cellx6000") >= 0, "DOC$ passes the width to its tables")
+
 TESTKIT.REPORT()
