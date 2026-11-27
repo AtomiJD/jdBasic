@@ -792,8 +792,11 @@ void VM::register_system_builtins() {
     register_native("IMAGE.SETMETA", 3, 3, [](const std::vector<Value>& args) -> Value {
         if (args[0].type != ValueType::STRING) return Value::make_i64(-6);
         if (args[1].type != ValueType::STRING) return Value::make_i64(-1);
-        if (args[2].type != ValueType::OBJECT || args[2].is_com() || !args[2].as_object())
-            return Value::make_i64(-3);
+        bool not_map = args[2].type != ValueType::OBJECT || !args[2].as_object();
+#ifdef COM
+        if (args[2].is_com()) not_map = true;
+#endif
+        if (not_map) return Value::make_i64(-3);
         jdb_image::Fields fields;
         for (auto& kv : args[2].as_object()->fields) {
             if (kv.second.type != ValueType::STRING) return Value::make_i64(-3);
