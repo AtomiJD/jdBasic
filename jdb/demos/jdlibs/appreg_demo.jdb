@@ -1,0 +1,42 @@
+' appreg_demo.jdb - a program offers itself for a file type under Open with.
+'
+'   jdBasic appreg_demo.jdb             shows what it would register
+'   jdBasic appreg_demo.jdb --register  registers for .appregdemo, opens
+'                                       Settings on its Default apps page
+'   jdBasic appreg_demo.jdb --remove    removes the registration again
+'   jdBasic appreg_demo.jdb some.file   what Windows runs to open a file
+'
+' The extension is made up, so registering changes no file type in use.
+' Everything goes under HKEY_CURRENT_USER. Windows only.
+
+IMPORT APPREG
+
+DIM app$ = "jdBasic AppReg Demo"
+DIM prog_id$ = "jdBasic.AppRegDemo"
+DIM exts = [".appregdemo"]
+
+DIM cli = OS.ARGS()
+DIM arg$ = ""
+IF LEN(cli) > 1 THEN arg$ = cli[1]
+
+IF arg$ = "--register" THEN
+    DIM rc = APPREG.REGISTER(app$, prog_id$, "Shows how APPREG registers a program", "AppReg Demo File", exts)
+    IF rc < 0 THEN
+        PRINT "APPREG works on Windows only."
+        END 1
+    ENDIF
+    PRINT "Registered, "; rc; " values failed."
+    PRINT "Settings opens on the page where the default is picked."
+    APPREG.OPEN_SETTINGS(app$)
+ELSEIF arg$ = "--remove" THEN
+    PRINT "Removed, "; APPREG.UNREGISTER(app$, prog_id$, exts); " values failed."
+ELSEIF arg$ <> "" THEN
+    PRINT "Windows opened this program for: "; arg$
+ELSE
+    PRINT "App:        "; app$
+    PRINT "ProgID:     "; prog_id$
+    PRINT "Extensions: "; JOIN(exts, ", ")
+    PRINT "Command:    "; APPREG.COMMAND$()
+    PRINT
+    PRINT "Run with --register to add it, --remove to take it out again."
+ENDIF
