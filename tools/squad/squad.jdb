@@ -83,7 +83,7 @@ FUNC SECS_LEFT()
     DIM now_m AS INTEGER = VAL(FORMAT_DATE$(NOW(), "%H")) * 60 + VAL(FORMAT_DATE$(NOW(), "%M"))
     DIM ahead AS INTEGER = (goal - now_m + 1440) MOD 1440
     IF ahead > 960 THEN RETURN 0
-    RETURN ahead * 60 - VAL(FORMAT_DATE$(NOW(), "%S"))
+    RETURN CLAMP(ahead * 60 - VAL(FORMAT_DATE$(NOW(), "%S")), 0, 86400)
 ENDFUNC
 
 IF until$ <> "" ANDALSO SECS_LEFT() < 1800 THEN
