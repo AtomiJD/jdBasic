@@ -32,7 +32,10 @@ up; a run that is cut short then still leaves a theme.
   that still holds. Their `findings*.json` files list what is already filed:
   do not list a finding again that an earlier night has.
 - If the folder `dataset/synth/divergent` exists: programs that are green in
-  the interpreter and differ compiled.
+  the interpreter and differ compiled. Its subfolder `hunt/` is refilled
+  round the clock: each `<signature>_<n>.jdb` comes with a `.txt` naming the
+  kind (diverge, compile_crash, interp_crash), the commit it was found on and
+  both outputs. Run one again on tonight's build before you believe it.
 
 ## Where to look, in this order
 

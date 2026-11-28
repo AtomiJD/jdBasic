@@ -1,0 +1,41 @@
+# systemd user unit: the hunt for backend differences on the LLM box, round
+# the clock. A local model writes programs, tools/synthgen.jdb hunt runs each
+# in the interpreter and compiled, and what differs or crashes is handed to
+# the squad's scout on render as dataset/synth/divergent/hunt/.
+#
+#   git clone https://github.com/AtomiJD/jdBasic.git ~/hunt/cc
+#   cp ~/hunt/cc/tools/squad/hunt.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now hunt.service
+#   loginctl enable-linger "$USER"
+#
+# The transfer key ~/.ssh/hunt_to_render is bound on render to a forced
+# command that unpacks the tar it reads into that one folder and does
+# nothing else:
+#   restrict,command="d=$HOME/squad/cc/dataset/synth/divergent; mkdir -p $d
+#   && rm -rf $d/hunt.new && mkdir $d/hunt.new && tar -x --no-same-owner
+#   -C $d/hunt.new && rm -rf $d/hunt && mv $d/hunt.new $d/hunt" ssh-ed25519 ...
+#
+# Each start pulls main and rebuilds, so a fix found by the squad stops
+# being found here.
+
+[Unit]
+Description=jdBasic hunt: local model programs, interpreter against -c
+After=network-online.target jdb-coder.service
+
+[Service]
+WorkingDirectory=%h/hunt/cc
+Environment=LD_LIBRARY_PATH=%h/hunt/cc/build
+Environment=HUNT_URL=http://127.0.0.1:8090
+ExecStartPre=-/bin/sh -c 'git pull -q --ff-only origin main && HTTP=1 GFX=0 IMGUI=0 NATIVEC=1 ./build.sh > %h/hunt/build.log 2>&1'
+ExecStart=%h/hunt/cc/build/jdbasic tools/synthgen.jdb hunt live 100
+ExecStopPost=-/bin/sh -c 'cd %h/hunt/cc/dataset/synth/divergent/hunt && tar -c . | ssh -o BatchMode=yes -o ConnectTimeout=10 -i %h/.ssh/hunt_to_render atomijd@192.168.0.30'
+Restart=always
+RestartSec=30
+TimeoutStartSec=1800
+MemoryMax=16G
+TasksMax=300
+Nice=15
+
+[Install]
+WantedBy=default.target

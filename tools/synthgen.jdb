@@ -27,9 +27,18 @@
 '         each sent back with its error. submit, fetch and verify it like any
 '         tag; a green fix also lands in <tag>.repair.jsonl as an
 '         error-and-program -> diagnosis-and-fix training pair.
+' hunt    asks a local model (HUNT_URL, http://127.0.0.1:8090, any
+'         OpenAI-compatible server) for <count> programs (50) and verifies
+'         each at once. A crash of either backend, or a program both run
+'         and the compiled one answers otherwise, lands in
+'         dataset/synth/divergent/hunt/ as <signature>_<n>.jdb with a .txt of
+'         both outputs; the first two of a signature are kept, the rest
+'         counted in dataset/synth/hunt_sigs.json. Counts per call go to
+'         dataset/synth/hunt_<tag>.stats.jsonl.
 '
 ' Environment: ANTHROPIC_API_KEY, SYNTH_MODEL (claude-opus-5-5),
-' SYNTH_EFFORT (high), SYNTH_BIN (build; a folder relative to the repo).
+' SYNTH_EFFORT (high), SYNTH_BIN (build; a folder relative to the repo),
+' HUNT_URL.
 
 IMPORT REQ
 
@@ -46,6 +55,10 @@ IF LEN(REGEX.FINDALL("^[A-Za-z0-9_][A-Za-z0-9_/-]*$", BIN_DIR$)) = 0 THEN
 ENDIF
 DIM EXE$ = REPLACE$(BIN_DIR$, "/", CHR$(92)) + CHR$(92) + "jdBasic.exe"
 DIM EXE_FROM_RUN$ = "../../../../" + REPLACE$(BIN_DIR$, CHR$(92), "/") + "/jdBasic.exe"
+IF OS.GETOS$() <> "WINDOWS" THEN
+    EXE$ = BIN_DIR$ + "/jdbasic"
+    EXE_FROM_RUN$ = "../../../../" + BIN_DIR$ + "/jdbasic"
+ENDIF
 DIM API_VERSION$ = "2026-10-21"
 DIM PROGRAMS_PER_REQUEST = 4
 DIM RUN_SECONDS = 15
@@ -464,7 +477,7 @@ FUNC UnsafeReason$(code$, depth)
 ENDFUNC
 
 FUNC Verdict(name$, code$)
-    DIM v = {"name": name$, "lint": FALSE, "interp": FALSE, "compile": FALSE, "native": FALSE, "same": FALSE, "green": FALSE, "detail": ""}
+    DIM v = {"name": name$, "lint": FALSE, "interp": FALSE, "compile": FALSE, "native": FALSE, "same": FALSE, "green": FALSE, "nondet": FALSE, "detail": "", "i_exit": 0, "c_exit": 0, "n_exit": 0, "out_i": "", "out_c": "", "out_n": ""}
     DIM unsafe$ = ""
     TRY
         unsafe$ = UnsafeReason$(code$, 0)
@@ -496,8 +509,12 @@ SUB RunChecks(v, run_dir$, name$)
     DIM cd$ = "cd " + run_dir$ + " && "
     DIM i_r = Shell(cd$ + "timeout " + STR$(RUN_SECONDS) + " " + EXE_FROM_RUN$ + " " + name$ + ".jdb < /dev/null")
     v{"interp"} = i_r{"exit_code"} = 0
+    v{"i_exit"} = i_r{"exit_code"}
+    v{"out_i"} = LEFT$(Normalized$(i_r{"output"}), 3000)
     DIM c_r = Shell(cd$ + "timeout 300 " + EXE_FROM_RUN$ + " -c " + name$ + ".jdb")
     v{"compile"} = c_r{"exit_code"} = 0 ANDALSO INSTR(c_r{"output"}, "Compiled:") >= 0
+    v{"c_exit"} = c_r{"exit_code"}
+    v{"out_c"} = RIGHT$(Normalized$(c_r{"output"}), 3000)
     IF NOT v{"compile"} THEN
         v{"detail"} = "compile: " + RIGHT$(TRIM$(c_r{"output"}), 400)
         RETURN
@@ -506,7 +523,15 @@ SUB RunChecks(v, run_dir$, name$)
     v{"native"} = n_r{"exit_code"} = 0
     DIM out_i$ = Normalized$(i_r{"output"})
     DIM out_n$ = Normalized$(n_r{"output"})
+    v{"n_exit"} = n_r{"exit_code"}
+    v{"out_n"} = LEFT$(out_n$, 3000)
     v{"same"} = out_i$ = out_n$
+    ' A program whose interpreter output changes from run to run says nothing
+    ' about the backends when the compiled output differs.
+    IF v{"interp"} ANDALSO NOT v{"same"} THEN
+        DIM again_r = Shell(cd$ + "timeout " + STR$(RUN_SECONDS) + " " + EXE_FROM_RUN$ + " " + name$ + ".jdb < /dev/null")
+        v{"nondet"} = Normalized$(again_r{"output"}) <> out_i$
+    ENDIF
     v{"green"} = v{"interp"} ANDALSO v{"native"} ANDALSO v{"same"} ANDALSO out_i$ <> ""
     IF NOT v{"interp"} THEN
         v{"detail"} = "interpreter run failed (exit " + STR$(i_r{"exit_code"}) + "): " + RIGHT$(out_i$, 400)
@@ -643,7 +668,7 @@ SUB DoVerify(tag$)
                 n_green = n_green + 1
                 TXTWRITER train_path$, TrainRecord$(task$, code$) + CHR$(10), TRUE
                 IF TYPEOF(origin) = "OBJECT" THEN TXTWRITER repair_path$, RepairRecord$(origin, programs[p]{"diagnosis"}, code$) + CHR$(10), TRUE
-            ELSEIF v{"interp"} ANDALSO v{"compile"} THEN
+            ELSEIF v{"interp"} ANDALSO v{"compile"} ANDALSO NOT v{"nondet"} THEN
                 ' The interpreter accepted it and -c compiled it, yet the
                 ' exe failed or printed something else: a backend divergence.
                 n_diverge = n_diverge + 1
@@ -658,9 +683,192 @@ SUB DoVerify(tag$)
     PRINT "train -> "; train_path$
 ENDSUB
 
+' ------------------------------------------------------------------ hunt
+
+DIM HUNT_DIR$ = SYNTH_DIR$ + "/divergent/hunt"
+DIM HUNT_KEEP = 2
+
+' A request in the words the local model was trained on: one or two
+' headings of a topic and a setting.
+FUNC HuntTask$(rng)
+    DIM keys = TOPICS[RNG.INT(rng, 0, LEN(TOPICS) - 1)]
+    DIM first$ = keys[RNG.INT(rng, 0, LEN(keys) - 1)]
+    DIM second$ = keys[RNG.INT(rng, 0, LEN(keys) - 1)]
+    DIM what$ = REPLACE$(first$, "`", "")
+    IF second$ <> first$ THEN what$ = what$ + " and " + REPLACE$(second$, "`", "")
+    DIM angle$ = ANGLES[RNG.INT(rng, 0, LEN(ANGLES) - 1)]
+    RETURN "Use " + what$ + " for " + angle$ + ". Print every result, keep the output deterministic, and use no input, files, network or graphics."
+ENDFUNC
+
+FUNC StripFence$(text$)
+    IF INSTR(text$, "```") < 0 THEN RETURN text$
+    DIM rows = SPLIT(REPLACE$(text$, CHR$(13), ""), CHR$(10))
+    DIM kept = []
+    DIM inside = FALSE
+    DIM i = 0
+    FOR i = 0 TO LEN(rows) - 1
+        IF STARTSWITH(LTRIM$(rows[i]), "```") THEN
+            inside = NOT inside
+        ELSEIF inside THEN
+            PUSH(kept, rows[i])
+        ENDIF
+    NEXT
+    RETURN JOIN(kept, CHR$(10))
+ENDFUNC
+
+' One program from an OpenAI-compatible server, "" when it fails.
+FUNC LocalProgram$(url$, task$)
+    DIM sys_m = {"role": "system", "content": "You are a jdBasic coding assistant. Write correct, idiomatic jdBasic."}
+    DIM user_m = {"role": "user", "content": "Write a jdBasic program that does the following: " + task$}
+    DIM body$ = JSON.STRINGIFY$({"messages": [sys_m, user_m], "max_tokens": 1500, "temperature": 0.9})
+    DIM reply$ = ""
+    TRY
+        HTTP.CLEARHEADERS()
+        HTTP.SETTIMEOUT(240)
+        reply$ = HTTP.POST$(url$ + "/v1/chat/completions", body$, "application/json")
+    CATCH
+        PRINT "model call failed: "; ERRMSG$
+        RETURN ""
+    ENDTRY
+    DIM code$ = ""
+    TRY
+        code$ = "" + JSON.PARSE(reply$){"choices"}[0]{"message"}{"content"}
+    CATCH
+        RETURN ""
+    ENDTRY
+    RETURN StripFence$(code$)
+ENDFUNC
+
+' What makes a program worth a look, or "": the interpreter or the
+' compiler died on it, or both ran it and the compiled program answered
+' something else. A refusal by -c under STRICT is the program's fault.
+FUNC FindingKind$(v)
+    IF NOT v{"lint"} THEN RETURN ""
+    IF v{"i_exit"} > 128 THEN RETURN "interp_crash"
+    IF NOT v{"interp"} THEN RETURN ""
+    IF NOT v{"compile"} THEN
+        IF v{"c_exit"} > 128 ORELSE v{"c_exit"} = 124 ORELSE INSTR(v{"out_c"}, "ModuleID") >= 0 THEN RETURN "compile_crash"
+        RETURN ""
+    ENDIF
+    IF v{"green"} ORELSE v{"nondet"} ORELSE v{"out_i"} = "" THEN RETURN ""
+    RETURN "diverge"
+ENDFUNC
+
+FUNC Shape$(text$)
+    RETURN LEFT$(REGEX.REPLACE$("[0-9]+", TRIM$(text$), "#"), 120)
+ENDFUNC
+
+' The finding with the program's own numbers taken out, so that one cause
+' met by many programs is kept a few times and then only counted.
+FUNC Signature$(kind$, v)
+    DIM a$ = ""
+    DIM b$ = ""
+    IF kind$ = "diverge" THEN
+        DIM ia = SPLIT(v{"out_i"}, CHR$(10))
+        DIM na = SPLIT(v{"out_n"}, CHR$(10))
+        DIM k = 0
+        DO WHILE k < LEN(ia) ANDALSO k < LEN(na) ANDALSO ia[k] = na[k]
+            k = k + 1
+        LOOP
+        IF k < LEN(ia) THEN a$ = ia[k]
+        IF k < LEN(na) THEN b$ = na[k]
+        b$ = b$ + " exit " + STR$(v{"n_exit"})
+    ELSEIF kind$ = "compile_crash" THEN
+        DIM rows = SPLIT(v{"out_c"}, CHR$(10))
+        a$ = rows[LEN(rows) - 1]
+        DIM r = 0
+        FOR r = 0 TO LEN(rows) - 1
+            IF INSTR(LCASE$(rows[r]), "error") >= 0 THEN
+                a$ = rows[r]
+                EXITFOR
+            ENDIF
+        NEXT
+        b$ = "exit " + STR$(v{"c_exit"})
+    ELSE
+        DIM tail_rows = SPLIT(v{"out_i"}, CHR$(10))
+        a$ = tail_rows[LEN(tail_rows) - 1]
+        b$ = "exit " + STR$(v{"i_exit"})
+    ENDIF
+    RETURN kind$ + "|" + Shape$(a$) + "|" + Shape$(b$)
+ENDFUNC
+
+FUNC HuntNote$(kind$, sig$, commit$, task$, v)
+    DIM nl$ = CHR$(10)
+    DIM t$ = "kind: " + kind$ + nl$ + "signature: " + sig$ + nl$ + "commit: " + commit$ + nl$ + "task: " + task$ + nl$
+    t$ = t$ + nl$ + "--- interpreter, exit " + STR$(v{"i_exit"}) + nl$ + v{"out_i"} + nl$
+    IF kind$ = "compile_crash" THEN
+        t$ = t$ + nl$ + "--- jdbasic -c, exit " + STR$(v{"c_exit"}) + nl$ + v{"out_c"} + nl$
+    ELSE
+        t$ = t$ + nl$ + "--- compiled, exit " + STR$(v{"n_exit"}) + nl$ + v{"out_n"} + nl$
+    ENDIF
+    RETURN t$
+ENDFUNC
+
+SUB Bump(counts, key$)
+    counts{key$} = counts{key$} + 1
+ENDSUB
+
+SUB DoHunt(tag$, n_wanted)
+    DIM url$ = GETENV$("HUNT_URL")
+    IF url$ = "" THEN url$ = "http://127.0.0.1:8090"
+    MakeDir(WORK_DIR$)
+    MakeDir(SYNTH_DIR$ + "/divergent")
+    MakeDir(HUNT_DIR$)
+    DIM sig_path$ = SYNTH_DIR$ + "/hunt_sigs.json"
+    DIM sigs = {}
+    IF FILE.EXISTS(sig_path$) THEN sigs = JSON.PARSE(TXTREADER$(sig_path$))
+    DIM commit$ = TRIM$(Shell("git rev-parse --short HEAD"){"output"})
+    DIM rng = RNG.NEW(OS.PID() * 7919 + INT(TICK()) MOD 100000)
+    DIM counts = {"programs": 0, "empty": 0, "unsafe": 0, "lint": 0, "interp": 0, "compile": 0, "green": 0, "nondet": 0, "finds": 0, "kept": 0}
+    DIM stamp$ = FORMAT_DATE$(NOW(), "%Y%m%d_%H%M%S")
+    DIM i = 0
+    FOR i = 1 TO n_wanted
+        DIM task$ = HuntTask$(rng)
+        DIM code$ = LocalProgram$(url$, task$)
+        IF TRIM$(code$) = "" THEN
+            Bump(counts, "empty")
+            CONTINUEFOR
+        ENDIF
+        DIM name$ = tag$ + "_" + stamp$ + "_" + STR$(i)
+        DIM v = Verdict(name$, code$)
+        IF FILE.EXISTS(WORK_DIR$ + "/" + name$ + ".jdb") THEN KILL WORK_DIR$ + "/" + name$ + ".jdb"
+        Bump(counts, "programs")
+        IF STARTSWITH(v{"detail"}, "unsafe") THEN Bump(counts, "unsafe")
+        IF v{"lint"} THEN Bump(counts, "lint")
+        IF v{"interp"} THEN Bump(counts, "interp")
+        IF v{"compile"} THEN Bump(counts, "compile")
+        IF v{"green"} THEN Bump(counts, "green")
+        IF v{"nondet"} THEN Bump(counts, "nondet")
+        DIM kind$ = FindingKind$(v)
+        DIM mark$ = "red"
+        IF v{"green"} THEN mark$ = "green"
+        IF kind$ <> "" THEN
+            Bump(counts, "finds")
+            DIM sig$ = Signature$(kind$, v)
+            DIM key$ = LCASE$(CODEC.CRC32$(sig$))
+            DIM seen = 0
+            IF MAP.EXISTS(sigs, key$) THEN seen = sigs{key$}{"count"}
+            sigs{key$} = {"count": seen + 1, "sig": sig$}
+            mark$ = "FIND " + kind$ + " " + key$ + " #" + STR$(seen + 1)
+            IF seen < HUNT_KEEP THEN
+                DIM base$ = HUNT_DIR$ + "/" + key$ + "_" + STR$(seen + 1)
+                TXTWRITER base$ + ".jdb", code$
+                TXTWRITER base$ + ".txt", HuntNote$(kind$, sig$, commit$, task$, v)
+                Bump(counts, "kept")
+            ENDIF
+            TXTWRITER sig_path$, JSON.STRINGIFY$(sigs)
+        ENDIF
+        PRINT name$; "  "; mark$
+    NEXT
+    counts{"when"} = stamp$
+    counts{"commit"} = commit$
+    TXTWRITER SYNTH_DIR$ + "/hunt_" + tag$ + ".stats.jsonl", JSON.STRINGIFY$(counts) + CHR$(10), TRUE
+    PRINT JSON.STRINGIFY$(counts)
+ENDSUB
+
 DIM args = OS.ARGS()
 IF LEN(args) < 3 THEN
-    PRINT "usage: synthgen.jdb build|submit|status|fetch|verify <tag> [replicas] [limit]"
+    PRINT "usage: synthgen.jdb build|submit|status|fetch|verify|repair|hunt <tag> [replicas|count] [limit]"
     END
 ENDIF
 DIM mode$ = args[1]
@@ -695,6 +903,10 @@ SWITCH mode$
             PUSH(sources, args[a])
         NEXT
         DoRepair(tag$, cap, sources)
+    CASE "hunt"
+        DIM n_hunt = 50
+        IF LEN(args) > 3 THEN n_hunt = VAL(args[3])
+        DoHunt(tag$, n_hunt)
     DEFAULT
         PRINT "unknown mode "; mode$
 ENDSWITCH
