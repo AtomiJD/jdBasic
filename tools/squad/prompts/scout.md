@@ -26,8 +26,9 @@ up; a run that is cut short then still leaves a theme.
   interpreter against native. Verdicts GAP and DIVERGE are real differences
   between the backends; BOTH_RED is red in both. LOOSE, UNSUPPORTED and
   NONDET are by design, not defects.
-- `tmp/squad/`: the folders of earlier nights. Read their `theme.md` and
-  `report.md` first and do not pick a theme that was parked for a reason
+- `tmp/squad/`: the folders of earlier nights, one run or several each.
+  Read their `report*.md`, which name each run's theme and its end, and
+  do not pick a theme that was committed, or parked for a reason
   that still holds. Their `findings*.json` files list what is already filed:
   do not list a finding again that an earlier night has.
 - If the folder `dataset/synth/divergent` exists: programs that are green in

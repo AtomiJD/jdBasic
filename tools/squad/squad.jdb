@@ -3,6 +3,7 @@
 '
 '   jdbasic tools/squad/squad.jdb [--scout-only] [--dry-run] [--push]
 '                                 [--no-sync] [--no-parity] [--theme=TICKET]
+'                                 [--until=HH:MM]
 '
 ' Runs from the repo root of a clean checkout of the branch "squad" on
 ' Linux. Each stage is its own `claude -p` call with its own model, tools
@@ -21,6 +22,8 @@
 '
 ' --theme=N skips the scout and takes theme.md, repro.jdb and expected.txt
 ' as they lie in today's folder, with ticket N as the theme's ticket.
+' --until=HH:MM is the local time by which the run is over: a run started
+' later ends at once, and no stage runs past it; one that would is parked.
 ' --scout-only ends after stage 2. --dry-run starts no agent and changes
 ' nothing in git; it prints what would run. Tickets are filed when
 ' JDTRAKR_URL and JDTRAKR_API are set, otherwise the findings stay in the
@@ -59,6 +62,7 @@ DIM want_push AS INTEGER = FALSE
 DIM want_sync AS INTEGER = TRUE
 DIM want_parity AS INTEGER = TRUE
 DIM reuse_ticket AS INTEGER = 0
+DIM until$ AS STRING = ""
 DIM a AS INTEGER
 FOR a = 1 TO LEN(cli) - 1
     IF cli[a] = "--scout-only" THEN scout_only = TRUE
@@ -67,14 +71,33 @@ FOR a = 1 TO LEN(cli) - 1
     IF cli[a] = "--no-sync" THEN want_sync = FALSE
     IF cli[a] = "--no-parity" THEN want_parity = FALSE
     IF STARTSWITH(cli[a], "--theme=") THEN reuse_ticket = VAL(MID$(cli[a], 8))
+    IF STARTSWITH(cli[a], "--until=") THEN until$ = MID$(cli[a], 8)
 NEXT a
+
+' Seconds left until until$, or -1 without one. A time more than 12 hours
+' ahead lies behind: the window it closed is over.
+FUNC SECS_LEFT()
+    IF until$ = "" THEN RETURN -1
+    DIM parts = SPLIT(until$, ":")
+    DIM goal AS INTEGER = VAL(parts[0]) * 60 + VAL(parts[1])
+    DIM now_m AS INTEGER = VAL(FORMAT_DATE$(NOW(), "%H")) * 60 + VAL(FORMAT_DATE$(NOW(), "%M"))
+    DIM ahead AS INTEGER = (goal - now_m + 1440) MOD 1440
+    IF ahead > 720 THEN RETURN 0
+    RETURN ahead * 60 - VAL(FORMAT_DATE$(NOW(), "%S"))
+ENDFUNC
+
+IF until$ <> "" ANDALSO SECS_LEFT() < 1800 THEN
+    PRINT "squad: less than 30 minutes until " + until$ + ", no run"
+    END 0
+ENDIF
 
 DIM stamp$ AS STRING = FORMAT_DATE$(NOW(), "%Y-%m-%d")
 DIM work$ AS STRING = "tmp/squad/" + stamp$
 OS.EXEC("mkdir", ["-p", work$])
 DIM out_file$ AS STRING = PATH.ABS$(work$) + "/.run.out"
-DIM report_file$ AS STRING = work$ + "/report.md"
-DIM report$ AS STRING = "# Squad " + stamp$ + nl$
+DIM run_at$ AS STRING = FORMAT_DATE$(NOW(), "%H%M")
+DIM report_file$ AS STRING = work$ + "/report_" + run_at$ + ".md"
+DIM report$ AS STRING = "# Squad " + stamp$ + " " + FORMAT_DATE$(NOW(), "%H:%M") + nl$
 
 SUB NOTE(text$)
     PRINT text$
@@ -178,6 +201,12 @@ ENDFUNC
 ' One agent stage; {"ok", "output"}. ok is FALSE on a timeout, a non-zero
 ' exit, or when the agent moved HEAD.
 FUNC AGENT(stage$, model$, prompt$, tools$, secs)
+    DIM remaining AS INTEGER = SECS_LEFT()
+    IF remaining >= 0 ANDALSO remaining < 600 ANDALSO NOT dry_run THEN
+        NOTE("- " + stage$ + ": not started, " + until$ + " is too close")
+        RETURN {"ok": FALSE, "output": "out of time"}
+    ENDIF
+    IF remaining >= 0 ANDALSO remaining - 120 < secs THEN secs = remaining - 120
     DIM prompt_file$ AS STRING = work$ + "/" + stage$ + ".prompt.md"
     DIM answer_file$ AS STRING = work$ + "/" + stage$ + ".out.txt"
     TXTWRITER prompt_file$, prompt$
@@ -258,7 +287,7 @@ SUB PARK(reason$)
     NOTE("")
     NOTE("**Parked:** " + reason$)
     IF NOT dry_run ANDALSO LEN(CHANGED()) > 0 THEN
-        DIM kept$ AS STRING = GIT$("stash push -u -m " + q$ + "squad parked " + stamp$ + q$)
+        DIM kept$ AS STRING = GIT$("stash push -u -m " + q$ + "squad parked " + stamp$ + " " + run_at$ + q$)
         NOTE("Working tree kept as a stash: " + TAIL$(kept$, 1))
     ENDIF
     END 1

@@ -10,17 +10,19 @@
 # Its output:      journalctl --user -u squad.service
 #
 # ~/squad/squad.env is optional and holds what stays out of the repository:
-#   SQUAD_ARGS=--scout-only          (default; empty for the full chain)
+#   SQUAD_ARGS=--until=05:00         (the full chain until 05:00;
+#                                     the default is --scout-only)
 #   JDTRAKR_URL=...  JDTRAKR_API=... (tickets are filed when both are set)
 
 [Unit]
-Description=jdBasic squad: nightly hardening chain
+Description=jdBasic squad: one hardening run
 
 [Service]
 Type=oneshot
 WorkingDirectory=%h/squad/cc
 Environment=HTTP=1 GFX=1 IMGUI=1 NATIVEC=1
 Environment=LD_LIBRARY_PATH=%h/squad/cc/build
+Environment=TZ=Europe/Berlin
 Environment=SQUAD_ARGS=--scout-only
 EnvironmentFile=-%h/squad/squad.env
 # The chain rebuilds build/jdbasic, so the driver runs from a copy

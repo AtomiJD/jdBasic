@@ -1,8 +1,11 @@
 [Unit]
-Description=jdBasic squad: every night at 01:30
+Description=jdBasic squad: every half hour from 22:00 to 04:30 Berlin time
 
+# A start while a run is still going does nothing, so runs follow each
+# other through the night. squad.env sets --until, after which no stage
+# runs and no run starts.
 [Timer]
-OnCalendar=*-*-* 01:30:00
+OnCalendar=*-*-* 22,23,00..04:00,30:00 Europe/Berlin
 Persistent=false
 
 [Install]
