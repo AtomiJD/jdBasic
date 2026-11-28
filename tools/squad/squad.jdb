@@ -74,7 +74,7 @@ FOR a = 1 TO LEN(cli) - 1
     IF STARTSWITH(cli[a], "--until=") THEN until$ = MID$(cli[a], 8)
 NEXT a
 
-' Seconds left until until$, or -1 without one. A time more than 12 hours
+' Seconds left until until$, or -1 without one. A time more than 16 hours
 ' ahead lies behind: the window it closed is over.
 FUNC SECS_LEFT()
     IF until$ = "" THEN RETURN -1
@@ -82,7 +82,7 @@ FUNC SECS_LEFT()
     DIM goal AS INTEGER = VAL(parts[0]) * 60 + VAL(parts[1])
     DIM now_m AS INTEGER = VAL(FORMAT_DATE$(NOW(), "%H")) * 60 + VAL(FORMAT_DATE$(NOW(), "%M"))
     DIM ahead AS INTEGER = (goal - now_m + 1440) MOD 1440
-    IF ahead > 720 THEN RETURN 0
+    IF ahead > 960 THEN RETURN 0
     RETURN ahead * 60 - VAL(FORMAT_DATE$(NOW(), "%S"))
 ENDFUNC
 
